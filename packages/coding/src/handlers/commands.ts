@@ -1,8 +1,8 @@
 /**
  * Command handlers for Claude Telegram Bot.
  *
- * /start, /new, /stop, /status, /resume, /restart
- * /list, /switch, /discover, /kill, /killall
+ * /start, /new, /stop, /status, /restart, /retry
+ * /list, /switch
  */
 
 import type { Context } from "grammy";
@@ -10,18 +10,11 @@ import { session } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
 import { isAuthorized } from "../security";
 import {
-  listSessions,
-  setActiveSession,
+  getSessions,
   getActiveSession,
-  unregisterSession,
-  loadRegistry,
-  saveRegistry,
-  cleanupDeadSessions,
-  cleanupStaleSessions,
-  discoverAndRegister,
-  generateName,
-  registerSession,
-  type SessionInfo,
+  setActiveSession,
+  addTelegramSession,
+  forceRefresh,
 } from "../sessions";
 
 /**
@@ -29,45 +22,35 @@ import {
  */
 export async function handleStart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
-  const username = ctx.from?.username || "unknown";
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }
 
-  const status = session.isActive ? "Active session" : "No active session";
-  const workDir = WORKING_DIR;
-
-  const activeSession = await getActiveSession();
+  const activeSession = getActiveSession();
   const sessionName = activeSession?.name || "none";
 
   await ctx.reply(
-    `🤖 <b>Claude Mobile Bridge</b>\n\n` +
+    `🤖 <b>Claude Coding Bot</b>\n\n` +
       `Active: <code>${sessionName}</code>\n\n` +
-      `<b>Session Commands:</b>\n` +
-      `/list - Show all sessions\n` +
+      `<b>Commands:</b>\n` +
+      `/list - Show sessions\n` +
       `/switch &lt;name&gt; - Switch session\n` +
-      `/discover - Find desktop sessions\n` +
       `/new [name] [path] - New session\n` +
-      `/kill - Kill active session\n` +
-      `/killall - Kill all sessions\n\n` +
-      `<b>Control:</b>\n` +
-      `/stop - Stop current query\n` +
-      `/status - Detailed status\n` +
+      `/stop - Stop query\n` +
+      `/status - Session status\n` +
       `/retry - Retry last message\n` +
       `/restart - Restart bot\n\n` +
       `<b>Tips:</b>\n` +
-      `• <code>!</code> prefix interrupts query\n` +
-      `• "think" for extended reasoning`,
+      `• <code>!</code> prefix interrupts\n` +
+      `• "think" for reasoning`,
     { parse_mode: "HTML" }
   );
 }
 
 /**
  * /new [name] [path] - Start a fresh session.
- * With args: creates named session at path
- * Without args: clears current session, next message starts fresh
  */
 export async function handleNew(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -79,42 +62,29 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   // Parse optional args: /new [name] [path]
   const text = ctx.message?.text || "";
-  const parts = text.split(/\s+/).slice(1); // Remove /new
+  const parts = text.split(/\s+/).slice(1);
   const explicitName = parts[0] || undefined;
   const explicitPath = parts[1] || WORKING_DIR;
 
   // Stop any running query
   if (session.isRunning) {
-    const result = await session.stop();
-    if (result) {
-      await Bun.sleep(100);
-      session.clearStopRequested();
-    }
+    await session.stop();
+    await Bun.sleep(100);
+    session.clearStopRequested();
   }
 
   // Clear in-memory session
   await session.kill();
 
-  // Generate name and create placeholder session
-  const name = await generateName(explicitPath, explicitName);
-  const newSession: SessionInfo = {
-    id: "", // Will be set when first message is sent
-    name,
-    dir: explicitPath,
-    lastActivity: Date.now(),
-    source: "telegram",
-  };
-
-  await registerSession(newSession);
-  await setActiveSession(name);
+  // Create telegram session
+  const newSession = addTelegramSession(explicitPath, explicitName);
 
   // Update working directory for this session
   session.setWorkingDir(explicitPath);
 
   await ctx.reply(
-    `🆕 Session <code>${name}</code> created\n` +
-      `📁 <code>${explicitPath}</code>\n\n` +
-      `Next message starts the session.`,
+    `🆕 <code>${newSession.name}</code>\n` +
+      `📁 <code>${explicitPath}</code>`,
     { parse_mode: "HTML" }
   );
 }
@@ -131,15 +101,10 @@ export async function handleStop(ctx: Context): Promise<void> {
   }
 
   if (session.isRunning) {
-    const result = await session.stop();
-    if (result) {
-      // Wait for the abort to be processed, then clear stopRequested so next message can proceed
-      await Bun.sleep(100);
-      session.clearStopRequested();
-    }
-    // Silent stop - no message shown
+    await session.stop();
+    await Bun.sleep(100);
+    session.clearStopRequested();
   }
-  // If nothing running, also stay silent
 }
 
 /**
@@ -153,29 +118,32 @@ export async function handleStatus(ctx: Context): Promise<void> {
     return;
   }
 
-  const lines: string[] = ["📊 <b>Bot Status</b>\n"];
+  const activeSession = getActiveSession();
+  const sessionName = session.sessionName || activeSession?.name;
 
-  // Session status
-  if (session.isActive) {
-    lines.push(`✅ Session: Active (${session.sessionId?.slice(0, 8)}...)`);
-  } else {
-    lines.push("⚪ Session: None");
+  if (!sessionName) {
+    await ctx.reply("No session. Use /list or /new.");
+    return;
   }
 
-  // Query status
+  const lines: string[] = [`📊 <b>${sessionName}</b>\n`];
+
+  // Session/query status
   if (session.isRunning) {
     const elapsed = session.queryStarted
       ? Math.floor((Date.now() - session.queryStarted.getTime()) / 1000)
       : 0;
-    lines.push(`🔄 Query: Running (${elapsed}s)`);
+    lines.push(`🔄 Running (${elapsed}s)`);
     if (session.currentTool) {
       lines.push(`   └─ ${session.currentTool}`);
     }
-  } else {
-    lines.push("⚪ Query: Idle");
+  } else if (session.isActive) {
+    lines.push(`✅ Ready (${session.sessionId?.slice(0, 8)}...)`);
     if (session.lastTool) {
       lines.push(`   └─ Last: ${session.lastTool}`);
     }
+  } else {
+    lines.push("⏳ Not started");
   }
 
   // Last activity
@@ -183,60 +151,27 @@ export async function handleStatus(ctx: Context): Promise<void> {
     const ago = Math.floor(
       (Date.now() - session.lastActivity.getTime()) / 1000
     );
-    lines.push(`\n⏱️ Last activity: ${ago}s ago`);
+    lines.push(`⏱️ ${ago}s ago`);
   }
 
-  // Usage stats
+  // Usage stats (compact)
   if (session.lastUsage) {
-    const usage = session.lastUsage;
-    lines.push(
-      `\n📈 Last query usage:`,
-      `   Input: ${usage.input_tokens?.toLocaleString() || "?"} tokens`,
-      `   Output: ${usage.output_tokens?.toLocaleString() || "?"} tokens`
-    );
-    if (usage.cache_read_input_tokens) {
-      lines.push(
-        `   Cache read: ${usage.cache_read_input_tokens.toLocaleString()}`
-      );
-    }
+    const u = session.lastUsage;
+    const inK = Math.round((u.input_tokens || 0) / 1000);
+    const outK = Math.round((u.output_tokens || 0) / 1000);
+    lines.push(`📈 ${inK}k in / ${outK}k out`);
   }
 
   // Error status
   if (session.lastError) {
-    const ago = session.lastErrorTime
-      ? Math.floor((Date.now() - session.lastErrorTime.getTime()) / 1000)
-      : "?";
-    lines.push(`\n⚠️ Last error (${ago}s ago):`, `   ${session.lastError}`);
+    lines.push(`⚠️ ${session.lastError.slice(0, 50)}`);
   }
 
   // Working directory
-  lines.push(`\n📁 Working dir: <code>${WORKING_DIR}</code>`);
+  const dir = (session.workingDir || activeSession?.info.dir || WORKING_DIR).replace(/^\/Users\/[^/]+/, "~");
+  lines.push(`📁 <code>${dir}</code>`);
 
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
-}
-
-/**
- * /resume - Resume the last session.
- */
-export async function handleResume(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  if (session.isActive) {
-    await ctx.reply("Session already active. Use /new to start fresh first.");
-    return;
-  }
-
-  const [success, message] = session.resumeLast();
-  if (success) {
-    await ctx.reply(`✅ ${message}`);
-  } else {
-    await ctx.reply(`❌ ${message}`);
-  }
 }
 
 /**
@@ -251,9 +186,8 @@ export async function handleRestart(ctx: Context): Promise<void> {
     return;
   }
 
-  const msg = await ctx.reply("🔄 Restarting bot...");
+  const msg = await ctx.reply("🔄 Restarting...");
 
-  // Save message info so we can update it after restart
   if (chatId && msg.message_id) {
     try {
       await Bun.write(
@@ -269,15 +203,12 @@ export async function handleRestart(ctx: Context): Promise<void> {
     }
   }
 
-  // Give time for the message to send
   await Bun.sleep(500);
-
-  // Exit - launchd will restart us
   process.exit(0);
 }
 
 /**
- * /retry - Retry the last message (resume session and re-send).
+ * /retry - Retry the last message.
  */
 export async function handleRetry(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -287,41 +218,33 @@ export async function handleRetry(ctx: Context): Promise<void> {
     return;
   }
 
-  // Check if there's a message to retry
   if (!session.lastMessage) {
     await ctx.reply("❌ No message to retry.");
     return;
   }
 
-  // Check if something is already running
   if (session.isRunning) {
-    await ctx.reply("⏳ A query is already running. Use /stop first.");
+    await ctx.reply("⏳ Query running. Use /stop first.");
     return;
   }
 
   const message = session.lastMessage;
-  await ctx.reply(`🔄 Retrying: "${message.slice(0, 50)}${message.length > 50 ? "..." : ""}"`);
+  await ctx.reply(`🔄 Retrying...`);
 
-  // Simulate sending the message again by emitting a fake text message event
-  // We do this by directly calling the text handler logic
   const { handleText } = await import("./text");
 
-  // Create a modified context with the last message
   const fakeCtx = {
     ...ctx,
-    message: {
-      ...ctx.message,
-      text: message,
-    },
+    message: { ...ctx.message, text: message },
   } as Context;
 
   await handleText(fakeCtx);
 }
 
-// ============== Multi-Session Commands ==============
+// ============== Session Commands ==============
 
 /**
- * /list - Show all sessions.
+ * /list - Show all sessions with switch buttons.
  */
 export async function handleList(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -331,35 +254,40 @@ export async function handleList(ctx: Context): Promise<void> {
     return;
   }
 
-  // Cleanup dead/stale sessions first
-  await cleanupDeadSessions();
-
-  const sessions = await listSessions();
+  const sessions = getSessions();
+  const active = getActiveSession();
 
   if (sessions.length === 0) {
-    await ctx.reply(
-      "📋 No sessions\n\nUse /new or /discover to create one.",
-      { parse_mode: "HTML" }
-    );
+    await ctx.reply("📋 No sessions\n\nStart Claude Code to see sessions here.");
     return;
   }
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
   for (const s of sessions) {
-    const marker = s.isActive ? "▸ " : "  ";
-    const status = s.alive ? "" : " ⚠️";
-    const dir = s.info.dir.replace(/^\/Users\/[^/]+/, "~");
-    const ago = formatTimeAgo(s.info.lastActivity);
+    const marker = active?.name === s.name ? "▸ " : "  ";
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const ago = formatTimeAgo(s.lastActivity);
 
     lines.push(
-      `${marker}<code>${s.name}</code>${status}`,
+      `${marker}<code>${s.name}</code>`,
       `   ${dir}`,
       `   ${ago}`
     );
   }
 
-  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  // Create inline buttons for switching (exclude active session)
+  const buttons = sessions
+    .filter(s => active?.name !== s.name)
+    .map(s => [{
+      text: s.name,
+      callback_data: `switch:${s.name}`,
+    }]);
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+  });
 }
 
 /**
@@ -377,32 +305,31 @@ export async function handleSwitch(ctx: Context): Promise<void> {
   const name = text.split(/\s+/)[1];
 
   if (!name) {
-    await ctx.reply("Usage: /switch &lt;session-name&gt;", { parse_mode: "HTML" });
+    await ctx.reply("Usage: /switch &lt;name&gt;", { parse_mode: "HTML" });
     return;
   }
 
-  const success = await setActiveSession(name);
+  const success = setActiveSession(name);
 
   if (success) {
-    const active = await getActiveSession();
+    const active = getActiveSession();
     if (active) {
-      // Load session into memory
       session.loadFromRegistry(active.info);
+      const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
       await ctx.reply(
-        `✅ Switched to <code>${name}</code>\n` +
-          `📁 <code>${active.info.dir}</code>`,
+        `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
         { parse_mode: "HTML" }
       );
     }
   } else {
-    await ctx.reply(`❌ Session "${name}" not found. Use /list to see available.`);
+    await ctx.reply(`❌ "${name}" not found. Use /list.`);
   }
 }
 
 /**
- * /discover - Scan for desktop Claude Code sessions.
+ * /refresh - Force refresh sessions (hidden command for debugging).
  */
-export async function handleDiscover(ctx: Context): Promise<void> {
+export async function handleRefresh(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -410,92 +337,12 @@ export async function handleDiscover(ctx: Context): Promise<void> {
     return;
   }
 
-  const msg = await ctx.reply("🔍 Scanning for sessions...");
-
-  const { registered, skipped } = await discoverAndRegister();
-
-  if (registered.length === 0) {
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      msg.message_id,
-      "🔍 No new sessions found"
-    );
-    return;
-  }
-
-  const names = registered.map((n) => `• <code>${n}</code>`).join("\n");
-  await ctx.api.editMessageText(
-    ctx.chat!.id,
-    msg.message_id,
-    `🔍 Found ${registered.length} session(s):\n${names}\n\nUse /switch to activate.`,
-    { parse_mode: "HTML" }
-  );
+  await forceRefresh();
+  const sessions = getSessions();
+  await ctx.reply(`🔄 Refreshed. Found ${sessions.length} session(s).`);
 }
 
-/**
- * /kill - Kill (unregister) the active session.
- */
-export async function handleKill(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  const active = await getActiveSession();
-
-  if (!active) {
-    await ctx.reply("No active session to kill.");
-    return;
-  }
-
-  // Stop any running query
-  if (session.isRunning) {
-    await session.stop();
-    await Bun.sleep(100);
-  }
-
-  // Clear in-memory session
-  await session.kill();
-
-  // Unregister from registry
-  await unregisterSession(active.name);
-
-  await ctx.reply(`☠️ Session <code>${active.name}</code> killed`, { parse_mode: "HTML" });
-}
-
-/**
- * /killall - Kill all sessions.
- */
-export async function handleKillAll(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  // Stop any running query
-  if (session.isRunning) {
-    await session.stop();
-    await Bun.sleep(100);
-  }
-
-  // Clear in-memory session
-  await session.kill();
-
-  // Clear all from registry
-  const registry = await loadRegistry();
-  const count = Object.keys(registry.sessions).length;
-  registry.sessions = {};
-  registry.active = null;
-  await saveRegistry(registry);
-
-  await ctx.reply(`☠️ Killed ${count} session(s)`);
-}
-
-// Helper function
+// Helper
 function formatTimeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const mins = Math.floor(diff / 60000);

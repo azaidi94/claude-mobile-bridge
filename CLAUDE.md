@@ -43,8 +43,8 @@ Simplified single-session bot:
 
 Full multi-session bot:
 - **`index.ts`** - Entry point with all session commands
-- **`sessions/`** - Registry, discovery for multi-session support
-- **`scripts/claudet`** - CLI for starting registered sessions
+- **`sessions/watcher.ts`** - Auto-discovers sessions via fs.watch + polling
+- **`scripts/claudet`** - Simple CLI to start Claude Code
 
 ### Shared (`shared/`)
 
@@ -88,11 +88,12 @@ Do not add "Generated with Claude Code" footers or "Co-Authored-By" trailers to 
 
 ## claudet CLI (Coding Bot)
 
-Start Claude Code sessions pre-registered for Telegram control:
+Start Claude Code - sessions are auto-discovered by the bot:
 
 ```bash
 cd packages/coding
-./scripts/claudet                    # Current dir, auto name
-./scripts/claudet myproject          # Current dir, named "myproject"
-./scripts/claudet myproject ~/code   # ~/code dir, named "myproject"
+./scripts/claudet              # Current dir
+./scripts/claudet ~/code/foo   # Specific dir
 ```
+
+Sessions appear automatically in `/list` within seconds.

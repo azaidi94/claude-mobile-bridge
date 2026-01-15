@@ -10,7 +10,6 @@ import {
   type Options,
   type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { readFileSync } from "fs";
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
@@ -28,7 +27,7 @@ import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
 import type { SessionInfo } from "./sessions/types";
-import { updateSessionId, updateSessionActivity, getActiveSession } from "./sessions/registry";
+import { updateSessionId, updateSessionActivity } from "./sessions";
 
 /**
  * Determine thinking token budget based on message keywords.
@@ -289,11 +288,9 @@ class ClaudeSession {
           console.log(`GOT session_id: ${this.sessionId!.slice(0, 8)}...`);
           this.saveSession();
 
-          // Update registry with the new session ID
+          // Update watcher cache with the new session ID
           if (this._sessionName) {
-            updateSessionId(this._sessionName, this.sessionId).catch((e) =>
-              console.warn("Failed to update registry:", e)
-            );
+            updateSessionId(this._sessionName, this.sessionId);
           }
         }
 
@@ -527,48 +524,6 @@ class ClaudeSession {
     }
   }
 
-  /**
-   * Resume the last persisted session.
-   */
-  resumeLast(): [success: boolean, message: string] {
-    try {
-      const file = Bun.file(SESSION_FILE);
-      if (!file.size) {
-        return [false, "No saved session found"];
-      }
-
-      const text = readFileSync(SESSION_FILE, "utf-8");
-      const data: SessionData = JSON.parse(text);
-
-      if (!data.session_id) {
-        return [false, "Saved session file is empty"];
-      }
-
-      if (data.working_dir && data.working_dir !== WORKING_DIR) {
-        return [
-          false,
-          `Session was for different directory: ${data.working_dir}`,
-        ];
-      }
-
-      this.sessionId = data.session_id;
-      this.lastActivity = new Date();
-      console.log(
-        `Resumed session ${data.session_id.slice(0, 8)}... (saved at ${
-          data.saved_at
-        })`
-      );
-      return [
-        true,
-        `Resumed session \`${data.session_id.slice(0, 8)}...\` (saved at ${
-          data.saved_at
-        })`,
-      ];
-    } catch (error) {
-      console.error(`Failed to resume session: ${error}`);
-      return [false, `Failed to load session: ${error}`];
-    }
-  }
 }
 
 // Global session instance

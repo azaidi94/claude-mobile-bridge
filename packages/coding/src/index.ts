@@ -8,19 +8,17 @@ import { Bot } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
 import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
 import { unlinkSync, readFileSync, existsSync } from "fs";
+import { startWatcher, stopWatcher } from "./sessions";
 import {
   handleStart,
   handleNew,
   handleStop,
   handleStatus,
-  handleResume,
   handleRestart,
   handleRetry,
   handleList,
   handleSwitch,
-  handleDiscover,
-  handleKill,
-  handleKillAll,
+  handleRefresh,
   handleText,
   handleVoice,
   handlePhoto,
@@ -32,10 +30,9 @@ import {
 const bot = new Bot(TELEGRAM_TOKEN);
 
 // Sequentialize non-command messages per user (prevents race conditions)
-// Commands bypass sequentialization so they work immediately
 bot.use(
   sequentialize((ctx) => {
-    // Commands are not sequentialized - they work immediately
+    // Commands bypass sequentialization
     if (ctx.message?.text?.startsWith("/")) {
       return undefined;
     }
@@ -43,11 +40,10 @@ bot.use(
     if (ctx.message?.text?.startsWith("!")) {
       return undefined;
     }
-    // Callback queries (button clicks) are not sequentialized
+    // Callback queries not sequentialized
     if (ctx.callbackQuery) {
       return undefined;
     }
-    // Other messages are sequentialized per chat
     return ctx.chat?.id.toString();
   })
 );
@@ -58,27 +54,17 @@ bot.command("start", handleStart);
 bot.command("new", handleNew);
 bot.command("stop", handleStop);
 bot.command("status", handleStatus);
-bot.command("resume", handleResume);
 bot.command("restart", handleRestart);
 bot.command("retry", handleRetry);
 bot.command("list", handleList);
 bot.command("switch", handleSwitch);
-bot.command("discover", handleDiscover);
-bot.command("kill", handleKill);
-bot.command("killall", handleKillAll);
+bot.command("refresh", handleRefresh);
 
 // ============== Message Handlers ==============
 
-// Text messages
 bot.on("message:text", handleText);
-
-// Voice messages
 bot.on("message:voice", handleVoice);
-
-// Photo messages
 bot.on("message:photo", handlePhoto);
-
-// Document messages
 bot.on("message:document", handleDocument);
 
 // ============== Callback Queries ==============
@@ -94,28 +80,31 @@ bot.catch((err) => {
 // ============== Startup ==============
 
 console.log("=".repeat(50));
-console.log("Claude Coding Bot - Multi-Session");
+console.log("Claude Coding Bot");
 console.log("=".repeat(50));
 console.log(`Working directory: ${WORKING_DIR}`);
 console.log(`Allowed users: ${ALLOWED_USERS.length}`);
-console.log("Starting bot...");
 
-// Get bot info first
+// Start session watcher
+await startWatcher(() => {
+  console.log("Sessions updated");
+});
+
+// Get bot info
 const botInfo = await bot.api.getMe();
 console.log(`Bot started: @${botInfo.username}`);
 
-// Check for pending restart message to update
+// Check for pending restart message
 if (existsSync(RESTART_FILE)) {
   try {
     const data = JSON.parse(readFileSync(RESTART_FILE, "utf-8"));
     const age = Date.now() - data.timestamp;
 
-    // Only update if restart was recent (within 30 seconds)
     if (age < 30000 && data.chat_id && data.message_id) {
       await bot.api.editMessageText(
         data.chat_id,
         data.message_id,
-        "✅ Bot restarted"
+        "✅ Restarted"
       );
     }
     unlinkSync(RESTART_FILE);
@@ -125,13 +114,14 @@ if (existsSync(RESTART_FILE)) {
   }
 }
 
-// Start with concurrent runner (commands work immediately)
+// Start bot
 const runner = run(bot);
 
 // Graceful shutdown
 const stopRunner = () => {
   if (runner.isRunning()) {
     console.log("Stopping bot...");
+    stopWatcher();
     runner.stop();
   }
 };

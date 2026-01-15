@@ -1,42 +1,29 @@
 #!/bin/bash
 #
-# claudet - Start a Claude Code session that can be controlled from Telegram
+# claudet - Start a Claude Code session
+#
+# The session will be auto-discovered by the Telegram bot.
 #
 # Usage:
-#   claudet [name] [path]
+#   claudet [path]
 #
 # Examples:
-#   claudet                    # Use current dir, auto-generate name
-#   claudet myproject          # Use current dir, name it "myproject"
-#   claudet myproject ~/code   # Use ~/code, name it "myproject"
+#   claudet                    # Use current dir
+#   claudet ~/code/myproject   # Use specific dir
 #
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BRIDGE_DIR="$(dirname "$SCRIPT_DIR")"
-
-NAME="${1:-}"
-DIR="${2:-$PWD}"
+DIR="${1:-$PWD}"
 
 # Resolve to absolute path
 DIR="$(cd "$DIR" && pwd)"
 
-echo "Starting Claude session..."
+echo "Starting Claude Code..."
 echo "  Directory: $DIR"
-
-# Start session via SDK to get ID
-SESSION_ID=$(cd "$BRIDGE_DIR" && bun run scripts/start-session.ts "$DIR" "$NAME")
-
-if [ -z "$SESSION_ID" ]; then
-  echo "Error: Failed to get session ID"
-  exit 1
-fi
-
-echo "  Session ID: ${SESSION_ID:0:8}..."
 echo ""
-echo "Session registered. Starting Claude Code..."
+echo "Session will appear in Telegram bot automatically."
 echo ""
 
-# Start Claude Code with the session ID
-exec claude --resume "$SESSION_ID" --cwd "$DIR"
+# Start Claude Code
+exec claude --cwd "$DIR"

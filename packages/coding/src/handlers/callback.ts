@@ -11,6 +11,7 @@ import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
+import { setActiveSession, getActiveSession } from "../sessions";
 
 /**
  * Handle callback queries from inline keyboards.
@@ -32,7 +33,29 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2. Parse callback data: askuser:{request_id}:{option_index}
+  // 2. Handle switch callbacks: switch:{session_name}
+  if (callbackData.startsWith("switch:")) {
+    const name = callbackData.slice(7); // Remove "switch:" prefix
+    const success = setActiveSession(name);
+
+    if (success) {
+      const active = getActiveSession();
+      if (active) {
+        session.loadFromRegistry(active.info);
+        const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
+        await ctx.editMessageText(
+          `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
+          { parse_mode: "HTML" }
+        );
+        await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
+      }
+    } else {
+      await ctx.answerCallbackQuery({ text: "Session not found" });
+    }
+    return;
+  }
+
+  // 3. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;
@@ -47,7 +70,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const requestId = parts[1]!;
   const optionIndex = parseInt(parts[2]!, 10);
 
-  // 3. Load request file
+  // 4. Load request file
   const requestFile = `/tmp/ask-user-${requestId}.json`;
   let requestData: {
     question: string;
@@ -65,7 +88,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Get selected option
+  // 5. Get selected option
   if (optionIndex < 0 || optionIndex >= requestData.options.length) {
     await ctx.answerCallbackQuery({ text: "Invalid option" });
     return;
@@ -73,26 +96,26 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   const selectedOption = requestData.options[optionIndex]!;
 
-  // 5. Update the message to show selection
+  // 6. Update the message to show selection
   try {
     await ctx.editMessageText(`✓ ${selectedOption}`);
   } catch (error) {
     console.debug("Failed to edit callback message:", error);
   }
 
-  // 6. Answer the callback
+  // 7. Answer the callback
   await ctx.answerCallbackQuery({
     text: `Selected: ${selectedOption.slice(0, 50)}`,
   });
 
-  // 7. Delete request file
+  // 8. Delete request file
   try {
     unlinkSync(requestFile);
   } catch (error) {
     console.debug("Failed to delete request file:", error);
   }
 
-  // 8. Send the choice to Claude as a message
+  // 9. Send the choice to Claude as a message
   const message = selectedOption;
 
   // Interrupt any running query - button responses are always immediate

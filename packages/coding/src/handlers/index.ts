@@ -7,14 +7,11 @@ export {
   handleNew,
   handleStop,
   handleStatus,
-  handleResume,
   handleRestart,
   handleRetry,
   handleList,
   handleSwitch,
-  handleDiscover,
-  handleKill,
-  handleKillAll,
+  handleRefresh,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";

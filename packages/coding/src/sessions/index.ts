@@ -2,28 +2,17 @@
  * Session management module exports.
  */
 
-export type { SessionInfo, SessionRegistry, SessionListItem } from "./types";
+export type { SessionInfo } from "./types";
 
 export {
-  loadRegistry,
-  saveRegistry,
-  registerSession,
-  unregisterSession,
+  startWatcher,
+  stopWatcher,
+  forceRefresh,
+  getSessions,
   getActiveSession,
   setActiveSession,
-  updateSessionActivity,
-  updateSessionId,
-  generateName,
-  listSessions,
-  cleanupDeadSessions,
-  cleanupStaleSessions,
   getSession,
-  sessionFileExists,
-} from "./registry";
-
-export {
-  discoverDesktopSessions,
-  discoverAndRegister,
-  encodeProjectPath,
-  decodeProjectPath,
-} from "./discovery";
+  addTelegramSession,
+  updateSessionId,
+  updateSessionActivity,
+} from "./watcher";
