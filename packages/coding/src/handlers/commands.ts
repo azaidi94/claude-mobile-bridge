@@ -265,7 +265,8 @@ export async function handleList(ctx: Context): Promise<void> {
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
   for (const s of sessions) {
-    const marker = active?.name === s.name ? "▸ " : "  ";
+    const isActive = active?.name === s.name;
+    const marker = isActive ? "✅ " : "• ";
     const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     const ago = formatTimeAgo(s.lastActivity);
 
@@ -276,13 +277,11 @@ export async function handleList(ctx: Context): Promise<void> {
     );
   }
 
-  // Create inline buttons for switching (exclude active session)
-  const buttons = sessions
-    .filter(s => active?.name !== s.name)
-    .map(s => [{
-      text: s.name,
-      callback_data: `switch:${s.name}`,
-    }]);
+  // Create inline buttons for all sessions (mark active with ✓)
+  const buttons = sessions.map(s => [{
+    text: active?.name === s.name ? `✓ ${s.name}` : s.name,
+    callback_data: `switch:${s.name}`,
+  }]);
 
   await ctx.reply(lines.join("\n"), {
     parse_mode: "HTML",

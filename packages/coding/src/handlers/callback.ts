@@ -36,6 +36,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // 2. Handle switch callbacks: switch:{session_name}
   if (callbackData.startsWith("switch:")) {
     const name = callbackData.slice(7); // Remove "switch:" prefix
+    const currentActive = getActiveSession();
+
+    // Already on this session
+    if (currentActive?.name === name) {
+      await ctx.answerCallbackQuery({ text: `Already on ${name}` });
+      return;
+    }
+
     const success = setActiveSession(name);
 
     if (success) {
