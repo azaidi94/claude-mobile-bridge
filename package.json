@@ -1,0 +1,22 @@
+{
+  "name": "claude-mobile-bridge",
+  "private": true,
+  "workspaces": ["packages/*", "shared"],
+  "scripts": {
+    "assistant": "bun run --filter @claude-mobile-bridge/assistant start",
+    "coding": "bun run --filter @claude-mobile-bridge/coding start",
+    "typecheck": "bun run --filter '*' typecheck"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
+    "@grammyjs/runner": "^2.0.3",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "grammy": "^1.38.4",
+    "openai": "^6.15.0",
+    "zod": "^4.2.1"
+  }
+}

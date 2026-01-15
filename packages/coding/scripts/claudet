@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# claudet - Start a Claude Code session that can be controlled from Telegram
+#
+# Usage:
+#   claudet [name] [path]
+#
+# Examples:
+#   claudet                    # Use current dir, auto-generate name
+#   claudet myproject          # Use current dir, name it "myproject"
+#   claudet myproject ~/code   # Use ~/code, name it "myproject"
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BRIDGE_DIR="$(dirname "$SCRIPT_DIR")"
+
+NAME="${1:-}"
+DIR="${2:-$PWD}"
+
+# Resolve to absolute path
+DIR="$(cd "$DIR" && pwd)"
+
+echo "Starting Claude session..."
+echo "  Directory: $DIR"
+
+# Start session via SDK to get ID
+SESSION_ID=$(cd "$BRIDGE_DIR" && bun run scripts/start-session.ts "$DIR" "$NAME")
+
+if [ -z "$SESSION_ID" ]; then
+  echo "Error: Failed to get session ID"
+  exit 1
+fi
+
+echo "  Session ID: ${SESSION_ID:0:8}..."
+echo ""
+echo "Session registered. Starting Claude Code..."
+echo ""
+
+# Start Claude Code with the session ID
+exec claude --resume "$SESSION_ID" --cwd "$DIR"
