@@ -3,31 +3,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/Bun-1.0.23+-black.svg)](https://bun.sh/)
 
-Control Claude Code sessions from your phone via Telegram. Two bots for different use cases:
+Control Claude Code sessions from your phone via Telegram. Multi-session support for switching between projects.
 
 ![Demo](assets/demo.gif)
 
-## Bots
-
-### Personal Assistant Bot (`packages/assistant/`)
-
-A single-session 24/7 personal assistant. Point it at a folder with your `CLAUDE.md`, notes, and MCPs, and interact with Claude from anywhere.
-
-**Commands:** `/start`, `/new`, `/stop`, `/status`, `/retry`, `/resume`, `/restart`
-
-See [Personal Assistant Guide](docs/personal-assistant-guide.md) for setup ideas.
-
-### Coding Bot (`packages/coding/`)
-
-Multi-session support for switching between Claude Code projects. Control desktop sessions or create new ones on the fly.
-
-**Session Commands:** `/list`, `/switch`, `/discover`, `/new`, `/kill`, `/killall`
-**Control Commands:** `/start`, `/stop`, `/status`, `/retry`, `/resume`, `/restart`
-
-Includes `claudet` CLI for starting sessions pre-registered for Telegram control.
-
 ## Features
 
+- **Multi-session support** - Switch between Claude Code projects on the fly
+- **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Streaming responses** with live updates
 - **Voice messages** (transcribed via OpenAI Whisper)
 - **Photos & documents** (PDFs, images, text files)
@@ -35,6 +18,11 @@ Includes `claudet` CLI for starting sessions pre-registered for Telegram control
 - **Interrupt with `!`** - prefix message to interrupt current query
 - **MCP support** - configure in `mcp-config.ts`
 - **Interactive buttons** - Claude can present options as tappable buttons
+
+## Commands
+
+**Session Commands:** `/list`, `/switch`, `/discover`, `/new`, `/kill`, `/killall`
+**Control Commands:** `/start`, `/stop`, `/status`, `/retry`, `/resume`, `/restart`
 
 ## Quick Start
 
@@ -56,11 +44,6 @@ bun install
 ### Configure
 
 ```bash
-# For Personal Assistant Bot
-cp packages/assistant/.env.example packages/assistant/.env
-# Edit with your credentials
-
-# For Coding Bot
 cp packages/coding/.env.example packages/coding/.env
 # Edit with your credentials
 ```
@@ -82,11 +65,13 @@ Find your Telegram user ID by messaging [@userinfobot](https://t.me/userinfobot)
 ### Run
 
 ```bash
-# Personal Assistant Bot
-cd packages/assistant && bun run start
-
-# Coding Bot
 cd packages/coding && bun run start
+```
+
+Or from the root:
+
+```bash
+bun run coding
 ```
 
 ## Project Structure
@@ -94,12 +79,7 @@ cd packages/coding && bun run start
 ```
 claude-mobile-bridge/
 ├── packages/
-│   ├── assistant/     # Personal assistant bot (single session)
-│   │   ├── src/
-│   │   ├── .env.example
-│   │   └── mcp-config.ts
-│   │
-│   └── coding/        # Coding bot (multi-session)
+│   └── coding/        # Multi-session coding bot
 │       ├── src/
 │       ├── scripts/claudet
 │       ├── .env.example
@@ -107,12 +87,11 @@ claude-mobile-bridge/
 │
 ├── shared/            # Common utilities
 ├── docs/
-│   ├── personal-assistant-guide.md
 │   └── SECURITY.md
 └── package.json       # Workspace root
 ```
 
-## claudet CLI (Coding Bot)
+## claudet CLI
 
 Start Claude Code sessions that auto-register for Telegram control:
 
@@ -122,6 +101,8 @@ cd packages/coding
 ./scripts/claudet myproject          # Current dir, named "myproject"
 ./scripts/claudet myproject ~/code   # ~/code dir, named "myproject"
 ```
+
+Sessions appear automatically in `/list` within seconds.
 
 ## Running as a Service (macOS)
 
@@ -140,18 +121,6 @@ tail -f /tmp/claude-telegram-bot-ts.log
 
 Send `/setcommands` to [@BotFather](https://t.me/botfather):
 
-**For Assistant Bot:**
-```
-start - Show status
-new - Start fresh session
-stop - Stop current query
-status - Check bot status
-retry - Retry last message
-resume - Resume last session
-restart - Restart bot
-```
-
-**For Coding Bot:**
 ```
 start - Show status
 list - Show all sessions

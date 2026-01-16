@@ -3,7 +3,6 @@
   "private": true,
   "workspaces": ["packages/*", "shared"],
   "scripts": {
-    "assistant": "bun run --filter @claude-mobile-bridge/assistant start",
     "coding": "bun run --filter @claude-mobile-bridge/coding start",
     "typecheck": "bun run --filter '*' typecheck"
   },
