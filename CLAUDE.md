@@ -6,22 +6,19 @@ This file provides guidance to Claude Code when working with this repository.
 
 ```bash
 bun install                        # Install all dependencies
-bun run assistant                  # Run personal assistant bot
 bun run coding                     # Run coding bot
 bun run typecheck                  # Typecheck all packages
 
-# Or directly in packages:
-cd packages/assistant && bun run start
+# Or directly:
 cd packages/coding && bun run start
 ```
 
 ## Architecture
 
-Claude Mobile Bridge - A monorepo with two Telegram bots for controlling Claude Code.
+Claude Mobile Bridge - A Telegram bot for controlling Claude Code sessions remotely.
 
 ### Packages
 
-- **`packages/assistant/`** - Single-session personal assistant bot
 - **`packages/coding/`** - Multi-session coding bot with session switching
 - **`shared/`** - Common utilities (formatting, types)
 
@@ -30,14 +27,6 @@ Claude Mobile Bridge - A monorepo with two Telegram bots for controlling Claude 
 ```
 Telegram message → Handler → Auth check → Rate limit → Claude session → Streaming response → Audit log
 ```
-
-### Assistant Bot (`packages/assistant/src/`)
-
-Simplified single-session bot:
-- **`index.ts`** - Entry point, registers handlers
-- **`config.ts`** - Environment parsing, MCP loading
-- **`session.ts`** - Simplified ClaudeSession (no multi-session)
-- **`handlers/`** - Command and message handlers
 
 ### Coding Bot (`packages/coding/src/`)
 
@@ -70,9 +59,7 @@ Full multi-session bot:
 
 ## Configuration
 
-Each package has its own `.env`:
-- `packages/assistant/.env`
-- `packages/coding/.env`
+Configure via `packages/coding/.env`:
 
 Key variables:
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
@@ -80,13 +67,13 @@ Key variables:
 - `ALLOWED_PATHS` - Directories Claude can access
 - `OPENAI_API_KEY` - For voice transcription
 
-MCP servers defined in `mcp-config.ts` in each package.
+MCP servers defined in `mcp-config.ts`.
 
 ## Commit Style
 
 Do not add "Generated with Claude Code" footers or "Co-Authored-By" trailers to commit messages.
 
-## claudet CLI (Coding Bot)
+## claudet CLI
 
 Start Claude Code - sessions are auto-discovered by the bot:
 
