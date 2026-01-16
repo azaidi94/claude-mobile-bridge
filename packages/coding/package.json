@@ -2,9 +2,6 @@
   "name": "@claude-mobile-bridge/coding",
   "private": true,
   "type": "module",
-  "bin": {
-    "claudet": "./scripts/claudet"
-  },
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
