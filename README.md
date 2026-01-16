@@ -81,7 +81,6 @@ claude-mobile-bridge/
 ├── packages/
 │   └── coding/        # Multi-session coding bot
 │       ├── src/
-│       ├── scripts/claudet
 │       ├── .env.example
 │       └── mcp-config.ts
 │
@@ -91,15 +90,13 @@ claude-mobile-bridge/
 └── package.json       # Workspace root
 ```
 
-## claudet CLI
+## Session Auto-Discovery
 
-Start Claude Code sessions that auto-register for Telegram control:
+The bot automatically discovers running Claude Code sessions. Just start Claude Code normally:
 
 ```bash
-cd packages/coding
-./scripts/claudet                    # Current dir, auto name
-./scripts/claudet myproject          # Current dir, named "myproject"
-./scripts/claudet myproject ~/code   # ~/code dir, named "myproject"
+claude                    # Current directory
+claude --cwd ~/code/foo   # Specific directory
 ```
 
 Sessions appear automatically in `/list` within seconds.

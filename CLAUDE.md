@@ -32,8 +32,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 
 Full multi-session bot:
 - **`index.ts`** - Entry point with all session commands
-- **`sessions/watcher.ts`** - Auto-discovers sessions via fs.watch + polling
-- **`scripts/claudet`** - Simple CLI to start Claude Code
+- **`sessions/watcher.ts`** - Auto-discovers running Claude Code sessions via fs.watch + polling
 
 ### Shared (`shared/`)
 
@@ -73,14 +72,13 @@ MCP servers defined in `mcp-config.ts`.
 
 Do not add "Generated with Claude Code" footers or "Co-Authored-By" trailers to commit messages.
 
-## claudet CLI
+## Session Auto-Discovery
 
-Start Claude Code - sessions are auto-discovered by the bot:
+The bot automatically discovers running Claude Code sessions. Just start Claude Code normally:
 
 ```bash
-cd packages/coding
-./scripts/claudet              # Current dir
-./scripts/claudet ~/code/foo   # Specific dir
+claude                    # Current directory
+claude --cwd ~/code/foo   # Specific directory
 ```
 
 Sessions appear automatically in `/list` within seconds.
