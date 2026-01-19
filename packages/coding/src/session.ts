@@ -310,7 +310,7 @@ class ClaudeSession {
         if (event.type === "user" && event.message?.content) {
           const content = String(event.message.content);
           const match = content.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
-          if (match) {
+          if (match?.[1]) {
             const cmdOutput = match[1].trim();
             console.log(`[QUERY] Local command output: ${cmdOutput.slice(0, 100)}`);
             if (cmdOutput) {
