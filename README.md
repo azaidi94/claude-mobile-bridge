@@ -21,8 +21,8 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 ## Commands
 
-**Session Commands:** `/list`, `/switch`, `/discover`, `/new`, `/kill`, `/killall`
-**Control Commands:** `/start`, `/stop`, `/status`, `/retry`, `/resume`, `/restart`
+**Session Commands:** `/list`, `/switch`, `/new`
+**Control Commands:** `/start`, `/help`, `/stop`, `/status`, `/retry`, `/restart`
 
 ## Quick Start
 
@@ -119,15 +119,13 @@ tail -f /tmp/claude-telegram-bot-ts.log
 Send `/setcommands` to [@BotFather](https://t.me/botfather):
 
 ```
-start - Show status
-list - Show all sessions
-switch - Switch to session
-discover - Find desktop sessions
-new - Create new session
-kill - Kill active session
-killall - Kill all sessions
+start - Welcome message
+help - Show all commands
+list - List sessions
+switch - Switch session
+new - New session
+status - Session status
 stop - Stop current query
-status - Check bot status
 retry - Retry last message
 restart - Restart bot
 ```
