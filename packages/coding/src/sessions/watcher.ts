@@ -34,14 +34,14 @@ let onChangeCallback: (() => void) | null = null;
 
 /**
  * Get directories of running Claude Code processes.
+ * Only includes processes with a TTY (filters out orphans).
  */
 async function getRunningClaudeDirectories(): Promise<Set<string>> {
   const dirs = new Set<string>();
   try {
-    // Find claude processes (named "claude" or version numbers like "2.1.5")
-    // and get their working directories via lsof
+    // Find claude processes with a TTY (not "??") and get their working directories
     const { stdout } = await execAsync(
-      `ps -eo pid,comm | grep -E "^[0-9]+\\s+claude$|^[0-9]+\\s+[0-9]+\\.[0-9]+\\.[0-9]+$" | awk '{print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`
+      `ps -eo pid,tty,comm | awk '($3 == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`
     );
     for (const line of stdout.trim().split("\n")) {
       if (line) dirs.add(line);
@@ -60,7 +60,7 @@ async function parseSessionFile(
 ): Promise<{ sessionId: string; cwd: string } | null> {
   try {
     const content = await readFile(filePath, "utf-8");
-    const lines = content.split("\n").filter(Boolean).slice(0, 20);
+    const lines = content.split("\n").filter(Boolean).slice(0, 100);
 
     let sessionId: string | null = null;
     let cwd: string | null = null;
