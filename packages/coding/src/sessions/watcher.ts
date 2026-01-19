@@ -4,9 +4,9 @@
  */
 
 import { watch, type FSWatcher } from "fs";
-import { readdir, stat, readFile } from "fs/promises";
+import { readdir, stat, readFile, writeFile, unlink } from "fs/promises";
 import { join, basename } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import type { SessionInfo } from "./types";
@@ -14,6 +14,7 @@ import type { SessionInfo } from "./types";
 const execAsync = promisify(exec);
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects");
+const ACTIVE_SESSION_FILE = join(tmpdir(), "claude-telegram-active-session.txt");
 const POLL_INTERVAL_MS = 60_000; // 60s backup poll
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -31,6 +32,33 @@ const cache: SessionCache = {
 let watcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: (() => void) | null = null;
+
+/**
+ * Save active session name to disk for persistence across restarts.
+ */
+async function saveActiveSession(): Promise<void> {
+  try {
+    if (cache.active) {
+      await writeFile(ACTIVE_SESSION_FILE, cache.active, "utf-8");
+    } else {
+      await unlink(ACTIVE_SESSION_FILE).catch(() => {});
+    }
+  } catch {
+    // Ignore save errors
+  }
+}
+
+/**
+ * Load active session name from disk.
+ */
+async function loadActiveSession(): Promise<string | null> {
+  try {
+    const name = await readFile(ACTIVE_SESSION_FILE, "utf-8");
+    return name.trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Get directories of running Claude Code processes.
@@ -228,15 +256,21 @@ async function refresh(): Promise<void> {
 
   // Auto-select if none active
   if (!cache.active && cache.sessions.size > 0) {
-    // Pick most recent
-    let mostRecent: SessionInfo | null = null;
-    for (const s of cache.sessions.values()) {
-      if (!mostRecent || s.lastActivity > mostRecent.lastActivity) {
-        mostRecent = s;
+    // Try to restore persisted active session
+    const persisted = await loadActiveSession();
+    if (persisted && cache.sessions.has(persisted)) {
+      cache.active = persisted;
+    } else {
+      // Pick most recent
+      let mostRecent: SessionInfo | null = null;
+      for (const s of cache.sessions.values()) {
+        if (!mostRecent || s.lastActivity > mostRecent.lastActivity) {
+          mostRecent = s;
+        }
       }
-    }
-    if (mostRecent) {
-      cache.active = mostRecent.name;
+      if (mostRecent) {
+        cache.active = mostRecent.name;
+      }
     }
   }
 }
@@ -317,6 +351,7 @@ export function getActiveSession(): { name: string; info: SessionInfo } | null {
 export function setActiveSession(name: string): boolean {
   if (!cache.sessions.has(name)) return false;
   cache.active = name;
+  saveActiveSession(); // persist
   return true;
 }
 
@@ -343,6 +378,7 @@ export function addTelegramSession(dir: string, explicitName?: string): SessionI
 
   cache.sessions.set(name, info);
   cache.active = name;
+  saveActiveSession(); // persist
 
   return info;
 }
