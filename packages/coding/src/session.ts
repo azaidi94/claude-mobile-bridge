@@ -265,6 +265,9 @@ class ClaudeSession {
     let askUserTriggered = false;
 
     try {
+      console.log(`[QUERY] Sending prompt: "${messageToSend.slice(0, 50)}..."`);
+      console.log(`[QUERY] Is slash command: ${message.startsWith("/")}, resume: ${options.resume?.slice(0, 8) || "none"}`);
+
       // Use V1 query() API - supports all options including cwd, mcpServers, etc.
       const queryInstance = query({
         prompt: messageToSend,
@@ -274,8 +277,17 @@ class ClaudeSession {
         },
       });
 
+      // Check available commands
+      try {
+        const cmds = await queryInstance.supportedCommands();
+        console.log(`[QUERY] Supported commands: ${cmds.map(c => c.name).join(", ")}`);
+      } catch (e) {
+        console.log(`[QUERY] supportedCommands() failed: ${e}`);
+      }
+
       // Process streaming response
       for await (const event of queryInstance) {
+        console.log(`[QUERY] Event: ${event.type}`, JSON.stringify(event).slice(0, 300));
         // Check for abort
         if (this.stopRequested) {
           console.log("Query aborted by user");
@@ -291,6 +303,20 @@ class ClaudeSession {
           // Update watcher cache with the new session ID
           if (this._sessionName) {
             updateSessionId(this._sessionName, this.sessionId);
+          }
+        }
+
+        // Handle local command output (slash commands like /cost, /compact)
+        if (event.type === "user" && event.message?.content) {
+          const content = String(event.message.content);
+          const match = content.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+          if (match) {
+            const cmdOutput = match[1].trim();
+            console.log(`[QUERY] Local command output: ${cmdOutput.slice(0, 100)}`);
+            if (cmdOutput) {
+              responseParts.push(cmdOutput);
+              await statusCallback("text", cmdOutput, currentSegmentId);
+            }
           }
         }
 

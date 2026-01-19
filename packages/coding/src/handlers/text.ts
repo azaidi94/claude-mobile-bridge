@@ -24,6 +24,8 @@ export async function handleText(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   let message = ctx.message?.text;
 
+  console.log(`[TEXT] Received: "${message?.slice(0, 50)}..."`);
+
   if (!userId || !message || !chatId) {
     return;
   }
@@ -50,10 +52,18 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Store message for retry
+  // 4. Handle /clear locally (SDK doesn't support it)
+  if (message.trim() === "/clear") {
+    session.sessionId = null;
+    await ctx.reply("✓ Session cleared");
+    await auditLog(userId, username, "CLEAR", message, "Session cleared");
+    return;
+  }
+
+  // 5. Store message for retry
   session.lastMessage = message;
 
-  // 5. Sync with registry if no session loaded
+  // 7. Sync with registry if no session loaded
   if (!session.sessionName) {
     const active = await getActiveSession();
     if (active) {
@@ -61,17 +71,17 @@ export async function handleText(ctx: Context): Promise<void> {
     }
   }
 
-  // 6. Mark processing started
+  // 8. Mark processing started
   const stopProcessing = session.startProcessing();
 
-  // 7. Start typing indicator
+  // 9. Start typing indicator
   const typing = startTypingIndicator(ctx);
 
-  // 8. Create streaming state and callback
+  // 10. Create streaming state and callback
   let state = new StreamingState();
   let statusCallback = createStatusCallback(ctx, state);
 
-  // 9. Send to Claude with retry logic for crashes
+  // 11. Send to Claude with retry logic for crashes
   const MAX_RETRIES = 1;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -85,7 +95,9 @@ export async function handleText(ctx: Context): Promise<void> {
         ctx
       );
 
-      // 10. Audit log
+      console.log(`[TEXT] Response: "${response?.slice(0, 100)}..."`);
+
+      // 12. Audit log
       await auditLog(userId, username, "TEXT", message, response);
       break; // Success - exit retry loop
     } catch (error) {
@@ -131,7 +143,7 @@ export async function handleText(ctx: Context): Promise<void> {
     }
   }
 
-  // 11. Cleanup
+  // 13. Cleanup
   stopProcessing();
   typing.stop();
 }
