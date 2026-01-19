@@ -4,6 +4,7 @@
 
 export {
   handleStart,
+  handleHelp,
   handleNew,
   handleStop,
   handleStatus,

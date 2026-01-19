@@ -11,6 +11,7 @@ import { unlinkSync, readFileSync, existsSync } from "fs";
 import { startWatcher, stopWatcher } from "./sessions";
 import {
   handleStart,
+  handleHelp,
   handleNew,
   handleStop,
   handleStatus,
@@ -51,6 +52,7 @@ bot.use(
 // ============== Command Handlers ==============
 
 bot.command("start", handleStart);
+bot.command("help", handleHelp);
 bot.command("new", handleNew);
 bot.command("stop", handleStop);
 bot.command("status", handleStatus);

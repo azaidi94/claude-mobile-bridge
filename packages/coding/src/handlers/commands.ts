@@ -1,7 +1,7 @@
 /**
  * Command handlers for Claude Telegram Bot.
  *
- * /start, /new, /stop, /status, /restart, /retry
+ * /start, /help, /new, /stop, /status, /restart, /retry
  * /list, /switch
  */
 
@@ -34,17 +34,38 @@ export async function handleStart(ctx: Context): Promise<void> {
   await ctx.reply(
     `🤖 <b>Claude Coding Bot</b>\n\n` +
       `Active: <code>${sessionName}</code>\n\n` +
-      `<b>Commands:</b>\n` +
-      `/list - Show sessions\n` +
-      `/switch &lt;name&gt; - Switch session\n` +
-      `/new [name] [path] - New session\n` +
-      `/stop - Stop query\n` +
-      `/status - Session status\n` +
+      `Use /help for commands`,
+    { parse_mode: "HTML" }
+  );
+}
+
+/**
+ * /help - Show detailed help.
+ */
+export async function handleHelp(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  await ctx.reply(
+    `📚 <b>Commands</b>\n\n` +
+      `<b>Sessions:</b>\n` +
+      `/list - Show all sessions\n` +
+      `/switch &lt;name&gt; - Switch to session\n` +
+      `/new [name] [path] - Create new session\n\n` +
+      `<b>Control:</b>\n` +
+      `/stop - Stop current query\n` +
       `/retry - Retry last message\n` +
+      `/status - Show session details\n` +
       `/restart - Restart bot\n\n` +
       `<b>Tips:</b>\n` +
-      `• <code>!</code> prefix interrupts\n` +
-      `• "think" for reasoning`,
+      `• Prefix with <code>!</code> to interrupt queue\n` +
+      `• Say "think" for extended reasoning\n` +
+      `• Send voice/photo/files directly\n` +
+      `• Use /new to reset conversation`,
     { parse_mode: "HTML" }
   );
 }
