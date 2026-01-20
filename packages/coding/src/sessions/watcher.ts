@@ -290,7 +290,8 @@ export async function startWatcher(
   // Start fs.watch on projects directory
   try {
     watcher = watch(PROJECTS_DIR, { recursive: true }, async (event, filename) => {
-      if (filename?.endsWith(".jsonl")) {
+      // Only trigger on file creation/deletion ('rename'), not content changes ('change')
+      if (event === "rename" && filename?.endsWith(".jsonl")) {
         console.log(`Session change detected: ${event} ${filename}`);
         await refresh();
         onChangeCallback?.();
