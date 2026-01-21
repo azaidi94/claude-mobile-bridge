@@ -5,13 +5,12 @@
 
 Control Claude Code sessions from your phone via Telegram. Multi-session support for switching between projects.
 
-![Demo](assets/demo.gif)
-
 ## Features
 
 - **Multi-session support** - Switch between Claude Code projects on the fly
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Streaming responses** with live updates
+- **Plan mode** - Use `/plan` to have Claude propose a plan before executing
 - **Voice messages** (transcribed via OpenAI Whisper)
 - **Photos & documents** (PDFs, images, text files)
 - **Extended thinking** - use "think" keyword for deeper reasoning
@@ -22,7 +21,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 ## Commands
 
 **Session Commands:** `/list`, `/switch`, `/new`
-**Control Commands:** `/start`, `/help`, `/stop`, `/status`, `/retry`, `/restart`
+**Control Commands:** `/start`, `/help`, `/plan`, `/stop`, `/status`, `/retry`, `/restart`
 
 ## Quick Start
 
@@ -169,6 +168,7 @@ src/__tests__/
 ├── message-router.test.ts  # Message routing logic
 ├── commands.test.ts        # Telegram command handlers
 ├── streaming.test.ts       # Response streaming
+├── plan-mode.test.ts       # Plan mode functionality
 └── setup.test.ts           # Test setup utilities
 
 src/__mocks__/
@@ -285,6 +285,7 @@ help - Show all commands
 list - List sessions
 switch - Switch session
 new - New session
+plan - Start plan mode
 status - Session status
 stop - Stop current query
 retry - Retry last message
