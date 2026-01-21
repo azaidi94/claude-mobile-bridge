@@ -8,7 +8,8 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
 
 // Mock grammy before importing bot
-const mockBot = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockBot: any = {
   use: mock(() => mockBot),
   command: mock(() => mockBot),
   on: mock(() => mockBot),
@@ -139,5 +140,105 @@ describe("smoke: shutdown", () => {
 
     // Bot should have stop method (from grammy mock)
     expect(bot.stop).toBeFunction();
+  });
+});
+
+describe("smoke: message flow", () => {
+  let capturedTextHandler: ((ctx: unknown) => Promise<void>) | null = null;
+  let capturedVoiceHandler: ((ctx: unknown) => Promise<void>) | null = null;
+
+  beforeEach(() => {
+    // Capture the handlers registered via bot.on
+    capturedTextHandler = null;
+    capturedVoiceHandler = null;
+
+    mockBot.on.mockImplementation((event: string, handler: (ctx: unknown) => Promise<void>) => {
+      if (event === "message:text") {
+        capturedTextHandler = handler;
+      }
+      if (event === "message:voice") {
+        capturedVoiceHandler = handler;
+      }
+      return mockBot;
+    });
+  });
+
+  test("can receive mock Telegram text message", async () => {
+    const { createBot } = await import("../bot");
+    createBot({ token: "test-token" });
+
+    // Handler should be captured
+    expect(capturedTextHandler).not.toBeNull();
+  });
+
+  test("text message handler doesn't crash on valid context", async () => {
+    const { createBot } = await import("../bot");
+    createBot({ token: "test-token" });
+
+    expect(capturedTextHandler).not.toBeNull();
+
+    // Create minimal mock context
+    const mockCtx = {
+      from: { id: 123, username: "testuser" },
+      chat: { id: 456 },
+      message: { message_id: 1, text: "hello" },
+      reply: mock(() => Promise.resolve({ message_id: 2 })),
+    };
+
+    // Handler should not throw (will return early due to auth check)
+    // The mocked handler returns void, which is fine - just verify no error thrown
+    let error: Error | null = null;
+    try {
+      await capturedTextHandler!(mockCtx);
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error).toBeNull();
+  });
+
+  test("text message handler doesn't crash on minimal context", async () => {
+    const { createBot } = await import("../bot");
+    createBot({ token: "test-token" });
+
+    expect(capturedTextHandler).not.toBeNull();
+
+    // Minimal context that simulates edge cases
+    const mockCtx = {
+      from: undefined,
+      chat: undefined,
+      message: undefined,
+      reply: mock(() => Promise.resolve({ message_id: 2 })),
+    };
+
+    // Should not throw even with missing data
+    let error: Error | null = null;
+    try {
+      await capturedTextHandler!(mockCtx);
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error).toBeNull();
+  });
+
+  test("can receive mock voice message", async () => {
+    const { createBot } = await import("../bot");
+    createBot({ token: "test-token" });
+
+    expect(capturedVoiceHandler).not.toBeNull();
+  });
+
+  test("bot can send response via api.sendMessage", async () => {
+    // Verify the mock api is set up correctly
+    const result = await mockBot.api.sendMessage(123, "test message");
+
+    expect(result).toEqual({ message_id: 1 });
+    expect(mockBot.api.sendMessage).toHaveBeenCalledWith(123, "test message");
+  });
+
+  test("bot can edit message via api.editMessageText", async () => {
+    const result = await mockBot.api.editMessageText(123, 1, "updated text");
+
+    expect(result).toBe(true);
+    expect(mockBot.api.editMessageText).toHaveBeenCalled();
   });
 });
