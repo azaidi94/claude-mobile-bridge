@@ -154,26 +154,5 @@
       "Add troubleshooting section"
     ],
     "passes": true
-  },
-  {
-    "id": "manual-e2e-verification",
-    "description": "Manual end-to-end verification of bot functionality",
-    "priority": 7,
-    "phase": "verification",
-    "steps": [
-      "Start bot: bun run dev (verify clean startup)",
-      "Send /start command via Telegram (verify welcome message)",
-      "Start a Claude Code session in another terminal",
-      "Send /list command (verify session appears)",
-      "Send text message to bot (verify forwarding to Claude)",
-      "Verify response streams back to Telegram",
-      "Send voice message (verify transcription if OPENAI_API_KEY set)",
-      "Send photo to bot (verify image processing)",
-      "Upload document (verify file handling)",
-      "Test /switch between multiple sessions",
-      "Test graceful shutdown with Ctrl+C",
-      "Document results in plans/manual-verification.md"
-    ],
-    "passes": false
   }
 ]
