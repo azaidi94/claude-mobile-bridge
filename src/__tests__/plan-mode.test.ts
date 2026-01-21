@@ -120,13 +120,22 @@ mock.module("../session", () => ({
   },
 }));
 
-// Mock security
+// Mock security - must include all exports to avoid breaking other tests
 mock.module("../security", () => ({
   isAuthorized: mock((userId: number, allowedUsers: number[]) => allowedUsers.includes(userId)),
   rateLimiter: {
     check: mock(() => [true, 0] as [boolean, number]),
-    getStatus: mock(() => ({ tokens: 20, lastUpdate: Date.now() })),
+    getStatus: mock(() => ({ tokens: 20, lastUpdate: Date.now(), max: 20, refillRate: 1 })),
   },
+  checkCommandSafety: mock((cmd: string) => {
+    if (cmd.includes("rm -rf /")) return [false, "Blocked"];
+    return [true, ""];
+  }),
+  isPathAllowed: mock((path: string) => {
+    if (path.startsWith("/tmp")) return true;
+    if (path.startsWith("/etc")) return false;
+    return true;
+  }),
 }));
 
 // Mock utils
