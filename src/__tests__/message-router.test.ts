@@ -7,24 +7,46 @@
 
 import { describe, expect, test, beforeEach, afterEach, mock, spyOn } from "bun:test";
 
-// Mock config before importing handlers
-const mockConfig = {
+// Mock config before importing handlers - must use mock.module() for it to take effect
+mock.module("../config", () => ({
   ALLOWED_USERS: [123456],
   TELEGRAM_TOKEN: "test-token",
   WORKING_DIR: "/tmp/test",
+  OPENAI_API_KEY: "",
+  CLAUDE_CLI_PATH: "/usr/local/bin/claude",
   RATE_LIMIT_ENABLED: true,
   RATE_LIMIT_REQUESTS: 20,
   RATE_LIMIT_WINDOW: 60,
   ALLOWED_PATHS: ["/tmp"],
-  BLOCKED_PATTERNS: ["rm -rf /"],
+  BLOCKED_PATTERNS: [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "sudo rm",
+    ":(){ :|:& };:",
+    "> /dev/sd",
+    "mkfs.",
+    "dd if=",
+  ],
   SAFETY_PROMPT: "test prompt",
   MCP_SERVERS: {},
   SESSION_FILE: "/tmp/test-session.json",
+  RESTART_FILE: "/tmp/test-restart.json",
   STREAMING_THROTTLE_MS: 500,
+  TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/"],
   THINKING_KEYWORDS: ["think"],
   THINKING_DEEP_KEYWORDS: ["ultrathink"],
-};
+  QUERY_TIMEOUT_MS: 180000,
+  TRANSCRIPTION_PROMPT: "test",
+  TRANSCRIPTION_AVAILABLE: false,
+  MEDIA_GROUP_TIMEOUT: 1000,
+  TELEGRAM_MESSAGE_LIMIT: 4096,
+  TELEGRAM_SAFE_LIMIT: 4000,
+  BUTTON_LABEL_MAX_LENGTH: 30,
+  AUDIT_LOG_PATH: "/tmp/audit.log",
+  AUDIT_LOG_JSON: false,
+}));
 
 // Test helpers
 function createMockContext(overrides: Partial<{
