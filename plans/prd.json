@@ -122,44 +122,6 @@
     "passes": true
   },
   {
-    "id": "test-voice-handler",
-    "description": "Write unit tests for voice message transcription",
-    "priority": 3,
-    "phase": "testing",
-    "steps": [
-      "Create src/__tests__/voice-handler.test.ts",
-      "Test voice file download from Telegram",
-      "Test Whisper API integration (mocked)",
-      "Test transcription error handling",
-      "Test fallback when OPENAI_API_KEY not set",
-      "Test audio format conversion if needed",
-      "Mock OpenAI Whisper API",
-      "Mock file system operations",
-      "All tests pass: bun test src/__tests__/voice-handler.test.ts",
-      "Test coverage >80%"
-    ],
-    "passes": false
-  },
-  {
-    "id": "test-file-handler",
-    "description": "Write unit tests for file and photo upload handling",
-    "priority": 3,
-    "phase": "testing",
-    "steps": [
-      "Create src/__tests__/file-handler.test.ts",
-      "Test photo download and processing",
-      "Test document download and parsing",
-      "Test file size limit validation",
-      "Test unsupported file type handling",
-      "Test image optimization/resizing if implemented",
-      "Mock Telegram file API",
-      "Mock file system operations",
-      "All tests pass: bun test src/__tests__/file-handler.test.ts",
-      "Test coverage >80%"
-    ],
-    "passes": false
-  },
-  {
     "id": "test-streaming-responses",
     "description": "Write unit tests for Claude response streaming",
     "priority": 3,
@@ -174,56 +136,6 @@
       "Mock Claude Code session stream",
       "All tests pass: bun test src/__tests__/streaming.test.ts",
       "Test coverage >80%"
-    ],
-    "passes": false
-  },
-  {
-    "id": "test-error-handling",
-    "description": "Write unit tests for error handling and edge cases",
-    "priority": 4,
-    "phase": "testing",
-    "steps": [
-      "Create src/__tests__/error-handling.test.ts",
-      "Test network failure handling",
-      "Test API rate limiting responses",
-      "Test invalid message format handling",
-      "Test session crash recovery",
-      "Test concurrent request handling",
-      "Test timeout handling",
-      "All tests pass: bun test src/__tests__/error-handling.test.ts",
-      "Test coverage >80%"
-    ],
-    "passes": false
-  },
-  {
-    "id": "setup-ci-tests",
-    "description": "Set up GitHub Actions CI to run tests on every PR",
-    "priority": 5,
-    "phase": "ci",
-    "steps": [
-      "Create .github/workflows/test.yml",
-      "CI installs Bun and dependencies",
-      "CI runs typecheck: bun run typecheck",
-      "CI runs all tests: bun test",
-      "CI fails on any test failure",
-      "CI runs on pull_request and push to main",
-      "Add status badge to README.md",
-      "Test the workflow by pushing a commit"
-    ],
-    "passes": false
-  },
-  {
-    "id": "add-test-coverage-reporting",
-    "description": "Add test coverage reporting and enforce minimums",
-    "priority": 5,
-    "phase": "ci",
-    "steps": [
-      "Configure coverage thresholds in package.json or bun config",
-      "Set minimum coverage: 80% statements, 75% branches",
-      "CI fails if coverage drops below threshold",
-      "Generate coverage report: bun test --coverage",
-      "Add coverage badge to README.md",
-      "Document coverage requirements in CONTRIBUTING.md"
     ],
     "passes": false
   },

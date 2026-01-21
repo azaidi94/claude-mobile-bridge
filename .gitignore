@@ -40,5 +40,3 @@ mcp-config.ts
 .DS_Store
 /claude-bot-standalone
 
-# Claude plans
-/plans
