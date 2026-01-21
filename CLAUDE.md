@@ -5,39 +5,33 @@ This file provides guidance to Claude Code when working with this repository.
 ## Commands
 
 ```bash
-bun install                        # Install all dependencies
-bun run coding                     # Run coding bot
-bun run typecheck                  # Typecheck all packages
-
-# Or directly:
-cd packages/coding && bun run start
+bun install          # Install dependencies
+bun run start        # Run bot
+bun run dev          # Run bot with watch mode
+bun run typecheck    # Typecheck
+bun test             # Run tests
 ```
 
 ## Architecture
 
 Claude Mobile Bridge - A Telegram bot for controlling Claude Code sessions remotely.
 
-### Packages
+### Structure
 
-- **`packages/coding/`** - Multi-session coding bot with session switching
-- **`shared/`** - Common utilities (formatting, types)
+- **`src/`** - All source code
+  - **`index.ts`** - Entry point
+  - **`bot.ts`** - Bot factory
+  - **`handlers/`** - Command and message handlers
+  - **`sessions/`** - Session management and watcher
+  - **`formatting.ts`** - Markdown→HTML conversion
+  - **`types.ts`** - TypeScript types
+  - **`__tests__/`** - Tests
 
 ### Message Flow
 
 ```
 Telegram message → Handler → Auth check → Rate limit → Claude session → Streaming response → Audit log
 ```
-
-### Coding Bot (`packages/coding/src/`)
-
-Full multi-session bot:
-- **`index.ts`** - Entry point with all session commands
-- **`sessions/watcher.ts`** - Auto-discovers running Claude Code sessions via fs.watch + polling
-
-### Shared (`shared/`)
-
-- **`formatting.ts`** - Markdown→HTML conversion, tool status emoji
-- **`types.ts`** - Common TypeScript types
 
 ### Security Layers
 
@@ -50,15 +44,13 @@ Full multi-session bot:
 
 ## Patterns
 
-**Adding a command**: Create handler in `commands.ts`, register in `index.ts` with `bot.command("name", handler)`
+**Adding a command**: Create handler in `handlers/commands.ts`, register in `bot.ts` with `bot.command("name", handler)`
 
 **Streaming pattern**: All handlers use `createStatusCallback()` and `session.sendMessageStreaming()` for live updates.
 
-**Type checking**: Run `bun run typecheck` to check all packages.
-
 ## Configuration
 
-Configure via `packages/coding/.env`:
+Configure via `.env` (see `.env.example`):
 
 Key variables:
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
@@ -66,7 +58,7 @@ Key variables:
 - `ALLOWED_PATHS` - Directories Claude can access
 - `OPENAI_API_KEY` - For voice transcription
 
-MCP servers defined in `mcp-config.ts`.
+MCP servers defined in `mcp-config.ts` (copy from `mcp-config.example.ts`).
 
 ## Commit Style
 

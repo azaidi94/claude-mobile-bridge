@@ -1,10 +1,12 @@
 {
   "name": "claude-mobile-bridge",
   "private": true,
-  "workspaces": ["packages/*", "shared"],
+  "type": "module",
   "scripts": {
-    "coding": "bun run --filter @claude-mobile-bridge/coding start",
-    "typecheck": "bun run --filter '*' typecheck"
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",
