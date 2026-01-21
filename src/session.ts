@@ -25,7 +25,7 @@ import {
 import { formatToolStatus } from "./formatting";
 import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { checkCommandSafety, isPathAllowed } from "./security";
-import type { SessionData, StatusCallback, TokenUsage } from "./types";
+import type { SessionData, StatusCallback, TokenUsage, PlanApprovalState } from "./types";
 import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
 
@@ -88,6 +88,10 @@ class ClaudeSession {
   private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
 
+  // Plan mode state
+  private _isPlanMode = false;
+  private _pendingPlanApproval: PlanApprovalState | null = null;
+
   get workingDir(): string {
     return this._workingDir;
   }
@@ -102,6 +106,14 @@ class ClaudeSession {
 
   get isRunning(): boolean {
     return this.isQueryRunning || this._isProcessing;
+  }
+
+  get isPlanMode(): boolean {
+    return this._isPlanMode;
+  }
+
+  get pendingPlanApproval(): PlanApprovalState | null {
+    return this._pendingPlanApproval;
   }
 
   /**
@@ -170,6 +182,7 @@ class ClaudeSession {
    * Send a message to Claude with streaming updates via callback.
    *
    * @param ctx - grammY context for ask_user button display
+   * @param permissionMode - SDK permission mode (bypassPermissions or plan)
    */
   async sendMessageStreaming(
     message: string,
@@ -177,7 +190,8 @@ class ClaudeSession {
     userId: number,
     statusCallback: StatusCallback,
     chatId?: number,
-    ctx?: Context
+    ctx?: Context,
+    permissionMode: "bypassPermissions" | "plan" = "bypassPermissions"
   ): Promise<string> {
     // Set chat context for ask_user MCP tool
     if (chatId) {
@@ -214,14 +228,17 @@ class ClaudeSession {
       model: "claude-sonnet-4-5",
       cwd: this._workingDir,
       settingSources: ["user", "project"],
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      permissionMode: permissionMode,
+      allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
       systemPrompt: SAFETY_PROMPT,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
       resume: this.sessionId || undefined,
     };
+
+    // Track plan mode
+    this._isPlanMode = permissionMode === "plan";
 
     // Add Claude Code executable path if set (required for standalone builds)
     if (process.env.CLAUDE_CODE_PATH) {
@@ -263,6 +280,8 @@ class ClaudeSession {
     let lastTextUpdate = 0;
     let queryCompleted = false;
     let askUserTriggered = false;
+    let exitPlanModeTriggered = false;
+    let exitPlanToolUseId: string | null = null;
 
     try {
       console.log(`[QUERY] Sending prompt: "${messageToSend.slice(0, 50)}..."`);
@@ -410,6 +429,13 @@ class ClaudeSession {
                   }
                 }
               }
+
+              // Detect ExitPlanMode tool - Claude is done planning
+              if (toolName === "ExitPlanMode") {
+                exitPlanModeTriggered = true;
+                exitPlanToolUseId = block.id;
+                console.log(`ExitPlanMode detected, toolUseId: ${block.id}`);
+              }
             }
 
             // Text content
@@ -433,8 +459,8 @@ class ClaudeSession {
             }
           }
 
-          // Break out of event loop if ask_user was triggered
-          if (askUserTriggered) {
+          // Break out of event loop if ask_user or exitPlanMode was triggered
+          if (askUserTriggered || exitPlanModeTriggered) {
             break;
           }
         }
@@ -489,6 +515,17 @@ class ClaudeSession {
     if (askUserTriggered) {
       await statusCallback("done", "");
       return "[Waiting for user selection]";
+    }
+
+    // If ExitPlanMode was triggered, store approval state and return
+    if (exitPlanModeTriggered && exitPlanToolUseId) {
+      this._pendingPlanApproval = {
+        toolUseId: exitPlanToolUseId,
+        planSummary: responseParts.join("").slice(0, 500),
+        timestamp: Date.now(),
+      };
+      await statusCallback("done", "");
+      return "[Plan ready for approval]";
     }
 
     // Emit final segment
@@ -548,6 +585,66 @@ class ClaudeSession {
     } catch (error) {
       console.warn(`Failed to save session: ${error}`);
     }
+  }
+
+  /**
+   * Respond to a pending plan approval.
+   *
+   * @param action - 'accept', 'reject', or 'edit'
+   * @param feedback - User feedback for reject/edit
+   * @param statusCallback - Status callback for streaming
+   * @param ctx - grammY context
+   * @param chatId - Chat ID
+   * @returns Response from Claude
+   */
+  async respondToPlanApproval(
+    action: "accept" | "reject" | "edit",
+    feedback: string,
+    username: string,
+    userId: number,
+    statusCallback: StatusCallback,
+    chatId?: number,
+    ctx?: Context
+  ): Promise<string> {
+    if (!this._pendingPlanApproval) {
+      throw new Error("No pending plan approval");
+    }
+
+    const { toolUseId } = this._pendingPlanApproval;
+    this._pendingPlanApproval = null;
+
+    // Determine next permission mode
+    const nextPermissionMode = action === "accept" ? "bypassPermissions" : "plan";
+
+    // Build approval message
+    let message: string;
+    if (action === "accept") {
+      message = "Plan approved. Proceed with implementation.";
+      this._isPlanMode = false;
+    } else if (action === "reject") {
+      message = `Plan rejected. ${feedback || "Please revise the plan."}`;
+    } else {
+      message = `Feedback on plan: ${feedback}`;
+    }
+
+    console.log(`Plan ${action}: ${message.slice(0, 50)}...`);
+
+    return this.sendMessageStreaming(
+      message,
+      username,
+      userId,
+      statusCallback,
+      chatId,
+      ctx,
+      nextPermissionMode
+    );
+  }
+
+  /**
+   * Clear pending plan approval state.
+   */
+  clearPendingPlanApproval(): void {
+    this._pendingPlanApproval = null;
   }
 
 }

@@ -8,7 +8,7 @@
 import type { Context } from "grammy";
 import { session } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { isAuthorized } from "../security";
+import { isAuthorized, rateLimiter } from "../security";
 import {
   getSessions,
   getActiveSession,
@@ -16,6 +16,8 @@ import {
   addTelegramSession,
   forceRefresh,
 } from "../sessions";
+import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
 
 /**
  * /start - Show welcome message and status.
@@ -57,6 +59,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/switch &lt;name&gt; - Switch to session\n` +
       `/new [name] [path] - Create new session\n\n` +
       `<b>Control:</b>\n` +
+      `/plan &lt;msg&gt; - Start plan mode\n` +
       `/stop - Stop current query\n` +
       `/retry - Retry last message\n` +
       `/status - Show session details\n` +
@@ -360,6 +363,103 @@ export async function handleRefresh(ctx: Context): Promise<void> {
   await forceRefresh();
   const sessions = getSessions();
   await ctx.reply(`🔄 Refreshed. Found ${sessions.length} session(s).`);
+}
+
+/**
+ * /plan <message> - Start Claude in plan mode.
+ */
+export async function handlePlan(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const username = ctx.from?.username || "unknown";
+  const chatId = ctx.chat?.id;
+  const text = ctx.message?.text || "";
+
+  if (!userId || !chatId) {
+    return;
+  }
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  // Parse message after /plan
+  const message = text.replace(/^\/plan\s*/, "").trim();
+  if (!message) {
+    await ctx.reply("Usage: /plan &lt;your planning request&gt;", { parse_mode: "HTML" });
+    return;
+  }
+
+  // Rate limit
+  const [allowed, retryAfter] = rateLimiter.check(userId);
+  if (!allowed) {
+    await auditLogRateLimit(userId, username, retryAfter!);
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  // Sync with registry if no session loaded
+  if (!session.sessionName) {
+    const active = await getActiveSession();
+    if (active) {
+      session.loadFromRegistry(active.info);
+    }
+  }
+
+  // Mark processing started
+  const stopProcessing = session.startProcessing();
+  const typing = startTypingIndicator(ctx);
+
+  // Create streaming state
+  const state = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, state);
+
+  try {
+    await ctx.reply("📋 Starting plan mode...");
+
+    const response = await session.sendMessageStreaming(
+      message,
+      username,
+      userId,
+      statusCallback,
+      chatId,
+      ctx,
+      "plan"
+    );
+
+    // Check if plan is ready for approval
+    if (session.pendingPlanApproval) {
+      const requestId = `${Date.now()}`;
+      const keyboard = createPlanApprovalKeyboard(requestId);
+      await ctx.reply("📋 Plan ready. Review and approve?", { reply_markup: keyboard });
+    }
+
+    await auditLog(userId, username, "PLAN", message, response);
+  } catch (error) {
+    console.error("Error in plan mode:", error);
+
+    // Cleanup tool messages
+    for (const toolMsg of state.toolMessages) {
+      try {
+        await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    const errorStr = String(error);
+    if (errorStr.includes("abort") || errorStr.includes("cancel")) {
+      const wasInterrupt = session.consumeInterruptFlag();
+      if (!wasInterrupt) {
+        await ctx.reply("🛑 Query stopped.");
+      }
+    } else {
+      await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+    }
+  } finally {
+    stopProcessing();
+    typing.stop();
+  }
 }
 
 // Helper

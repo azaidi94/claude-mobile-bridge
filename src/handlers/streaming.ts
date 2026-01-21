@@ -38,6 +38,16 @@ export function createAskUserKeyboard(
 }
 
 /**
+ * Create inline keyboard for plan approval.
+ */
+export function createPlanApprovalKeyboard(requestId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Accept", `plan:accept:${requestId}`).row()
+    .text("❌ Reject", `plan:reject:${requestId}`).row()
+    .text("✏️ Edit", `plan:edit:${requestId}`);
+}
+
+/**
  * Check for pending ask-user requests and send inline keyboards.
  */
 export async function checkPendingAskUserRequests(

@@ -12,8 +12,9 @@ import {
   checkInterrupt,
   startTypingIndicator,
 } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
 import { getActiveSession, getSession } from "../sessions";
+import { pendingPlanFeedback } from "./callback";
 
 /**
  * Handle incoming text messages.
@@ -33,6 +34,50 @@ export async function handleText(ctx: Context): Promise<void> {
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    return;
+  }
+
+  // 1.5. Check for pending plan feedback
+  if (pendingPlanFeedback.has(chatId)) {
+    const requestId = pendingPlanFeedback.get(chatId)!;
+    pendingPlanFeedback.delete(chatId);
+
+    // Check if there's still a pending plan approval
+    if (!session.pendingPlanApproval) {
+      await ctx.reply("❌ Plan approval expired.");
+      return;
+    }
+
+    // Process feedback
+    const typing = startTypingIndicator(ctx);
+    const state = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, state);
+
+    try {
+      const response = await session.respondToPlanApproval(
+        "edit",
+        message,
+        ctx.from?.username || "unknown",
+        userId,
+        statusCallback,
+        chatId,
+        ctx
+      );
+
+      // Check if another plan approval is pending
+      if (session.pendingPlanApproval) {
+        const newRequestId = `${Date.now()}`;
+        const keyboard = createPlanApprovalKeyboard(newRequestId);
+        await ctx.reply("📋 Revised plan ready. Review and approve?", { reply_markup: keyboard });
+      }
+
+      await auditLog(userId, ctx.from?.username || "unknown", "PLAN_EDIT", message, response);
+    } catch (error) {
+      console.error("Error in plan feedback:", error);
+      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+    } finally {
+      typing.stop();
+    }
     return;
   }
 
