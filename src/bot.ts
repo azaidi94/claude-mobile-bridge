@@ -18,6 +18,7 @@ import {
   handleList,
   handleSwitch,
   handleRefresh,
+  handlePlan,
   handleText,
   handleVoice,
   handlePhoto,
@@ -66,6 +67,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("list", handleList);
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);
+  bot.command("plan", handlePlan);
 
   // Message handlers
   bot.on("message:text", handleText);

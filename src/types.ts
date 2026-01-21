@@ -75,3 +75,10 @@ export interface PendingMediaGroup {
 
 // Bot context with optional message
 export type BotContext = Context;
+
+// Plan mode approval state
+export interface PlanApprovalState {
+  toolUseId: string;
+  planSummary: string;
+  timestamp: number;
+}

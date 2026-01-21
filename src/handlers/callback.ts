@@ -1,7 +1,7 @@
 /**
  * Callback query handler for Claude Telegram Bot.
  *
- * Handles inline keyboard button presses (ask_user MCP integration).
+ * Handles inline keyboard button presses (ask_user MCP integration, plan approval).
  */
 
 import type { Context } from "grammy";
@@ -10,8 +10,11 @@ import { session } from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
 import { setActiveSession, getActiveSession } from "../sessions";
+
+// Track pending plan feedback by chat ID (exported for text.ts)
+export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
 
 /**
  * Handle callback queries from inline keyboards.
@@ -63,7 +66,70 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. Parse callback data: askuser:{request_id}:{option_index}
+  // 3. Handle plan approval callbacks: plan:{action}:{request_id}
+  if (callbackData.startsWith("plan:")) {
+    const parts = callbackData.split(":");
+    if (parts.length !== 3) {
+      await ctx.answerCallbackQuery({ text: "Invalid callback" });
+      return;
+    }
+
+    const action = parts[1] as "accept" | "reject" | "edit";
+    const requestId = parts[2]!;
+
+    // Check if there's a pending plan approval
+    if (!session.pendingPlanApproval) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" });
+      return;
+    }
+
+    if (action === "edit") {
+      // Store pending feedback state
+      pendingPlanFeedback.set(chatId, requestId);
+      await ctx.editMessageText("✏️ Reply with your feedback for the plan:");
+      await ctx.answerCallbackQuery({ text: "Send your feedback" });
+      return;
+    }
+
+    // Accept or Reject
+    await ctx.editMessageText(action === "accept" ? "✅ Plan accepted" : "❌ Plan rejected");
+    await ctx.answerCallbackQuery({ text: action === "accept" ? "Accepted" : "Rejected" });
+
+    // Start typing
+    const typing = startTypingIndicator(ctx);
+    const state = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, state);
+
+    try {
+      const feedback = action === "reject" ? "User rejected the plan." : "";
+      const response = await session.respondToPlanApproval(
+        action,
+        feedback,
+        username,
+        userId,
+        statusCallback,
+        chatId,
+        ctx
+      );
+
+      // Check if another plan approval is pending (for reject flow)
+      if (session.pendingPlanApproval) {
+        const newRequestId = `${Date.now()}`;
+        const keyboard = createPlanApprovalKeyboard(newRequestId);
+        await ctx.reply("📋 Revised plan ready. Review and approve?", { reply_markup: keyboard });
+      }
+
+      await auditLog(userId, username, "PLAN_" + action.toUpperCase(), "", response);
+    } catch (error) {
+      console.error("Error in plan approval:", error);
+      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+    } finally {
+      typing.stop();
+    }
+    return;
+  }
+
+  // 4. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;
