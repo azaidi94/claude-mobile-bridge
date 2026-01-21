@@ -1,0 +1,102 @@
+[2026-01-20 20:52] PRD Created
+- Generated comprehensive test-focused PRD
+- 14 tasks total: 1 refactor, 9 testing, 2 CI, 1 docs, 1 manual verification
+- Prioritized automated tests over manual testing
+- Estimated total time: ~6-7 hours of focused work
+- Ready for Ralph to begin
+
+[2026-01-20 21:05] smoke-test-infrastructure DONE
+- Created src/__tests__/ and src/__mocks__/ directories
+- Added test script to packages/coding/package.json
+- Created basic grammy mock in __mocks__/grammy.ts
+- Added setup.test.ts placeholder test
+- bun test passes (1 test)
+
+[2026-01-20] smoke-tests-bot-lifecycle DONE
+- Created bot.ts factory extracting createBot() from index.ts
+- index.ts now uses createBot() - cleaner separation
+- Created smoke.test.ts with 7 tests:
+  - import doesn't crash
+  - createBot returns instance
+  - command handlers registered (start, help, list, etc)
+  - message handlers registered (text, voice, photo, document)
+  - error handler set up
+  - sequentialization middleware configured
+  - shutdown capability exists
+- All tests pass: 8 total (7 smoke + 1 setup)
+- Typecheck passes
+- Next: smoke-tests-message-flow
+
+[2026-01-20] smoke-tests-message-flow DONE
+- Added 6 new tests in smoke.test.ts:
+  - can receive mock Telegram text message
+  - text message handler doesn't crash on valid context
+  - text message handler doesn't crash on minimal context
+  - can receive mock voice message
+  - bot can send response via api.sendMessage
+  - bot can edit message via api.editMessageText
+- Used mockImplementation to capture handlers registered via bot.on
+- Typed mockBot as any to fix TS errors with mock argument counts
+- All tests pass: 14 total
+- Typecheck passes
+- Next: flatten-monorepo
+
+[2026-01-21] flatten-monorepo DONE
+- Moved packages/coding/src/ to root src/
+- Merged package.json (removed workspaces, added start/dev/test/typecheck scripts)
+- Moved .env and .env.example to root
+- Removed shared/ (was duplicate of src/formatting.ts and src/types.ts)
+- Removed packages/ directory entirely
+- Updated CLAUDE.md with new structure
+- Reinstalled deps without workspace config
+- bun test passes: 14 tests
+- bun run typecheck passes
+- Next: test-session-manager
+
+[2026-01-21] test-session-manager DONE
+- Created src/__tests__/session-manager.test.ts with 30 tests
+- Tests cover:
+  - Basic operations (getSessions, getActiveSession, setActiveSession, getSession)
+  - Telegram session management (add, update, switch)
+  - Watcher lifecycle (start, stop, forceRefresh)
+  - Session discovery and persistence
+  - Concurrent operations
+  - Edge cases (empty paths, special chars, etc)
+- Used unique IDs per test to avoid state conflicts
+- bun test passes: 44 total (14 smoke + 30 session-manager)
+- bun run typecheck passes
+- Next: test-message-router
+
+[2026-01-21] test-message-router DONE
+- Created src/__tests__/message-router.test.ts with 57 tests
+- Tests cover:
+  - Authorization (isAuthorized for allowed/non-allowed users)
+  - Rate limiting (token bucket, exhaustion, retry timing)
+  - Message formatting (escapeHtml, convertMarkdownToHtml)
+  - Tool status formatting (Read, Write, Bash, Grep, MCP tools)
+  - Path validation (allowed paths, temp paths, normalization)
+  - Command safety (blocked patterns, rm validation)
+  - Streaming state (segment tracking, tool messages, throttling)
+  - Error handling (malformed input, empty strings)
+  - Session routing (active session, switching)
+  - Message sanitization (HTML injection prevention)
+- bun test passes: 101 total (14 smoke + 30 session-manager + 57 message-router)
+- bun run typecheck passes
+- Next: test-telegram-commands
+
+[2026-01-21] test-telegram-commands DONE
+- Created src/__tests__/commands.test.ts with 58 tests
+- Tests cover all command handlers:
+  - /start: welcome message, auth, session name display
+  - /help: all commands shown, tips section, HTML formatting
+  - /list: session list, inline keyboard buttons, time formatting
+  - /switch: session switching, error handling, usage display
+  - /status: running/ready/not started states, tool display, usage stats
+  - /new: session creation, path/name args, kills existing session
+  - /stop: silent stop, auth check
+  - /retry: last message retry, running check
+  - /refresh: session count display
+- Also tested: command parsing, edge cases, formatTimeAgo helper
+- bun test passes: 159 total (14 smoke + 30 session-manager + 57 message-router + 58 commands)
+- bun run typecheck passes
+- Next: test-voice-handler

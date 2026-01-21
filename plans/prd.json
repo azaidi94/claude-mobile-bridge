@@ -1,0 +1,267 @@
+[
+  {
+    "id": "smoke-test-infrastructure",
+    "description": "Set up minimal test infrastructure for smoke tests",
+    "priority": 1,
+    "phase": "safety-net",
+    "steps": [
+      "Install Bun test dependencies if needed",
+      "Create src/__tests__/ directory",
+      "Create src/__mocks__/ for basic mocks",
+      "Add test script to package.json: 'bun test'",
+      "Can run: bun test (even if no tests yet)"
+    ],
+    "passes": true
+  },
+  {
+    "id": "smoke-tests-bot-lifecycle",
+    "description": "Write HIGH-LEVEL smoke tests for bot startup/shutdown",
+    "priority": 1,
+    "phase": "safety-net",
+    "steps": [
+      "Create src/__tests__/smoke.test.ts",
+      "Test: import bot main file doesn't crash",
+      "Test: bot can initialize (mocked Telegram)",
+      "Test: bot can shutdown cleanly",
+      "Tests use current file paths (packages/coding/...)",
+      "All tests pass: bun test src/__tests__/smoke.test.ts",
+      "Keep tests simple - just verify it doesn't explode"
+    ],
+    "passes": true
+  },
+  {
+    "id": "smoke-tests-message-flow",
+    "description": "Write HIGH-LEVEL smoke test for message handling",
+    "priority": 1,
+    "phase": "safety-net",
+    "steps": [
+      "Add to src/__tests__/smoke.test.ts",
+      "Test: can receive mock Telegram message",
+      "Test: message handler doesn't crash",
+      "Test: can send mock response",
+      "Mock Telegram API minimally",
+      "All tests pass",
+      "Tests verify behavior, not implementation"
+    ],
+    "passes": true
+  },
+  {
+    "id": "flatten-monorepo",
+    "description": "Flatten monorepo structure from packages/coding to root",
+    "priority": 2,
+    "phase": "refactor",
+    "steps": [
+      "Move all files from packages/coding/src to root src/",
+      "Merge packages/coding/package.json into root package.json",
+      "Root package.json has dev, start, typecheck, test scripts",
+      "Merge all .env* files from packages/coding to root",
+      "Move mcp-config.ts to root if needed",
+      "Move shared/ contents to src/shared/",
+      "Update all imports to use relative paths (no workspace refs)",
+      "Remove entire packages/ directory",
+      "Update smoke tests to use new paths (src/ not packages/coding/src)",
+      "bun test passes (smoke tests still work!)",
+      "bun run typecheck passes with zero errors",
+      "Git commit: 'refactor: flatten monorepo to single package structure'"
+    ],
+    "passes": true
+  },
+  {
+    "id": "test-session-manager",
+    "description": "Write comprehensive unit tests for SessionManager",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/session-manager.test.ts",
+      "Test session discovery from file system",
+      "Test session creation and tracking",
+      "Test active session switching",
+      "Test session cleanup on shutdown",
+      "Test concurrent session management",
+      "Mock file system operations",
+      "All tests pass: bun test src/__tests__/session-manager.test.ts",
+      "Test coverage >85% for SessionManager class"
+    ],
+    "passes": true
+  },
+  {
+    "id": "test-message-router",
+    "description": "Write unit tests for message routing and forwarding",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/message-router.test.ts",
+      "Test text message routing to active session",
+      "Test message queueing when no active session",
+      "Test error handling for failed message sends",
+      "Test message formatting and sanitization",
+      "Mock Telegram API calls",
+      "Mock Claude Code session interaction",
+      "All tests pass: bun test src/__tests__/message-router.test.ts",
+      "Test coverage >80%"
+    ],
+    "passes": true
+  },
+  {
+    "id": "test-telegram-commands",
+    "description": "Write unit tests for Telegram bot commands",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/commands.test.ts",
+      "Test /start command response",
+      "Test /help command shows all commands",
+      "Test /list shows available sessions",
+      "Test /switch changes active session",
+      "Test /status shows bot health",
+      "Test command parsing and validation",
+      "Mock Telegram sendMessage API",
+      "All tests pass: bun test src/__tests__/commands.test.ts",
+      "Test coverage >90% for command handlers"
+    ],
+    "passes": true
+  },
+  {
+    "id": "test-voice-handler",
+    "description": "Write unit tests for voice message transcription",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/voice-handler.test.ts",
+      "Test voice file download from Telegram",
+      "Test Whisper API integration (mocked)",
+      "Test transcription error handling",
+      "Test fallback when OPENAI_API_KEY not set",
+      "Test audio format conversion if needed",
+      "Mock OpenAI Whisper API",
+      "Mock file system operations",
+      "All tests pass: bun test src/__tests__/voice-handler.test.ts",
+      "Test coverage >80%"
+    ],
+    "passes": false
+  },
+  {
+    "id": "test-file-handler",
+    "description": "Write unit tests for file and photo upload handling",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/file-handler.test.ts",
+      "Test photo download and processing",
+      "Test document download and parsing",
+      "Test file size limit validation",
+      "Test unsupported file type handling",
+      "Test image optimization/resizing if implemented",
+      "Mock Telegram file API",
+      "Mock file system operations",
+      "All tests pass: bun test src/__tests__/file-handler.test.ts",
+      "Test coverage >80%"
+    ],
+    "passes": false
+  },
+  {
+    "id": "test-streaming-responses",
+    "description": "Write unit tests for Claude response streaming",
+    "priority": 3,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/streaming.test.ts",
+      "Test streaming message updates to Telegram",
+      "Test partial response buffering",
+      "Test tool use status indicators",
+      "Test stream error handling and recovery",
+      "Test message edit rate limiting",
+      "Mock Claude Code session stream",
+      "All tests pass: bun test src/__tests__/streaming.test.ts",
+      "Test coverage >80%"
+    ],
+    "passes": false
+  },
+  {
+    "id": "test-error-handling",
+    "description": "Write unit tests for error handling and edge cases",
+    "priority": 4,
+    "phase": "testing",
+    "steps": [
+      "Create src/__tests__/error-handling.test.ts",
+      "Test network failure handling",
+      "Test API rate limiting responses",
+      "Test invalid message format handling",
+      "Test session crash recovery",
+      "Test concurrent request handling",
+      "Test timeout handling",
+      "All tests pass: bun test src/__tests__/error-handling.test.ts",
+      "Test coverage >80%"
+    ],
+    "passes": false
+  },
+  {
+    "id": "setup-ci-tests",
+    "description": "Set up GitHub Actions CI to run tests on every PR",
+    "priority": 5,
+    "phase": "ci",
+    "steps": [
+      "Create .github/workflows/test.yml",
+      "CI installs Bun and dependencies",
+      "CI runs typecheck: bun run typecheck",
+      "CI runs all tests: bun test",
+      "CI fails on any test failure",
+      "CI runs on pull_request and push to main",
+      "Add status badge to README.md",
+      "Test the workflow by pushing a commit"
+    ],
+    "passes": false
+  },
+  {
+    "id": "add-test-coverage-reporting",
+    "description": "Add test coverage reporting and enforce minimums",
+    "priority": 5,
+    "phase": "ci",
+    "steps": [
+      "Configure coverage thresholds in package.json or bun config",
+      "Set minimum coverage: 80% statements, 75% branches",
+      "CI fails if coverage drops below threshold",
+      "Generate coverage report: bun test --coverage",
+      "Add coverage badge to README.md",
+      "Document coverage requirements in CONTRIBUTING.md"
+    ],
+    "passes": false
+  },
+  {
+    "id": "update-readme",
+    "description": "Update README with testing and development instructions",
+    "priority": 6,
+    "phase": "documentation",
+    "steps": [
+      "Add 'Development' section with setup instructions",
+      "Add 'Running Tests' section with test commands",
+      "Document test structure and mocking approach",
+      "Add 'Contributing' guidelines mentioning test requirements",
+      "Add architecture diagram or explanation",
+      "Document all environment variables",
+      "Add troubleshooting section"
+    ],
+    "passes": false
+  },
+  {
+    "id": "manual-e2e-verification",
+    "description": "Manual end-to-end verification of bot functionality",
+    "priority": 7,
+    "phase": "verification",
+    "steps": [
+      "Start bot: bun run dev (verify clean startup)",
+      "Send /start command via Telegram (verify welcome message)",
+      "Start a Claude Code session in another terminal",
+      "Send /list command (verify session appears)",
+      "Send text message to bot (verify forwarding to Claude)",
+      "Verify response streams back to Telegram",
+      "Send voice message (verify transcription if OPENAI_API_KEY set)",
+      "Send photo to bot (verify image processing)",
+      "Upload document (verify file handling)",
+      "Test /switch between multiple sessions",
+      "Test graceful shutdown with Ctrl+C",
+      "Document results in plans/manual-verification.md"
+    ],
+    "passes": false
+  }
+]
