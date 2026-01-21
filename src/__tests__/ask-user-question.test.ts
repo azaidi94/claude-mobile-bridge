@@ -338,6 +338,7 @@ describe("AskUserQuestion: state management", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const state = pendingAskUserQuestions.get("req-123");
@@ -373,6 +374,7 @@ describe("AskUserQuestion: state management", () => {
       currentIndex: 0,
       answers: [] as string[],
       chatId: 789,
+      isPlanMode: false,
     };
 
     pendingAskUserQuestions.set("req-123", state);
@@ -407,6 +409,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -434,6 +437,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -464,6 +468,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -507,6 +512,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -535,6 +541,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -566,6 +573,7 @@ describe("AskUserQuestion: callback handling", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
 
     const ctx = createMockContext({
@@ -605,6 +613,7 @@ describe("AskUserQuestion: custom text input", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
     pendingAskUserQuestionCustom.set(789, "req-custom");
 
@@ -640,6 +649,7 @@ describe("AskUserQuestion: custom text input", () => {
       currentIndex: 0,
       answers: [],
       chatId: 789,
+      isPlanMode: false,
     });
     pendingAskUserQuestionCustom.set(789, "req-custom-multi");
 

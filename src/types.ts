@@ -107,4 +107,5 @@ export interface AskUserQuestionState {
   currentIndex: number;
   answers: string[];
   chatId: number;
+  isPlanMode: boolean;
 }

@@ -9,6 +9,7 @@ import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./conf
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import { startWatcher, stopWatcher } from "./sessions";
 import { createBot } from "./bot";
+import pkg from "../package.json";
 
 // Create bot instance using factory
 const bot = createBot({ token: TELEGRAM_TOKEN });
@@ -16,7 +17,7 @@ const bot = createBot({ token: TELEGRAM_TOKEN });
 // ============== Startup ==============
 
 console.log("=".repeat(50));
-console.log("Claude Coding Bot");
+console.log(`Claude Coding Bot v${pkg.version}`);
 console.log("=".repeat(50));
 console.log(`Working directory: ${WORKING_DIR}`);
 console.log(`Allowed users: ${ALLOWED_USERS.length}`);

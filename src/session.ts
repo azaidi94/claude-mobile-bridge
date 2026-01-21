@@ -288,9 +288,6 @@ class ClaudeSession {
     let lastPlanFilePath: string | null = null;
 
     try {
-      console.log(`[QUERY] Sending prompt: "${messageToSend.slice(0, 50)}..."`);
-      console.log(`[QUERY] Is slash command: ${message.startsWith("/")}, resume: ${options.resume?.slice(0, 8) || "none"}`);
-
       // Use V1 query() API - supports all options including cwd, mcpServers, etc.
       const queryInstance = query({
         prompt: messageToSend,
@@ -300,17 +297,8 @@ class ClaudeSession {
         },
       });
 
-      // Check available commands
-      try {
-        const cmds = await queryInstance.supportedCommands();
-        console.log(`[QUERY] Supported commands: ${cmds.map(c => c.name).join(", ")}`);
-      } catch (e) {
-        console.log(`[QUERY] supportedCommands() failed: ${e}`);
-      }
-
       // Process streaming response
       for await (const event of queryInstance) {
-        console.log(`[QUERY] Event: ${event.type}`, JSON.stringify(event).slice(0, 300));
         // Check for abort
         if (this.stopRequested) {
           console.log("Query aborted by user");
@@ -449,12 +437,12 @@ class ClaudeSession {
                 console.log(`AskUserQuestion detected, toolUseId: ${block.id}`);
               }
 
-              // Track Write operations to plan files (for showing plan content later)
-              if (toolName === "Write" && this._isPlanMode) {
+              // Track Write/Edit operations to plan files (for showing plan content later)
+              if ((toolName === "Write" || toolName === "Edit") && this._isPlanMode) {
                 const filePath = String(toolInput.file_path || "");
                 if (filePath.endsWith(".md") || filePath.includes("plan")) {
                   lastPlanFilePath = filePath;
-                  console.log(`Plan file written: ${filePath}`);
+                  console.log(`Plan file updated: ${filePath}`);
                 }
               }
             }
@@ -544,7 +532,8 @@ class ClaudeSession {
         ctx,
         chatId,
         askUserQuestionInput,
-        askUserQuestionToolUseId
+        askUserQuestionToolUseId,
+        this._isPlanMode
       );
       if (buttonsSent) {
         await statusCallback("done", "");
@@ -569,7 +558,7 @@ class ClaudeSession {
       this._pendingPlanApproval = {
         toolUseId: exitPlanToolUseId,
         planSummary: responseParts.join("").slice(0, 500),
-        planContent: planContent.slice(0, 3000), // reasonable limit
+        planContent,
         timestamp: Date.now(),
       };
       await statusCallback("done", "");

@@ -17,6 +17,7 @@ import {
   createAskUserQuestionKeyboard,
   pendingAskUserQuestions,
   pendingAskUserQuestionCustom,
+  sendPlanContent,
 } from "./streaming";
 import { setActiveSession, getActiveSession } from "../sessions";
 
@@ -218,25 +219,39 @@ export async function handleCallback(ctx: Context): Promise<void> {
         await ctx.editMessageText(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
       } else {
         // All questions answered - send to Claude
+        const wasPlanMode = pending.isPlanMode;
         pendingAskUserQuestions.delete(requestId);
         const answersText = pending.answers.join(", ");
         await ctx.editMessageText(`✅ Answered: ${answersText}`);
 
-        // Send answers to Claude
+        // Send answers to Claude (preserve plan mode)
         const typing = startTypingIndicator(ctx);
         const state = new StreamingState();
         const statusCallback = createStatusCallback(ctx, state);
 
         try {
+          const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
           const response = await session.sendMessageStreaming(
             answersText,
             username,
             userId,
             statusCallback,
             chatId,
-            ctx
+            ctx,
+            permissionMode
           );
           await auditLog(userId, username, "AUQ_ANSWER", answersText, response);
+
+          // Check if plan approval is pending (ExitPlanMode was called)
+          if (session.pendingPlanApproval) {
+            const displayContent = session.pendingPlanApproval.planContent || session.pendingPlanApproval.planSummary;
+            if (displayContent && displayContent.length > 50) {
+              await sendPlanContent(ctx, displayContent);
+            }
+
+            const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
+            await ctx.reply("Review and approve?", { reply_markup: keyboard });
+          }
         } catch (error) {
           console.error("Error in AskUserQuestion answer:", error);
           await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);

@@ -19,6 +19,7 @@ import {
   createAskUserQuestionKeyboard,
   pendingAskUserQuestions,
   pendingAskUserQuestionCustom,
+  sendPlanContent,
 } from "./streaming";
 import { getActiveSession, getSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
@@ -31,8 +32,6 @@ export async function handleText(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
   let message = ctx.message?.text;
-
-  console.log(`[TEXT] Received: "${message?.slice(0, 50)}..."`);
 
   if (!userId || !message || !chatId) {
     return;
@@ -114,25 +113,39 @@ export async function handleText(ctx: Context): Promise<void> {
       await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
     } else {
       // All questions answered - send to Claude
+      const wasPlanMode = pending.isPlanMode;
       pendingAskUserQuestions.delete(requestId);
       const answersText = pending.answers.join(", ");
       await ctx.reply(`✅ Answered: ${answersText}`);
 
-      // Send answers to Claude
+      // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
       const state = new StreamingState();
       const statusCallback = createStatusCallback(ctx, state);
 
       try {
+        const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
         const response = await session.sendMessageStreaming(
           answersText,
           username,
           userId,
           statusCallback,
           chatId,
-          ctx
+          ctx,
+          permissionMode
         );
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
+
+        // Check if plan approval is pending (ExitPlanMode was called)
+        if (session.pendingPlanApproval) {
+          const displayContent = session.pendingPlanApproval.planContent || session.pendingPlanApproval.planSummary;
+          if (displayContent && displayContent.length > 50) {
+            await sendPlanContent(ctx, displayContent);
+          }
+
+          const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
+          await ctx.reply("Review and approve?", { reply_markup: keyboard });
+        }
       } catch (error) {
         console.error("Error in AskUserQuestion custom answer:", error);
         await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
@@ -202,10 +215,24 @@ export async function handleText(ctx: Context): Promise<void> {
         ctx
       );
 
-      console.log(`[TEXT] Response: "${response?.slice(0, 100)}..."`);
-
       // 12. Audit log
       await auditLog(userId, username, "TEXT", message, response);
+
+      // 13. Check if plan approval is pending (ExitPlanMode was called)
+      if (session.pendingPlanApproval) {
+        const approval = session.pendingPlanApproval;
+        const requestId = `${Date.now()}`;
+
+        // Send plan content
+        if (approval.planContent) {
+          await sendPlanContent(ctx, approval.planContent);
+        }
+
+        // Show approval buttons
+        const keyboard = createPlanApprovalKeyboard(requestId);
+        await ctx.reply("Review and approve?", { reply_markup: keyboard });
+      }
+
       break; // Success - exit retry loop
     } catch (error) {
       const errorStr = String(error);
@@ -250,7 +277,7 @@ export async function handleText(ctx: Context): Promise<void> {
     }
   }
 
-  // 13. Cleanup
+  // 14. Cleanup
   stopProcessing();
   typing.stop();
 }

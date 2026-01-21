@@ -7,29 +7,24 @@
 import { resolve, normalize } from "path";
 import { realpathSync } from "fs";
 import type { RateLimitBucket } from "./types";
-import {
-  ALLOWED_PATHS,
-  BLOCKED_PATTERNS,
-  RATE_LIMIT_ENABLED,
-  RATE_LIMIT_REQUESTS,
-  RATE_LIMIT_WINDOW,
-  TEMP_PATHS,
-} from "./config";
+import * as config from "./config";
 
 // ============== Rate Limiter ==============
 
 class RateLimiter {
   private buckets = new Map<number, RateLimitBucket>();
-  private maxTokens: number;
-  private refillRate: number; // tokens per second
 
-  constructor() {
-    this.maxTokens = RATE_LIMIT_REQUESTS;
-    this.refillRate = RATE_LIMIT_REQUESTS / RATE_LIMIT_WINDOW;
+  // Read config lazily to support test mocking
+  private get maxTokens(): number {
+    return config.RATE_LIMIT_REQUESTS;
+  }
+
+  private get refillRate(): number {
+    return config.RATE_LIMIT_REQUESTS / config.RATE_LIMIT_WINDOW;
   }
 
   check(userId: number): [allowed: boolean, retryAfter?: number] {
-    if (!RATE_LIMIT_ENABLED) {
+    if (!config.RATE_LIMIT_ENABLED) {
       return [true];
     }
 
@@ -92,14 +87,14 @@ export function isPathAllowed(path: string): boolean {
     }
 
     // Always allow temp paths (for bot's own files)
-    for (const tempPath of TEMP_PATHS) {
+    for (const tempPath of config.TEMP_PATHS) {
       if (resolved.startsWith(tempPath)) {
         return true;
       }
     }
 
     // Check against allowed paths using proper containment
-    for (const allowed of ALLOWED_PATHS) {
+    for (const allowed of config.ALLOWED_PATHS) {
       const allowedResolved = resolve(allowed);
       if (
         resolved === allowedResolved ||
@@ -123,7 +118,7 @@ export function checkCommandSafety(
   const lowerCommand = command.toLowerCase();
 
   // Check blocked patterns
-  for (const pattern of BLOCKED_PATTERNS) {
+  for (const pattern of config.BLOCKED_PATTERNS) {
     if (lowerCommand.includes(pattern.toLowerCase())) {
       return [false, `Blocked pattern: ${pattern}`];
     }

@@ -20,4 +20,4 @@ export { handleVoice } from "./voice";
 export { handlePhoto } from "./photo";
 export { handleDocument } from "./document";
 export { handleCallback } from "./callback";
-export { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
+export { StreamingState, createStatusCallback, createPlanApprovalKeyboard, sendPlanContent } from "./streaming";

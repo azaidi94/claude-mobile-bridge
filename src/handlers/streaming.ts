@@ -6,7 +6,7 @@
 
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 import type { StatusCallback, AskUserQuestionInput, AskUserQuestionItem, AskUserQuestionState } from "../types";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import {
@@ -52,6 +52,23 @@ export function createPlanApprovalKeyboard(requestId: string): InlineKeyboard {
 }
 
 /**
+ * Send plan content to Telegram - file for long plans, inline for short.
+ */
+export async function sendPlanContent(ctx: Context, content: string): Promise<void> {
+  if (content.length > 4000) {
+    // Long plan - send as file
+    const buffer = Buffer.from(content, "utf-8");
+    await ctx.replyWithDocument(new InputFile(buffer, "plan.md"), {
+      caption: "📋 Plan ready for review",
+    });
+  } else {
+    // Short plan - send inline with markdown formatting
+    const html = convertMarkdownToHtml(content);
+    await ctx.reply(`📋 <b>Plan:</b>\n\n${html}`, { parse_mode: "HTML" });
+  }
+}
+
+/**
  * Truncate label for button display.
  */
 function truncateLabel(label: string, maxLength: number = BUTTON_LABEL_MAX_LENGTH): string {
@@ -92,7 +109,8 @@ export async function checkPendingAskUserQuestionRequests(
   ctx: Context,
   chatId: number,
   input: AskUserQuestionInput,
-  toolUseId: string
+  toolUseId: string,
+  isPlanMode: boolean = false
 ): Promise<boolean> {
   if (!input.questions || input.questions.length === 0) {
     return false;
@@ -101,13 +119,14 @@ export async function checkPendingAskUserQuestionRequests(
   const requestId = `${Date.now()}`;
   const question = input.questions[0]!;
 
-  // Store pending state
+  // Store pending state (preserve plan mode for when user answers)
   pendingAskUserQuestions.set(requestId, {
     toolUseId,
     questions: input.questions,
     currentIndex: 0,
     answers: [],
     chatId,
+    isPlanMode,
   });
 
   // Build question text with header if present
