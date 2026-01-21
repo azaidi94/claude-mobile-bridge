@@ -7,7 +7,7 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard } from "grammy";
-import type { StatusCallback } from "../types";
+import type { StatusCallback, AskUserQuestionInput, AskUserQuestionItem, AskUserQuestionState } from "../types";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import {
   TELEGRAM_MESSAGE_LIMIT,
@@ -15,6 +15,10 @@ import {
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
 } from "../config";
+
+// State maps for AskUserQuestion
+export const pendingAskUserQuestions = new Map<string, AskUserQuestionState>();
+export const pendingAskUserQuestionCustom = new Map<number, string>(); // chatId -> requestId
 
 /**
  * Create inline keyboard for ask_user options.
@@ -45,6 +49,87 @@ export function createPlanApprovalKeyboard(requestId: string): InlineKeyboard {
     .text("✅ Accept", `plan:accept:${requestId}`).row()
     .text("❌ Reject", `plan:reject:${requestId}`).row()
     .text("✏️ Edit", `plan:edit:${requestId}`);
+}
+
+/**
+ * Truncate label for button display.
+ */
+function truncateLabel(label: string, maxLength: number = BUTTON_LABEL_MAX_LENGTH): string {
+  return label.length > maxLength ? label.slice(0, maxLength) + "..." : label;
+}
+
+/**
+ * Create inline keyboard for AskUserQuestion.
+ */
+export function createAskUserQuestionKeyboard(
+  question: AskUserQuestionItem,
+  requestId: string,
+  questionIndex: number,
+  totalQuestions: number
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  // Add option buttons
+  question.options.forEach((opt, i) => {
+    keyboard.text(truncateLabel(opt.label), `auq:${requestId}:opt:${i}`).row();
+  });
+
+  // Add "Custom" button
+  keyboard.text("✏️ Custom", `auq:${requestId}:custom`).row();
+
+  // Add "Skip All" button
+  if (totalQuestions > 1 || questionIndex === 0) {
+    keyboard.text("⏭️ Skip & Proceed", `auq:${requestId}:skip`);
+  }
+
+  return keyboard;
+}
+
+/**
+ * Check for pending AskUserQuestion requests and send inline keyboards.
+ */
+export async function checkPendingAskUserQuestionRequests(
+  ctx: Context,
+  chatId: number,
+  input: AskUserQuestionInput,
+  toolUseId: string
+): Promise<boolean> {
+  if (!input.questions || input.questions.length === 0) {
+    return false;
+  }
+
+  const requestId = `${Date.now()}`;
+  const question = input.questions[0]!;
+
+  // Store pending state
+  pendingAskUserQuestions.set(requestId, {
+    toolUseId,
+    questions: input.questions,
+    currentIndex: 0,
+    answers: [],
+    chatId,
+  });
+
+  // Build question text with header if present
+  let questionText = `❓ ${question.question}`;
+  if (question.header) {
+    questionText = `<b>${escapeHtml(question.header)}</b>\n\n${questionText}`;
+  }
+
+  // Add descriptions if present
+  if (question.options.some(o => o.description)) {
+    questionText += "\n";
+    question.options.forEach((opt, i) => {
+      if (opt.description) {
+        questionText += `\n<b>${i + 1}. ${escapeHtml(opt.label)}</b>: ${escapeHtml(opt.description)}`;
+      }
+    });
+  }
+
+  const keyboard = createAskUserQuestionKeyboard(question, requestId, 0, input.questions.length);
+  await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+
+  return true;
 }
 
 /**

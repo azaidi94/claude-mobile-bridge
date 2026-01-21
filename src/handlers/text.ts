@@ -12,7 +12,14 @@ import {
   checkInterrupt,
   startTypingIndicator,
 } from "../utils";
-import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
+import {
+  StreamingState,
+  createStatusCallback,
+  createPlanApprovalKeyboard,
+  createAskUserQuestionKeyboard,
+  pendingAskUserQuestions,
+  pendingAskUserQuestionCustom,
+} from "./streaming";
 import { getActiveSession, getSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
 
@@ -77,6 +84,61 @@ export async function handleText(ctx: Context): Promise<void> {
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
     } finally {
       typing.stop();
+    }
+    return;
+  }
+
+  // 1.6. Check for pending AskUserQuestion custom input
+  if (pendingAskUserQuestionCustom.has(chatId)) {
+    const requestId = pendingAskUserQuestionCustom.get(chatId)!;
+    pendingAskUserQuestionCustom.delete(chatId);
+
+    const pending = pendingAskUserQuestions.get(requestId);
+    if (!pending) {
+      await ctx.reply("❌ Question expired.");
+      return;
+    }
+
+    // Add custom answer
+    pending.answers.push(message);
+    pending.currentIndex++;
+
+    if (pending.currentIndex < pending.questions.length) {
+      // Show next question
+      const nextQ = pending.questions[pending.currentIndex]!;
+      let questionText = `❓ ${nextQ.question}`;
+      if (nextQ.header) {
+        questionText = `<b>${nextQ.header}</b>\n\n${questionText}`;
+      }
+      const keyboard = createAskUserQuestionKeyboard(nextQ, requestId, pending.currentIndex, pending.questions.length);
+      await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+    } else {
+      // All questions answered - send to Claude
+      pendingAskUserQuestions.delete(requestId);
+      const answersText = pending.answers.join(", ");
+      await ctx.reply(`✅ Answered: ${answersText}`);
+
+      // Send answers to Claude
+      const typing = startTypingIndicator(ctx);
+      const state = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, state);
+
+      try {
+        const response = await session.sendMessageStreaming(
+          answersText,
+          username,
+          userId,
+          statusCallback,
+          chatId,
+          ctx
+        );
+        await auditLog(userId, username, "AUQ_CUSTOM", message, response);
+      } catch (error) {
+        console.error("Error in AskUserQuestion custom answer:", error);
+        await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      } finally {
+        typing.stop();
+      }
     }
     return;
   }

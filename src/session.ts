@@ -23,9 +23,9 @@ import {
   WORKING_DIR,
 } from "./config";
 import { formatToolStatus } from "./formatting";
-import { checkPendingAskUserRequests } from "./handlers/streaming";
+import { checkPendingAskUserRequests, checkPendingAskUserQuestionRequests } from "./handlers/streaming";
 import { checkCommandSafety, isPathAllowed } from "./security";
-import type { SessionData, StatusCallback, TokenUsage, PlanApprovalState } from "./types";
+import type { SessionData, StatusCallback, TokenUsage, PlanApprovalState, AskUserQuestionInput } from "./types";
 import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
 
@@ -280,8 +280,12 @@ class ClaudeSession {
     let lastTextUpdate = 0;
     let queryCompleted = false;
     let askUserTriggered = false;
+    let askUserQuestionTriggered = false;
+    let askUserQuestionInput: AskUserQuestionInput | null = null;
+    let askUserQuestionToolUseId: string | null = null;
     let exitPlanModeTriggered = false;
     let exitPlanToolUseId: string | null = null;
+    let lastPlanFilePath: string | null = null;
 
     try {
       console.log(`[QUERY] Sending prompt: "${messageToSend.slice(0, 50)}..."`);
@@ -436,6 +440,23 @@ class ClaudeSession {
                 exitPlanToolUseId = block.id;
                 console.log(`ExitPlanMode detected, toolUseId: ${block.id}`);
               }
+
+              // Detect AskUserQuestion tool - Claude wants user input
+              if (toolName === "AskUserQuestion") {
+                askUserQuestionTriggered = true;
+                askUserQuestionInput = toolInput as unknown as AskUserQuestionInput;
+                askUserQuestionToolUseId = block.id;
+                console.log(`AskUserQuestion detected, toolUseId: ${block.id}`);
+              }
+
+              // Track Write operations to plan files (for showing plan content later)
+              if (toolName === "Write" && this._isPlanMode) {
+                const filePath = String(toolInput.file_path || "");
+                if (filePath.endsWith(".md") || filePath.includes("plan")) {
+                  lastPlanFilePath = filePath;
+                  console.log(`Plan file written: ${filePath}`);
+                }
+              }
             }
 
             // Text content
@@ -459,8 +480,8 @@ class ClaudeSession {
             }
           }
 
-          // Break out of event loop if ask_user or exitPlanMode was triggered
-          if (askUserTriggered || exitPlanModeTriggered) {
+          // Break out of event loop if ask_user, askUserQuestion, or exitPlanMode was triggered
+          if (askUserTriggered || askUserQuestionTriggered || exitPlanModeTriggered) {
             break;
           }
         }
@@ -491,7 +512,7 @@ class ClaudeSession {
 
       if (
         isCleanupError &&
-        (queryCompleted || askUserTriggered || this.stopRequested)
+        (queryCompleted || askUserTriggered || askUserQuestionTriggered || this.stopRequested)
       ) {
         console.warn(`Suppressed post-completion error: ${error}`);
       } else {
@@ -517,11 +538,38 @@ class ClaudeSession {
       return "[Waiting for user selection]";
     }
 
+    // If AskUserQuestion was triggered, send buttons and return
+    if (askUserQuestionTriggered && askUserQuestionInput && askUserQuestionToolUseId && ctx && chatId) {
+      const buttonsSent = await checkPendingAskUserQuestionRequests(
+        ctx,
+        chatId,
+        askUserQuestionInput,
+        askUserQuestionToolUseId
+      );
+      if (buttonsSent) {
+        await statusCallback("done", "");
+        return "[Waiting for user selection]";
+      }
+    }
+
     // If ExitPlanMode was triggered, store approval state and return
     if (exitPlanModeTriggered && exitPlanToolUseId) {
+      // Try to read plan file content
+      let planContent = "";
+      if (lastPlanFilePath) {
+        try {
+          const file = Bun.file(lastPlanFilePath);
+          planContent = await file.text();
+          console.log(`Read plan content from ${lastPlanFilePath}: ${planContent.length} chars`);
+        } catch (err) {
+          console.warn(`Failed to read plan file: ${err}`);
+        }
+      }
+
       this._pendingPlanApproval = {
         toolUseId: exitPlanToolUseId,
         planSummary: responseParts.join("").slice(0, 500),
+        planContent: planContent.slice(0, 3000), // reasonable limit
         timestamp: Date.now(),
       };
       await statusCallback("done", "");

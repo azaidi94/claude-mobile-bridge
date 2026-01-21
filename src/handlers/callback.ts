@@ -10,7 +10,14 @@ import { session } from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
+import {
+  StreamingState,
+  createStatusCallback,
+  createPlanApprovalKeyboard,
+  createAskUserQuestionKeyboard,
+  pendingAskUserQuestions,
+  pendingAskUserQuestionCustom,
+} from "./streaming";
 import { setActiveSession, getActiveSession } from "../sessions";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -129,7 +136,122 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Parse callback data: askuser:{request_id}:{option_index}
+  // 4. Handle AskUserQuestion callbacks: auq:{requestId}:{action}:{optionIdx?}
+  if (callbackData.startsWith("auq:")) {
+    const parts = callbackData.split(":");
+    if (parts.length < 3) {
+      await ctx.answerCallbackQuery({ text: "Invalid callback" });
+      return;
+    }
+
+    const requestId = parts[1]!;
+    const action = parts[2]!; // "opt", "custom", "skip"
+    const optionIdx = parts[3] !== undefined ? parseInt(parts[3]!, 10) : undefined;
+
+    const pending = pendingAskUserQuestions.get(requestId);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: "Expired" });
+      return;
+    }
+
+    if (action === "skip") {
+      // Skip all - send generic response to Claude
+      pendingAskUserQuestions.delete(requestId);
+      await ctx.editMessageText("⏭️ Skipped questions");
+      await ctx.answerCallbackQuery();
+
+      // Send skip message to Claude
+      const typing = startTypingIndicator(ctx);
+      const state = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, state);
+
+      try {
+        const response = await session.sendMessageStreaming(
+          "Skip questions, proceed with the plan",
+          username,
+          userId,
+          statusCallback,
+          chatId,
+          ctx
+        );
+        await auditLog(userId, username, "AUQ_SKIP", "skip", response);
+      } catch (error) {
+        console.error("Error in AskUserQuestion skip:", error);
+        await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      } finally {
+        typing.stop();
+      }
+      return;
+    }
+
+    if (action === "custom") {
+      // Store pending custom input
+      pendingAskUserQuestionCustom.set(chatId, requestId);
+      const currentQ = pending.questions[pending.currentIndex]!;
+      await ctx.editMessageText(`✏️ Type your answer:\n\n<i>${currentQ.question}</i>`, { parse_mode: "HTML" });
+      await ctx.answerCallbackQuery({ text: "Type your answer" });
+      return;
+    }
+
+    // Option selected
+    if (action === "opt" && optionIdx !== undefined) {
+      const currentQ = pending.questions[pending.currentIndex]!;
+      if (optionIdx < 0 || optionIdx >= currentQ.options.length) {
+        await ctx.answerCallbackQuery({ text: "Invalid option" });
+        return;
+      }
+
+      const selectedOption = currentQ.options[optionIdx]!.label;
+      pending.answers.push(selectedOption);
+      pending.currentIndex++;
+
+      await ctx.answerCallbackQuery({ text: `Selected: ${selectedOption.slice(0, 30)}` });
+
+      if (pending.currentIndex < pending.questions.length) {
+        // Show next question
+        const nextQ = pending.questions[pending.currentIndex]!;
+        let questionText = `❓ ${nextQ.question}`;
+        if (nextQ.header) {
+          questionText = `<b>${nextQ.header}</b>\n\n${questionText}`;
+        }
+        const keyboard = createAskUserQuestionKeyboard(nextQ, requestId, pending.currentIndex, pending.questions.length);
+        await ctx.editMessageText(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+      } else {
+        // All questions answered - send to Claude
+        pendingAskUserQuestions.delete(requestId);
+        const answersText = pending.answers.join(", ");
+        await ctx.editMessageText(`✅ Answered: ${answersText}`);
+
+        // Send answers to Claude
+        const typing = startTypingIndicator(ctx);
+        const state = new StreamingState();
+        const statusCallback = createStatusCallback(ctx, state);
+
+        try {
+          const response = await session.sendMessageStreaming(
+            answersText,
+            username,
+            userId,
+            statusCallback,
+            chatId,
+            ctx
+          );
+          await auditLog(userId, username, "AUQ_ANSWER", answersText, response);
+        } catch (error) {
+          console.error("Error in AskUserQuestion answer:", error);
+          await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+        } finally {
+          typing.stop();
+        }
+      }
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Unknown action" });
+    return;
+  }
+
+  // 5. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;

@@ -80,5 +80,31 @@ export type BotContext = Context;
 export interface PlanApprovalState {
   toolUseId: string;
   planSummary: string;
+  planContent?: string; // actual plan file content
   timestamp: number;
+}
+
+// AskUserQuestion tool types
+export interface AskUserQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface AskUserQuestionItem {
+  question: string;
+  header?: string;
+  options: AskUserQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface AskUserQuestionInput {
+  questions: AskUserQuestionItem[];
+}
+
+export interface AskUserQuestionState {
+  toolUseId: string;
+  questions: AskUserQuestionItem[];
+  currentIndex: number;
+  answers: string[];
+  chatId: number;
 }

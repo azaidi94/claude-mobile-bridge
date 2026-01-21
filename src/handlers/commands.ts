@@ -18,6 +18,7 @@ import {
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback, createPlanApprovalKeyboard } from "./streaming";
+import { escapeHtml } from "../formatting";
 
 /**
  * /start - Show welcome message and status.
@@ -429,9 +430,22 @@ export async function handlePlan(ctx: Context): Promise<void> {
 
     // Check if plan is ready for approval
     if (session.pendingPlanApproval) {
+      const { planContent, planSummary } = session.pendingPlanApproval;
+
+      // Show plan content (or summary if no file content)
+      const displayContent = planContent || planSummary;
+      if (displayContent && displayContent.length > 50) {
+        // Split long content into chunks if needed (Telegram 4096 char limit)
+        const maxLen = 3500;
+        const truncated = displayContent.length > maxLen
+          ? displayContent.slice(0, maxLen) + "\n\n<i>... (truncated)</i>"
+          : displayContent;
+        await ctx.reply(`📋 <b>Plan:</b>\n\n<pre>${escapeHtml(truncated)}</pre>`, { parse_mode: "HTML" });
+      }
+
       const requestId = `${Date.now()}`;
       const keyboard = createPlanApprovalKeyboard(requestId);
-      await ctx.reply("📋 Plan ready. Review and approve?", { reply_markup: keyboard });
+      await ctx.reply("Review and approve?", { reply_markup: keyboard });
     }
 
     await auditLog(userId, username, "PLAN", message, response);
