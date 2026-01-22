@@ -1,3 +1,18 @@
+# Issue #6 - Reduce session watcher log spam
+
+## Task
+Debounce session watcher to stop log spam from rapid fs.watch events.
+
+## Changes
+- `src/sessions/watcher.ts`: Debounce onChange callback (500ms)
+- `src/index.ts`: Remove verbose "Sessions updated" log
+
+## Decisions
+- 500ms debounce; rapid events coalesce into single refresh
+- Removed onChange callback from index.ts entirely (no longer needed)
+
+---
+
 # Issue #4 - Hide TodoWrite tool output
 
 ## Task

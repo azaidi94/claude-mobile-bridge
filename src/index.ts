@@ -28,9 +28,7 @@ console.log(`Working directory: ${WORKING_DIR}`);
 console.log(`Allowed users: ${ALLOWED_USERS.length}`);
 
 // Start session watcher
-await startWatcher(() => {
-  console.log("Sessions updated");
-});
+await startWatcher();
 
 // Get bot info
 const botInfo = await bot.api.getMe();

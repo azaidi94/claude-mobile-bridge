@@ -35,6 +35,8 @@ const cache: SessionCache = {
 let watcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: (() => void) | null = null;
+let debounceTimer: Timer | null = null;
+const DEBOUNCE_MS = 500;
 
 /**
  * Save active session name to disk for persistence across restarts.
@@ -290,18 +292,17 @@ export async function startWatcher(onChange?: () => void): Promise<void> {
 
   // Start fs.watch on projects directory
   try {
-    watcher = watch(
-      PROJECTS_DIR,
-      { recursive: true },
-      async (event, filename) => {
-        // Only trigger on file creation/deletion ('rename'), not content changes ('change')
-        if (event === "rename" && filename?.endsWith(".jsonl")) {
-          console.log(`Session change detected: ${event} ${filename}`);
+    watcher = watch(PROJECTS_DIR, { recursive: true }, (event, filename) => {
+      // Only trigger on file creation/deletion ('rename'), not content changes ('change')
+      if (event === "rename" && filename?.endsWith(".jsonl")) {
+        // Debounce rapid events
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
           await refresh();
           onChangeCallback?.();
-        }
-      },
-    );
+        }, DEBOUNCE_MS);
+      }
+    });
     console.log(`Session watcher: watching ${PROJECTS_DIR}`);
   } catch (error) {
     console.warn(
