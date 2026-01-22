@@ -69,6 +69,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/kill - Terminate session\n` +
       `/retry - Retry last message\n` +
       `/status - Show session details\n` +
+      `/model - Switch model\n` +
       `/restart - Restart bot\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt queue\n` +

@@ -34,6 +34,21 @@ await startWatcher();
 const botInfo = await bot.api.getMe();
 console.log(`Bot started: @${botInfo.username}`);
 
+// Set autocomplete commands
+await bot.api.setMyCommands([
+  { command: "list", description: "Show all sessions" },
+  { command: "switch", description: "Switch to session" },
+  { command: "new", description: "Create new session" },
+  { command: "plan", description: "Start plan mode" },
+  { command: "stop", description: "Interrupt current query" },
+  { command: "kill", description: "Terminate session" },
+  { command: "retry", description: "Retry last message" },
+  { command: "status", description: "Show session details" },
+  { command: "model", description: "Show/switch model" },
+  { command: "help", description: "Show commands" },
+  { command: "restart", description: "Restart bot" },
+]);
+
 // Check for pending restart message
 if (existsSync(RESTART_FILE)) {
   try {
