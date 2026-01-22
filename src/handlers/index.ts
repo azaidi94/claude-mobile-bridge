@@ -7,6 +7,7 @@ export {
   handleHelp,
   handleNew,
   handleStop,
+  handleKill,
   handleStatus,
   handleModel,
   handleRestart,

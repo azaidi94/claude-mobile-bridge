@@ -50,6 +50,7 @@ mock.module("../handlers", () => ({
   handleHelp: mock(() => {}),
   handleNew: mock(() => {}),
   handleStop: mock(() => {}),
+  handleKill: mock(() => {}),
   handleStatus: mock(() => {}),
   handleModel: mock(() => {}),
   handleRestart: mock(() => {}),

@@ -12,6 +12,7 @@ import {
   handleHelp,
   handleNew,
   handleStop,
+  handleKill,
   handleStatus,
   handleModel,
   handleRestart,
@@ -62,6 +63,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("help", handleHelp);
   bot.command("new", handleNew);
   bot.command("stop", handleStop);
+  bot.command("kill", handleKill);
   bot.command("status", handleStatus);
   bot.command("model", handleModel);
   bot.command("restart", handleRestart);

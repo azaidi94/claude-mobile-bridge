@@ -65,7 +65,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/new [name] [path] - Create new session\n\n` +
       `<b>Control:</b>\n` +
       `/plan &lt;msg&gt; - Start plan mode\n` +
-      `/stop - Stop current query\n` +
+      `/stop - Interrupt current query\n` +
+      `/kill - Terminate session\n` +
       `/retry - Retry last message\n` +
       `/status - Show session details\n` +
       `/restart - Restart bot\n\n` +
@@ -118,7 +119,7 @@ export async function handleNew(ctx: Context): Promise<void> {
 }
 
 /**
- * /stop - Stop the current query (silently).
+ * /stop - Interrupt current generation.
  */
 export async function handleStop(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -128,11 +129,45 @@ export async function handleStop(ctx: Context): Promise<void> {
     return;
   }
 
+  const result = await session.stop();
+
+  if (result === "stopped") {
+    await ctx.reply("🛑 Query stopped.");
+  } else if (result === "pending") {
+    await ctx.reply("⏳ Cancelling...");
+  } else {
+    await ctx.reply("⏸️ Nothing running.");
+  }
+
+  await Bun.sleep(100);
+  session.clearStopRequested();
+}
+
+/**
+ * /kill - Terminate session entirely.
+ */
+export async function handleKill(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  // Stop any running query first
   if (session.isRunning) {
     await session.stop();
     await Bun.sleep(100);
     session.clearStopRequested();
   }
+
+  if (!session.isActive) {
+    await ctx.reply("⏸️ No active session.");
+    return;
+  }
+
+  await session.kill();
+  await ctx.reply("💀 Session terminated. Next message starts fresh.");
 }
 
 /**

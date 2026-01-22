@@ -97,7 +97,7 @@ const mockSessionState = {
 };
 
 const mockSessionMethods = {
-  stop: mock(() => Promise.resolve()),
+  stop: mock(() => Promise.resolve(false as "stopped" | "pending" | false)),
   clearStopRequested: mock(() => {}),
   kill: mock(() => Promise.resolve()),
   setWorkingDir: mock((dir: string) => {
@@ -755,25 +755,25 @@ describe("commands: /stop", () => {
     expect(mockSessionMethods.clearStopRequested).toHaveBeenCalled();
   });
 
-  test("handleStop does nothing when no query running", async () => {
+  test("handleStop replies when no query running", async () => {
     const { handleStop } = await import("../handlers/commands");
     mockSessionState.isRunning = false;
     const ctx = createMockContext({ userId: 123456 });
 
     await handleStop(ctx as any);
 
-    expect(mockSessionMethods.stop).not.toHaveBeenCalled();
+    expect(ctx._replies[0]?.text).toContain("Nothing running");
   });
 
-  test("handleStop is silent (no reply) on success", async () => {
+  test("handleStop replies on success", async () => {
     const { handleStop } = await import("../handlers/commands");
     mockSessionState.isRunning = true;
+    mockSessionMethods.stop.mockResolvedValue("stopped");
     const ctx = createMockContext({ userId: 123456 });
 
     await handleStop(ctx as any);
 
-    // Should not send a reply (silent stop)
-    expect(ctx._replies.length).toBe(0);
+    expect(ctx._replies[0]?.text).toContain("stopped");
   });
 });
 

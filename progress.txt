@@ -60,3 +60,23 @@ Add /model command to switch between claude models (opus 4.5, sonnet 4.5, haiku 
 - Model stored in ClaudeSession instance (not persistent across restarts)
 - Default changed from sonnet to opus 4.5
 - /model shows inline keyboard for easy switching
+
+---
+
+# Issue #5 - Handle interruptions: /stop and /kill commands
+
+## Task
+/stop should interrupt current generation
+/kill should terminate the session entirely
+
+## Changes
+- `src/handlers/commands.ts`: Updated handleStop with user feedback, added handleKill
+- `src/handlers/index.ts`: Export handleKill
+- `src/bot.ts`: Register /kill command
+- `src/__tests__/commands.test.ts`: Updated stop tests for new behavior
+- `src/__tests__/smoke.test.ts`: Added handleKill to mock
+
+## Decisions
+- /stop now provides feedback: "Query stopped", "Cancelling...", or "Nothing running"
+- /kill stops any running query, then clears session ID (next message starts fresh)
+- Updated /help to show both commands
