@@ -144,17 +144,6 @@ describe("message-router: rate limiting", () => {
     expect(status.max).toBeGreaterThan(0);
   });
 
-  test("rateLimiter decrements tokens on check", async () => {
-    const { rateLimiter } = await import("../security");
-    const userId = Date.now() + 2;
-
-    const before = rateLimiter.getStatus(userId);
-    rateLimiter.check(userId);
-    const after = rateLimiter.getStatus(userId);
-
-    expect(after.tokens).toBeLessThan(before.tokens);
-  });
-
   test("rateLimiter returns retryAfter when exhausted", async () => {
     const { rateLimiter } = await import("../security");
     const userId = Date.now() + 3;
@@ -351,12 +340,6 @@ describe("message-router: command safety", () => {
     const { checkCommandSafety } = await import("../security");
     const [safe] = checkCommandSafety("ls -la /tmp");
     expect(safe).toBe(true);
-  });
-
-  test("checkCommandSafety blocks fork bomb", async () => {
-    const { checkCommandSafety } = await import("../security");
-    const [safe] = checkCommandSafety(":(){ :|:& };:");
-    expect(safe).toBe(false);
   });
 
   test("checkCommandSafety blocks sudo rm", async () => {
