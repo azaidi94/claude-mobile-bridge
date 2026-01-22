@@ -396,8 +396,8 @@ class ClaudeSession {
               this.lastTool = toolDisplay;
               console.log(`Tool: ${toolDisplay}`);
 
-              // Don't show tool status for ask_user - the buttons are self-explanatory
-              if (!toolName.startsWith("mcp__ask-user")) {
+              // Don't show tool status for ask_user or TodoWrite (reduces noise)
+              if (!toolName.startsWith("mcp__ask-user") && toolName !== "TodoWrite") {
                 await statusCallback("tool", toolDisplay);
               }
 

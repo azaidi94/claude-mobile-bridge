@@ -1,0 +1,13 @@
+# Issue #4 - Hide TodoWrite tool output
+
+## Task
+Filter TodoWrite tool calls from streaming output to reduce noise in Telegram chat.
+
+## Changes
+- `src/session.ts`: Added `TodoWrite` to skip list in tool status callback (line 400-402)
+
+## Decisions
+- Filtered at source (session.ts) rather than in formatting, same as ask_user tools
+
+## Notes
+- Pre-existing test failures (rate limiter, fork bomb) unrelated to this change
