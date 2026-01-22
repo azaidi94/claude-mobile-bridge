@@ -649,6 +649,16 @@ class ClaudeSession {
   }
 
   /**
+   * Clear session ID only (preserves working dir, session name).
+   * Used when switching models - starts fresh conversation but keeps context.
+   */
+  clearSession(): void {
+    this.sessionId = null;
+    this.lastActivity = null;
+    console.log("Session ID cleared (model switch)");
+  }
+
+  /**
    * Set the working directory for this session.
    */
   setWorkingDir(dir: string): void {

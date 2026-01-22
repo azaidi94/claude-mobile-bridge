@@ -63,6 +63,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     session.setModel(modelId);
 
+    // Clear session so next message uses new model (SDK ignores model option when resuming)
+    if (session.isActive) {
+      console.log(
+        `[MODEL SWITCH] Clearing session ${session.sessionId?.slice(0, 8)} to apply new model`,
+      );
+      session.clearSession();
+    }
+
     // Update message with new selection
     const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
     const buttons = models.map(([id, name]) => [
