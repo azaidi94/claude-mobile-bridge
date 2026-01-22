@@ -6,7 +6,7 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
+import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
@@ -44,7 +44,48 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2. Handle switch callbacks: switch:{session_name}
+  // 2. Handle model switch callbacks: model:{model_id}
+  if (callbackData.startsWith("model:")) {
+    const modelId = callbackData.slice(6) as ModelId; // Remove "model:" prefix
+
+    if (!(modelId in MODEL_DISPLAY_NAMES)) {
+      await ctx.answerCallbackQuery({ text: "Invalid model" });
+      return;
+    }
+
+    // Already on this model
+    if (session.model === modelId) {
+      await ctx.answerCallbackQuery({
+        text: `Already using ${MODEL_DISPLAY_NAMES[modelId]}`,
+      });
+      return;
+    }
+
+    session.setModel(modelId);
+
+    // Update message with new selection
+    const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
+    const buttons = models.map(([id, name]) => [
+      {
+        text: id === modelId ? `✓ ${name}` : name,
+        callback_data: `model:${id}`,
+      },
+    ]);
+
+    await ctx.editMessageText(
+      `🤖 <b>Model:</b> ${MODEL_DISPLAY_NAMES[modelId]}`,
+      {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: buttons },
+      },
+    );
+    await ctx.answerCallbackQuery({
+      text: `Switched to ${MODEL_DISPLAY_NAMES[modelId]}`,
+    });
+    return;
+  }
+
+  // 3. Handle switch callbacks: switch:{session_name}
   if (callbackData.startsWith("switch:")) {
     const name = callbackData.slice(7); // Remove "switch:" prefix
     const currentActive = getActiveSession();
@@ -98,7 +139,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 3. Handle plan approval callbacks: plan:{action}:{request_id}
+  // 4. Handle plan approval callbacks: plan:{action}:{request_id}
   if (callbackData.startsWith("plan:")) {
     const parts = callbackData.split(":");
     if (parts.length !== 3) {
@@ -173,7 +214,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Handle AskUserQuestion callbacks: auq:{requestId}:{action}:{optionIdx?}
+  // 5. Handle AskUserQuestion callbacks: auq:{requestId}:{action}:{optionIdx?}
   if (callbackData.startsWith("auq:")) {
     const parts = callbackData.split(":");
     if (parts.length < 3) {
@@ -318,7 +359,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 5. Parse callback data: askuser:{request_id}:{option_index}
+  // 6. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;
@@ -333,7 +374,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const requestId = parts[1]!;
   const optionIndex = parseInt(parts[2]!, 10);
 
-  // 4. Load request file
+  // 7. Load request file
   const requestFile = `/tmp/ask-user-${requestId}.json`;
   let requestData: {
     question: string;
@@ -351,7 +392,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 5. Get selected option
+  // 8. Get selected option
   if (optionIndex < 0 || optionIndex >= requestData.options.length) {
     await ctx.answerCallbackQuery({ text: "Invalid option" });
     return;
@@ -359,26 +400,26 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   const selectedOption = requestData.options[optionIndex]!;
 
-  // 6. Update the message to show selection
+  // 9. Update the message to show selection
   try {
     await ctx.editMessageText(`✓ ${selectedOption}`);
   } catch (error) {
     console.debug("Failed to edit callback message:", error);
   }
 
-  // 7. Answer the callback
+  // 10. Answer the callback
   await ctx.answerCallbackQuery({
     text: `Selected: ${selectedOption.slice(0, 50)}`,
   });
 
-  // 8. Delete request file
+  // 11. Delete request file
   try {
     unlinkSync(requestFile);
   } catch (error) {
     console.debug("Failed to delete request file:", error);
   }
 
-  // 9. Send the choice to Claude as a message
+  // 12. Send the choice to Claude as a message
   const message = selectedOption;
 
   // Interrupt any running query - button responses are always immediate

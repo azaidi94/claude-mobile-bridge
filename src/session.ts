@@ -76,6 +76,20 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 /**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
+// Available models
+export type ModelId =
+  | "claude-opus-4-5-20250514"
+  | "claude-sonnet-4-5-20250514"
+  | "claude-haiku-3-5-20241022";
+
+export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
+  "claude-opus-4-5-20250514": "Opus 4.5",
+  "claude-sonnet-4-5-20250514": "Sonnet 4.5",
+  "claude-haiku-3-5-20241022": "Haiku 3.5",
+};
+
+const DEFAULT_MODEL: ModelId = "claude-opus-4-5-20250514";
+
 class ClaudeSession {
   sessionId: string | null = null;
   lastActivity: Date | null = null;
@@ -86,6 +100,9 @@ class ClaudeSession {
   lastErrorTime: Date | null = null;
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
+
+  // Model selection
+  private _model: ModelId = DEFAULT_MODEL;
 
   // Multi-session support
   private _workingDir: string = WORKING_DIR;
@@ -107,6 +124,19 @@ class ClaudeSession {
 
   get sessionName(): string | null {
     return this._sessionName;
+  }
+
+  get model(): ModelId {
+    return this._model;
+  }
+
+  get modelDisplayName(): string {
+    return MODEL_DISPLAY_NAMES[this._model];
+  }
+
+  setModel(model: ModelId): void {
+    this._model = model;
+    console.log(`Model set to: ${MODEL_DISPLAY_NAMES[model]}`);
   }
 
   get isActive(): boolean {
@@ -234,7 +264,7 @@ class ClaudeSession {
 
     // Build SDK V1 options - supports all features
     const options: Options = {
-      model: "claude-sonnet-4-5",
+      model: this._model,
       cwd: this._workingDir,
       settingSources: ["user", "project"],
       permissionMode: permissionMode,

@@ -94,7 +94,18 @@ mock.module("../session", () => ({
     get isPlanMode() {
       return mockSessionState.isPlanMode;
     },
+    get model() {
+      return "claude-opus-4-5-20250514";
+    },
+    get modelDisplayName() {
+      return "Opus 4.5";
+    },
     ...mockSessionMethods,
+  },
+  MODEL_DISPLAY_NAMES: {
+    "claude-opus-4-5-20250514": "Opus 4.5",
+    "claude-sonnet-4-5-20250514": "Sonnet 4.5",
+    "claude-haiku-3-5-20241022": "Haiku 3.5",
   },
 }));
 

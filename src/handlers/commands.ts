@@ -6,7 +6,7 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
@@ -156,6 +156,9 @@ export async function handleStatus(ctx: Context): Promise<void> {
 
   const lines: string[] = [`📊 <b>${sessionName}</b>\n`];
 
+  // Model
+  lines.push(`🤖 ${session.modelDisplayName}`);
+
   // Session/query status
   if (session.isRunning) {
     const elapsed = session.queryStarted
@@ -204,6 +207,33 @@ export async function handleStatus(ctx: Context): Promise<void> {
   lines.push(`📁 <code>${dir}</code>`);
 
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+}
+
+/**
+ * /model - Show/switch model with inline buttons.
+ */
+export async function handleModel(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const currentModel = session.model;
+  const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
+
+  const buttons = models.map(([id, name]) => [
+    {
+      text: id === currentModel ? `✓ ${name}` : name,
+      callback_data: `model:${id}`,
+    },
+  ]);
+
+  await ctx.reply(`🤖 <b>Model:</b> ${session.modelDisplayName}`, {
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: buttons },
+  });
 }
 
 /**
