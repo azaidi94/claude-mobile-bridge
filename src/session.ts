@@ -37,6 +37,7 @@ import type {
 } from "./types";
 import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
+import { info, warn, error, debug } from "./logger";
 
 /**
  * Determine thinking token budget based on message keywords.
@@ -133,7 +134,7 @@ class ClaudeSession {
 
   setModel(model: ModelId): void {
     this._model = model;
-    console.log(`Model set to: ${MODEL_DISPLAY_NAMES[model]}`);
+    info(`model: ${model}`);
   }
 
   get isActive(): boolean {
@@ -200,14 +201,14 @@ class ClaudeSession {
     if (this.isQueryRunning && this.abortController) {
       this.stopRequested = true;
       this.abortController.abort();
-      console.log("Stop requested - aborting current query");
+      debug("stop: aborting query");
       return "stopped";
     }
 
     // If processing but query not started yet
     if (this._isProcessing) {
       this.stopRequested = true;
-      console.log("Stop requested - will cancel before query starts");
+      debug("stop: will cancel before query starts");
       return "pending";
     }
 
@@ -282,22 +283,17 @@ class ClaudeSession {
     }
 
     if (this.sessionId && !isNewSession) {
-      console.log(
-        `RESUMING session ${this.sessionId.slice(
-          0,
-          8,
-        )}... (thinking=${thinkingLabel})`,
+      info(
+        `[${this._model}] resume ${this._sessionName || this.sessionId.slice(0, 8)}`,
       );
     } else {
-      console.log(`STARTING new Claude session (thinking=${thinkingLabel})`);
+      info(`[${this._model}] new session`);
       this.sessionId = null;
     }
 
     // Check if stop was requested during processing phase
     if (this.stopRequested) {
-      console.log(
-        "Query cancelled before starting (stop was requested during processing)",
-      );
+      debug("query cancelled before starting");
       this.stopRequested = false;
       throw new Error("Query cancelled");
     }
@@ -337,14 +333,14 @@ class ClaudeSession {
       for await (const event of queryInstance) {
         // Check for abort
         if (this.stopRequested) {
-          console.log("Query aborted by user");
+          debug("query aborted");
           break;
         }
 
         // Capture session_id from first message
         if (!this.sessionId && event.session_id) {
           this.sessionId = event.session_id;
-          console.log(`GOT session_id: ${this.sessionId!.slice(0, 8)}...`);
+          debug(`session_id: ${this.sessionId!.slice(0, 8)}`);
           this.saveSession();
 
           // Update watcher cache with the new session ID
@@ -361,9 +357,7 @@ class ClaudeSession {
           );
           if (match?.[1]) {
             const cmdOutput = match[1].trim();
-            console.log(
-              `[QUERY] Local command output: ${cmdOutput.slice(0, 100)}`,
-            );
+            debug(`cmd output: ${cmdOutput.slice(0, 80)}`);
             if (cmdOutput) {
               responseParts.push(cmdOutput);
               await statusCallback("text", cmdOutput, currentSegmentId);
@@ -378,7 +372,6 @@ class ClaudeSession {
             if (block.type === "thinking") {
               const thinkingText = block.thinking;
               if (thinkingText) {
-                console.log(`THINKING BLOCK: ${thinkingText.slice(0, 100)}...`);
                 await statusCallback("thinking", thinkingText);
               }
             }
@@ -393,7 +386,7 @@ class ClaudeSession {
                 const command = String(toolInput.command || "");
                 const [isSafe, reason] = checkCommandSafety(command);
                 if (!isSafe) {
-                  console.warn(`BLOCKED: ${reason}`);
+                  warn(`blocked: ${reason}`);
                   await statusCallback("tool", `BLOCKED: ${reason}`);
                   throw new Error(`Unsafe command blocked: ${reason}`);
                 }
@@ -410,9 +403,7 @@ class ClaudeSession {
                       filePath.includes("/.claude/"));
 
                   if (!isTmpRead && !isPathAllowed(filePath)) {
-                    console.warn(
-                      `BLOCKED: File access outside allowed paths: ${filePath}`,
-                    );
+                    warn(`blocked: path ${filePath}`);
                     await statusCallback("tool", `Access denied: ${filePath}`);
                     throw new Error(`File access blocked: ${filePath}`);
                   }
@@ -434,7 +425,7 @@ class ClaudeSession {
               const toolDisplay = formatToolStatus(toolName, toolInput);
               this.currentTool = toolDisplay;
               this.lastTool = toolDisplay;
-              console.log(`Tool: ${toolDisplay}`);
+              info(`tool: ${toolDisplay}`);
 
               // Don't show tool status for ask_user or TodoWrite (reduces noise)
               if (
@@ -469,7 +460,7 @@ class ClaudeSession {
               if (toolName === "ExitPlanMode") {
                 exitPlanModeTriggered = true;
                 exitPlanToolUseId = block.id;
-                console.log(`ExitPlanMode detected, toolUseId: ${block.id}`);
+                debug(`ExitPlanMode: ${block.id}`);
               }
 
               // Detect AskUserQuestion tool - Claude wants user input
@@ -478,7 +469,7 @@ class ClaudeSession {
                 askUserQuestionInput =
                   toolInput as unknown as AskUserQuestionInput;
                 askUserQuestionToolUseId = block.id;
-                console.log(`AskUserQuestion detected, toolUseId: ${block.id}`);
+                debug(`AskUserQuestion: ${block.id}`);
               }
 
               // Track Write/Edit operations to plan files (for showing plan content later)
@@ -489,7 +480,7 @@ class ClaudeSession {
                 const filePath = String(toolInput.file_path || "");
                 if (filePath.endsWith(".md") || filePath.includes("plan")) {
                   lastPlanFilePath = filePath;
-                  console.log(`Plan file updated: ${filePath}`);
+                  debug(`plan file: ${filePath}`);
                 }
               }
             }
@@ -527,25 +518,18 @@ class ClaudeSession {
 
         // Result message
         if (event.type === "result") {
-          console.log("Response complete");
           queryCompleted = true;
 
           // Capture usage if available
           if ("usage" in event && event.usage) {
             this.lastUsage = event.usage as TokenUsage;
-            const u = this.lastUsage;
-            console.log(
-              `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${
-                u.cache_read_input_tokens || 0
-              } cache_create=${u.cache_creation_input_tokens || 0}`,
-            );
           }
         }
       }
 
       // V1 query completes automatically when the generator ends
-    } catch (error) {
-      const errorStr = String(error).toLowerCase();
+    } catch (err) {
+      const errorStr = String(err).toLowerCase();
       const isCleanupError =
         errorStr.includes("cancel") || errorStr.includes("abort");
 
@@ -556,12 +540,12 @@ class ClaudeSession {
           askUserQuestionTriggered ||
           this.stopRequested)
       ) {
-        console.warn(`Suppressed post-completion error: ${error}`);
+        debug(`suppressed: ${err}`);
       } else {
-        console.error(`Error in query: ${error}`);
-        this.lastError = String(error).slice(0, 100);
+        error(`query: ${err}`);
+        this.lastError = String(err).slice(0, 100);
         this.lastErrorTime = new Date();
-        throw error;
+        throw err;
       }
     } finally {
       this.isQueryRunning = false;
@@ -609,11 +593,9 @@ class ClaudeSession {
         try {
           const file = Bun.file(lastPlanFilePath);
           planContent = await file.text();
-          console.log(
-            `Read plan content from ${lastPlanFilePath}: ${planContent.length} chars`,
-          );
+          debug(`plan: ${planContent.length} chars`);
         } catch (err) {
-          console.warn(`Failed to read plan file: ${err}`);
+          warn(`plan read: ${err}`);
         }
       }
 
@@ -645,7 +627,7 @@ class ClaudeSession {
     this.lastActivity = null;
     this._sessionName = null;
     this._workingDir = WORKING_DIR;
-    console.log("Session cleared");
+    info("session cleared");
   }
 
   /**
@@ -655,7 +637,7 @@ class ClaudeSession {
   clearSession(): void {
     this.sessionId = null;
     this.lastActivity = null;
-    console.log("Session ID cleared (model switch)");
+    debug("session cleared (model switch)");
   }
 
   /**
@@ -663,20 +645,20 @@ class ClaudeSession {
    */
   setWorkingDir(dir: string): void {
     this._workingDir = dir;
-    console.log(`Working dir set to: ${dir}`);
+    debug(`cwd: ${dir}`);
   }
 
   /**
    * Load session state from registry info.
    */
-  loadFromRegistry(info: SessionInfo): void {
-    this.sessionId = info.id || null;
-    this._sessionName = info.name;
-    this._workingDir = info.dir;
-    this.lastActivity = info.lastActivity ? new Date(info.lastActivity) : null;
-    console.log(
-      `Loaded session "${info.name}" (id: ${info.id?.slice(0, 8) || "pending"}...)`,
-    );
+  loadFromRegistry(sessionInfo: SessionInfo): void {
+    this.sessionId = sessionInfo.id || null;
+    this._sessionName = sessionInfo.name;
+    this._workingDir = sessionInfo.dir;
+    this.lastActivity = sessionInfo.lastActivity
+      ? new Date(sessionInfo.lastActivity)
+      : null;
+    info(`load: ${sessionInfo.name}`);
   }
 
   /**
@@ -692,9 +674,9 @@ class ClaudeSession {
         working_dir: this._workingDir,
       };
       Bun.write(SESSION_FILE, JSON.stringify(data));
-      console.log(`Session saved to ${SESSION_FILE}`);
-    } catch (error) {
-      console.warn(`Failed to save session: ${error}`);
+      debug(`saved: ${SESSION_FILE}`);
+    } catch (err) {
+      warn(`save failed: ${err}`);
     }
   }
 
@@ -739,7 +721,7 @@ class ClaudeSession {
       message = `Feedback on plan: ${feedback}`;
     }
 
-    console.log(`Plan ${action}: ${message.slice(0, 50)}...`);
+    info(`plan ${action}`);
 
     return this.sendMessageStreaming(
       message,

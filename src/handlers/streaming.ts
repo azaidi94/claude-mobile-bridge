@@ -20,6 +20,7 @@ import {
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
 } from "../config";
+import { debug, warn, error } from "../logger";
 
 // State maps for AskUserQuestion
 export const pendingAskUserQuestions = new Map<string, AskUserQuestionState>();
@@ -203,8 +204,8 @@ export async function checkPendingAskUserRequests(
         data.status = "sent";
         await Bun.write(filepath, JSON.stringify(data));
       }
-    } catch (error) {
-      console.warn(`Failed to process ask-user file ${filepath}:`, error);
+    } catch (err) {
+      warn(`ask-user file: ${err}`);
     }
   }
 
@@ -259,7 +260,7 @@ export function createStatusCallback(
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
             // HTML parse failed, fall back to plain text
-            console.debug("HTML reply failed, using plain text:", htmlError);
+            debug(`html reply fallback: ${htmlError}`);
             const msg = await ctx.reply(formatted);
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
@@ -288,7 +289,7 @@ export function createStatusCallback(
             );
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
-            console.debug("HTML edit failed, trying plain text:", htmlError);
+            debug(`html edit fallback: ${htmlError}`);
             try {
               await ctx.api.editMessageText(
                 msg.chat.id,
@@ -297,7 +298,7 @@ export function createStatusCallback(
               );
               state.lastContent.set(segmentId, formatted);
             } catch (editError) {
-              console.debug("Edit message failed:", editError);
+              debug(`edit failed: ${editError}`);
             }
           }
           state.lastEditTimes.set(segmentId, now);
@@ -322,25 +323,22 @@ export function createStatusCallback(
                   parse_mode: "HTML",
                 },
               );
-            } catch (error) {
-              console.debug("Failed to edit final message:", error);
+            } catch (err) {
+              debug(`final edit: ${err}`);
             }
           } else {
             // Too long - delete and split
             try {
               await ctx.api.deleteMessage(msg.chat.id, msg.message_id);
-            } catch (error) {
-              console.debug("Failed to delete message for splitting:", error);
+            } catch (err) {
+              debug(`delete for split: ${err}`);
             }
             for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
               const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
               try {
                 await ctx.reply(chunk, { parse_mode: "HTML" });
               } catch (htmlError) {
-                console.debug(
-                  "HTML chunk failed, using plain text:",
-                  htmlError,
-                );
+                debug(`chunk html fallback: ${htmlError}`);
                 await ctx.reply(chunk);
               }
             }
@@ -351,13 +349,13 @@ export function createStatusCallback(
         for (const toolMsg of state.toolMessages) {
           try {
             await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-          } catch (error) {
-            console.debug("Failed to delete tool message:", error);
+          } catch (err) {
+            debug(`delete tool msg: ${err}`);
           }
         }
       }
-    } catch (error) {
-      console.error("Status callback error:", error);
+    } catch (err) {
+      error(`callback: ${err}`);
     }
   };
 }

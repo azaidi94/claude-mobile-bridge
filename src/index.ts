@@ -14,6 +14,7 @@ import {
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import { startWatcher, stopWatcher } from "./sessions";
 import { createBot } from "./bot";
+import { info, warn } from "./logger";
 import pkg from "../package.json";
 
 // Create bot instance using factory
@@ -21,18 +22,16 @@ const bot = createBot({ token: TELEGRAM_TOKEN });
 
 // ============== Startup ==============
 
-console.log("=".repeat(50));
-console.log(`Claude Coding Bot v${pkg.version}`);
-console.log("=".repeat(50));
-console.log(`Working directory: ${WORKING_DIR}`);
-console.log(`Allowed users: ${ALLOWED_USERS.length}`);
+info(
+  `cwd: ${WORKING_DIR} (${ALLOWED_USERS.length} user${ALLOWED_USERS.length !== 1 ? "s" : ""})`,
+);
 
 // Start session watcher
 await startWatcher();
 
 // Get bot info
 const botInfo = await bot.api.getMe();
-console.log(`Bot started: @${botInfo.username}`);
+info(`bot: @${botInfo.username} ready`);
 
 // Set autocomplete commands
 await bot.api.setMyCommands([
@@ -64,7 +63,7 @@ if (existsSync(RESTART_FILE)) {
     }
     unlinkSync(RESTART_FILE);
   } catch (e) {
-    console.warn("Failed to update restart message:", e);
+    warn(`restart msg: ${e}`);
     try {
       unlinkSync(RESTART_FILE);
     } catch {}
@@ -77,20 +76,20 @@ const runner = run(bot);
 // Graceful shutdown
 const stopRunner = () => {
   if (runner.isRunning()) {
-    console.log("Stopping bot...");
+    info("stopping bot");
     stopWatcher();
     runner.stop();
   }
 };
 
 process.on("SIGINT", () => {
-  console.log("Received SIGINT");
+  info("SIGINT");
   stopRunner();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("Received SIGTERM");
+  info("SIGTERM");
   stopRunner();
   process.exit(0);
 });

@@ -10,6 +10,7 @@ import { homedir, tmpdir } from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import type { SessionInfo } from "./types";
+import { info, warn, error } from "../logger";
 
 const execAsync = promisify(exec);
 
@@ -208,8 +209,8 @@ async function scanSessions(): Promise<SessionInfo[]> {
         }
       }
     }
-  } catch (error) {
-    console.error("Error scanning sessions:", error);
+  } catch (err) {
+    error(`scan: ${err}`);
   }
 
   for (const { info } of mostRecentByDir.values()) {
@@ -288,7 +289,9 @@ export async function startWatcher(onChange?: () => void): Promise<void> {
 
   // Initial scan
   await refresh();
-  console.log(`Session watcher: found ${cache.sessions.size} session(s)`);
+  info(
+    `watcher: ${cache.sessions.size} session${cache.sessions.size !== 1 ? "s" : ""}`,
+  );
 
   // Start fs.watch on projects directory
   try {
@@ -303,12 +306,9 @@ export async function startWatcher(onChange?: () => void): Promise<void> {
         }, DEBOUNCE_MS);
       }
     });
-    console.log(`Session watcher: watching ${PROJECTS_DIR}`);
-  } catch (error) {
-    console.warn(
-      "Session watcher: fs.watch failed, using polling only:",
-      error,
-    );
+    info(`watcher: watching ${PROJECTS_DIR}`);
+  } catch (err) {
+    warn(`watcher: fs.watch failed, polling only: ${err}`);
   }
 
   // Backup polling

@@ -23,6 +23,7 @@ import {
 } from "./streaming";
 import { getActiveSession, getSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
+import { debug, truncate } from "../logger";
 
 /**
  * Handle incoming text messages.
@@ -86,9 +87,9 @@ export async function handleText(ctx: Context): Promise<void> {
         message,
         response,
       );
-    } catch (error) {
-      console.error("Error in plan feedback:", error);
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+    } catch (err) {
+      debug(`plan feedback error: ${err}`);
+      await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
     } finally {
       typing.stop();
     }
@@ -164,9 +165,9 @@ export async function handleText(ctx: Context): Promise<void> {
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
           await ctx.reply("Review and approve?", { reply_markup: keyboard });
         }
-      } catch (error) {
-        console.error("Error in AskUserQuestion custom answer:", error);
-        await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      } catch (err) {
+        debug(`AUQ custom error: ${err}`);
+        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
       } finally {
         typing.stop();
       }
@@ -201,6 +202,9 @@ export async function handleText(ctx: Context): Promise<void> {
   // 5. Store message for retry
   session.lastMessage = message;
 
+  // Debug log incoming message
+  debug(`msg: "${truncate(message)}"`);
+
   // 7. Sync with registry if no session loaded
   if (!session.sessionName) {
     const active = await getActiveSession();
@@ -232,6 +236,9 @@ export async function handleText(ctx: Context): Promise<void> {
         chatId,
         ctx,
       );
+
+      // Debug log response
+      debug(`res: "${truncate(response)}"`);
 
       // 12. Audit log
       await auditLog(userId, username, "TEXT", message, response);
@@ -267,9 +274,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // Retry on Claude Code crash (not user cancellation)
       if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
-        console.log(
-          `Claude Code crashed, retrying (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`,
-        );
+        debug(`crash, retry ${attempt + 2}/${MAX_RETRIES + 1}`);
         await session.kill(); // Clear corrupted session
         await ctx.reply(`⚠️ Claude crashed, retrying...`);
         // Reset state for retry
@@ -279,7 +284,7 @@ export async function handleText(ctx: Context): Promise<void> {
       }
 
       // Final attempt failed or non-retryable error
-      console.error("Error processing message:", error);
+      debug(`msg error: ${error}`);
 
       // Check if it was a cancellation
       if (errorStr.includes("abort") || errorStr.includes("cancel")) {

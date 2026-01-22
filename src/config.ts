@@ -8,6 +8,7 @@ import { homedir } from "os";
 import { resolve, dirname } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
+import { info, debug } from "./logger";
 
 // ============== Environment Setup ==============
 
@@ -74,12 +75,10 @@ try {
   const mcpModule = await import(mcpConfigPath).catch(() => null);
   if (mcpModule?.MCP_SERVERS) {
     MCP_SERVERS = mcpModule.MCP_SERVERS;
-    console.log(
-      `Loaded ${Object.keys(MCP_SERVERS).length} MCP servers from mcp-config.ts`,
-    );
+    debug(`mcp: ${Object.keys(MCP_SERVERS).length} servers`);
   }
 } catch {
-  console.log("No mcp-config.ts found - running without MCPs");
+  debug("mcp: none configured");
 }
 
 export { MCP_SERVERS };
@@ -223,17 +222,11 @@ await mkdir(TEMP_DIR, { recursive: true });
 // ============== Validation ==============
 
 if (!TELEGRAM_TOKEN) {
-  console.error("ERROR: TELEGRAM_BOT_TOKEN environment variable is required");
+  console.error("ERROR: TELEGRAM_BOT_TOKEN required");
   process.exit(1);
 }
 
 if (ALLOWED_USERS.length === 0) {
-  console.error(
-    "ERROR: TELEGRAM_ALLOWED_USERS environment variable is required",
-  );
+  console.error("ERROR: TELEGRAM_ALLOWED_USERS required");
   process.exit(1);
 }
-
-console.log(
-  `Config loaded: ${ALLOWED_USERS.length} allowed users, working dir: ${WORKING_DIR}`,
-);
