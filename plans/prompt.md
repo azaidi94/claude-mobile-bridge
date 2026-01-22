@@ -56,7 +56,7 @@ After completing, append to progress.txt:
 
 # COMMIT
 
-Make a git commit with a clear message.
+Make a git commit with a clear message. Always reference the issue number (e.g. `fix: resolve crash on startup #7`).
 
 # THE ISSUE
 
