@@ -76,19 +76,16 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 /**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
-// Available models
-export type ModelId =
-  | "claude-opus-4-5-20250514"
-  | "claude-sonnet-4-5-20250514"
-  | "claude-haiku-4-5-20250514";
+// Available models (SDK accepts short names only)
+export type ModelId = "opus" | "sonnet" | "haiku";
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
-  "claude-opus-4-5-20250514": "Opus 4.5",
-  "claude-sonnet-4-5-20250514": "Sonnet 4.5",
-  "claude-haiku-4-5-20250514": "Haiku 4.5",
+  opus: "Opus 4.5",
+  sonnet: "Sonnet 4.5",
+  haiku: "Haiku 4.5",
 };
 
-const DEFAULT_MODEL: ModelId = "claude-opus-4-5-20250514";
+const DEFAULT_MODEL: ModelId = "opus";
 
 class ClaudeSession {
   sessionId: string | null = null;
