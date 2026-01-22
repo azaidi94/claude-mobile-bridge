@@ -19,7 +19,7 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { setActiveSession, getActiveSession } from "../sessions";
+import { setActiveSession, getActiveSession, getSessions } from "../sessions";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -61,11 +61,35 @@ export async function handleCallback(ctx: Context): Promise<void> {
       const active = getActiveSession();
       if (active) {
         session.loadFromRegistry(active.info);
-        const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
-        await ctx.editMessageText(
-          `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
-          { parse_mode: "HTML" },
-        );
+
+        // Rebuild session list with updated active marker
+        const sessions = getSessions();
+        const lines: string[] = ["📋 <b>Sessions</b>\n"];
+
+        for (const s of sessions) {
+          const isActive = active.name === s.name;
+          const marker = isActive ? "✅ " : "• ";
+          const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+          const ago = formatTimeAgo(s.lastActivity);
+          lines.push(
+            `${marker}<code>${s.name}</code>`,
+            `   ${dir}`,
+            `   ${ago}`,
+          );
+        }
+
+        // Rebuild buttons with updated checkmark
+        const buttons = sessions.map((s) => [
+          {
+            text: active.name === s.name ? `✓ ${s.name}` : s.name,
+            callback_data: `switch:${s.name}`,
+          },
+        ]);
+
+        await ctx.editMessageText(lines.join("\n"), {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: buttons },
+        });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
       }
     } else {
@@ -406,4 +430,17 @@ export async function handleCallback(ctx: Context): Promise<void> {
   } finally {
     typing.stop();
   }
+}
+
+// Helper
+function formatTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
 }

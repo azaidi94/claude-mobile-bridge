@@ -26,3 +26,17 @@ Filter TodoWrite tool calls from streaming output to reduce noise in Telegram ch
 
 ## Notes
 - Pre-existing test failures (rate limiter, fork bomb) unrelated to this change
+
+---
+
+# Issue #8 - Persistent session selector buttons
+
+## Task
+Keep session list + buttons visible after selecting a session via /list
+
+## Changes
+- `src/handlers/callback.ts`: Rebuild session list with updated active marker after switch
+
+## Decisions
+- Added getSessions import and formatTimeAgo helper (duplicated from commands.ts)
+- After switch, editMessageText shows full session list with new checkmark instead of just confirmation
