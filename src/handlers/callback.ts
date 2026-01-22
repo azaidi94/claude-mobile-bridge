@@ -63,12 +63,23 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     session.setModel(modelId);
 
-    // Clear session so next message uses new model (SDK ignores model option when resuming)
+    // Send /model command to Claude session to switch model mid-session
     if (session.isActive) {
       console.log(
-        `[MODEL SWITCH] Clearing session ${session.sessionId?.slice(0, 8)} to apply new model`,
+        `[MODEL SWITCH] Sending /model ${modelId} to session ${session.sessionId?.slice(0, 8)}`,
       );
-      session.clearSession();
+      try {
+        await session.sendMessageStreaming(
+          `/model ${modelId}`,
+          username,
+          userId,
+          async () => {}, // Silent - no status updates
+          chatId,
+          ctx,
+        );
+      } catch (error) {
+        console.error("[MODEL SWITCH] Failed to send /model command:", error);
+      }
     }
 
     // Update message with new selection
