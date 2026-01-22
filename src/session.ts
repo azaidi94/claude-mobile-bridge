@@ -80,12 +80,12 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 export type ModelId =
   | "claude-opus-4-5-20250514"
   | "claude-sonnet-4-5-20250514"
-  | "claude-haiku-3-5-20241022";
+  | "claude-haiku-4-5-20250514";
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-opus-4-5-20250514": "Opus 4.5",
   "claude-sonnet-4-5-20250514": "Sonnet 4.5",
-  "claude-haiku-3-5-20241022": "Haiku 3.5",
+  "claude-haiku-4-5-20250514": "Haiku 4.5",
 };
 
 const DEFAULT_MODEL: ModelId = "claude-opus-4-5-20250514";

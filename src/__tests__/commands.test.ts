@@ -158,7 +158,7 @@ mock.module("../session", () => ({
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-5-20250514": "Opus 4.5",
     "claude-sonnet-4-5-20250514": "Sonnet 4.5",
-    "claude-haiku-3-5-20241022": "Haiku 3.5",
+    "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
 }));
 

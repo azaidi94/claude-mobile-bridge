@@ -80,3 +80,17 @@ Add /model command to switch between claude models (opus 4.5, sonnet 4.5, haiku 
 - /stop now provides feedback: "Query stopped", "Cancelling...", or "Nothing running"
 - /kill stops any running query, then clears session ID (next message starts fresh)
 - Updated /help to show both commands
+
+---
+
+# Issue #7 - Update haiku 3.5 to haiku 4.5
+
+## Task
+Switch from haiku 3.5 to haiku 4.5 per comment request.
+
+## Changes
+- `src/session.ts`: ModelId and MODEL_DISPLAY_NAMES updated to haiku-4-5-20250514
+- `src/__tests__/*.test.ts`: Updated mock MODEL_DISPLAY_NAMES
+
+## Decisions
+- Used same date suffix (20250514) as other 4.5 models
