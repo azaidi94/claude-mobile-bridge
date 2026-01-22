@@ -40,8 +40,8 @@ Then, find a way to break it into a smaller chunk and only do that chunk (i.e. c
 
 Before committing, run the feedback loops:
 
-- `npm run test` to run the tests
-- `npm run typecheck` to run the type checker
+- `bun test` to run the tests
+- `bun typecheck` to run the type checker
 
 # PROGRESS
 
