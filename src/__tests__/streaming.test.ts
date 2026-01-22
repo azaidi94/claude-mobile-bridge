@@ -185,8 +185,14 @@ describe("streaming: createAskUserKeyboard", () => {
 
 describe("streaming: createStatusCallback", () => {
   function createMockContext() {
-    const replies: Array<{ text: string; options?: Record<string, unknown> }> = [];
-    const edits: Array<{ chatId: number; msgId: number; text: string; options?: Record<string, unknown> }> = [];
+    const replies: Array<{ text: string; options?: Record<string, unknown> }> =
+      [];
+    const edits: Array<{
+      chatId: number;
+      msgId: number;
+      text: string;
+      options?: Record<string, unknown>;
+    }> = [];
     const deletes: Array<{ chatId: number; msgId: number }> = [];
 
     return {
@@ -195,10 +201,17 @@ describe("streaming: createStatusCallback", () => {
         return { chat: { id: 123 }, message_id: replies.length };
       }),
       api: {
-        editMessageText: mock(async (chatId: number, msgId: number, text: string, options?: Record<string, unknown>) => {
-          edits.push({ chatId, msgId, text, options });
-          return {};
-        }),
+        editMessageText: mock(
+          async (
+            chatId: number,
+            msgId: number,
+            text: string,
+            options?: Record<string, unknown>,
+          ) => {
+            edits.push({ chatId, msgId, text, options });
+            return {};
+          },
+        ),
         deleteMessage: mock(async (chatId: number, msgId: number) => {
           deletes.push({ chatId, msgId });
           return true;
@@ -211,7 +224,8 @@ describe("streaming: createStatusCallback", () => {
   }
 
   test("handles 'thinking' status type", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -225,7 +239,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("thinking status truncates long content", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -238,7 +253,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("handles 'tool' status type", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -252,7 +268,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("handles 'text' status type for new segment", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -266,7 +283,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("text status without segmentId is ignored", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -278,7 +296,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("text status throttles rapid updates", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -293,7 +312,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("text status edits after throttle period", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -310,7 +330,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("text status skips edit when content unchanged", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const { convertMarkdownToHtml } = await import("../formatting");
     const ctx = createMockContext();
     const state = new StreamingState();
@@ -329,7 +350,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("text status truncates content exceeding safe limit", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -342,7 +364,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("handles 'segment_end' status type", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -359,7 +382,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("segment_end without existing message is no-op", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -371,7 +395,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("segment_end without segmentId is no-op", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -382,7 +407,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("segment_end skips when content unchanged", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const { convertMarkdownToHtml } = await import("../formatting");
     const ctx = createMockContext();
     const state = new StreamingState();
@@ -398,7 +424,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("segment_end splits long messages", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -417,7 +444,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("handles 'done' status type - deletes tool messages", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -434,7 +462,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("done preserves text messages", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -450,12 +479,13 @@ describe("streaming: createStatusCallback", () => {
     // Only tool message should be deleted
     expect(ctx._deletes.length).toBe(1);
     // Text message ID should not be in deletes
-    const deletedIds = ctx._deletes.map(d => d.msgId);
+    const deletedIds = ctx._deletes.map((d) => d.msgId);
     expect(deletedIds).not.toContain(textMsgId);
   });
 
   test("handles multiple segments independently", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -472,7 +502,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("callback handles errors gracefully", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
 
@@ -491,7 +522,8 @@ describe("streaming: createStatusCallback", () => {
   });
 
   test("edit failure falls back to plain text", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -531,7 +563,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   function createMockContext(chatId: number) {
-    const replies: Array<{ text: string; options?: Record<string, unknown> }> = [];
+    const replies: Array<{ text: string; options?: Record<string, unknown> }> =
+      [];
     return {
       reply: mock(async (text: string, options?: Record<string, unknown>) => {
         replies.push({ text, options });
@@ -542,7 +575,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   }
 
   test("returns false when no ask-user files exist", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
     const ctx = createMockContext(123);
 
     const result = await checkPendingAskUserRequests(ctx as any, 123);
@@ -552,7 +586,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("processes pending request for matching chat", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     // Create ask-user file
     const data = {
@@ -576,7 +611,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("ignores requests for different chat", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     // Create ask-user file for different chat
     const data = {
@@ -599,7 +635,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("ignores non-pending status", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     // Create already-sent request
     const data = {
@@ -621,7 +658,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("marks request as sent after processing", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     const data = {
       status: "pending",
@@ -645,7 +683,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("includes keyboard with options", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     const data = {
       status: "pending",
@@ -672,7 +711,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("ignores request without options", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     const data = {
       status: "pending",
@@ -693,7 +733,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("ignores request without request_id", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     const data = {
       status: "pending",
@@ -714,7 +755,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("handles malformed JSON gracefully", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     await writeFile(testFile, "not valid json {{{");
 
@@ -730,7 +772,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("handles chat_id as string", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     // chat_id as string (some JSON might serialize this way)
     const data = {
@@ -752,7 +795,8 @@ describe("streaming: checkPendingAskUserRequests", () => {
   });
 
   test("uses default question when not provided", async () => {
-    const { checkPendingAskUserRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserRequests } =
+      await import("../handlers/streaming");
 
     const data = {
       status: "pending",
@@ -786,10 +830,12 @@ describe("streaming: rate limiting", () => {
         return { chat: { id: 123 }, message_id: replies.length };
       }),
       api: {
-        editMessageText: mock(async (_chatId: number, _msgId: number, text: string) => {
-          edits.push({ text });
-          return {};
-        }),
+        editMessageText: mock(
+          async (_chatId: number, _msgId: number, text: string) => {
+            edits.push({ text });
+            return {};
+          },
+        ),
         deleteMessage: mock(async () => true),
       },
       _replies: replies,
@@ -798,7 +844,8 @@ describe("streaming: rate limiting", () => {
   }
 
   test("first text update creates new message immediately", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -810,7 +857,8 @@ describe("streaming: rate limiting", () => {
   });
 
   test("rapid updates within throttle window are skipped", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -827,7 +875,8 @@ describe("streaming: rate limiting", () => {
   });
 
   test("update after throttle period goes through", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -844,7 +893,8 @@ describe("streaming: rate limiting", () => {
   });
 
   test("different segments have independent throttling", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -872,7 +922,8 @@ describe("streaming: rate limiting", () => {
 
 describe("streaming: error recovery", () => {
   test("reply failure doesn't prevent future messages", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
 
     let callCount = 0;
     const ctx = {
@@ -901,7 +952,8 @@ describe("streaming: error recovery", () => {
   });
 
   test("delete failure during done is handled", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
 
     const ctx = {
       reply: mock(async () => ({ chat: { id: 123 }, message_id: 1 })),
@@ -923,7 +975,8 @@ describe("streaming: error recovery", () => {
   });
 
   test("HTML formatting failure falls back gracefully", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
 
     let htmlAttempts = 0;
     const replies: string[] = [];
@@ -968,7 +1021,8 @@ describe("streaming: content tracking", () => {
   }
 
   test("lastContent is set on new message creation", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -980,7 +1034,8 @@ describe("streaming: content tracking", () => {
   });
 
   test("lastContent is updated on successful edit", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);
@@ -997,7 +1052,8 @@ describe("streaming: content tracking", () => {
   });
 
   test("lastEditTimes is updated after each successful operation", async () => {
-    const { createStatusCallback, StreamingState } = await import("../handlers/streaming");
+    const { createStatusCallback, StreamingState } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
     const state = new StreamingState();
     const callback = createStatusCallback(ctx as any, state);

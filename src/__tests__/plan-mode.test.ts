@@ -42,25 +42,39 @@ mock.module("../config", () => ({
 }));
 
 // Mock sessions module
-const mockSessions: Array<{ name: string; dir: string; lastActivity: number }> = [];
-let mockActiveSession: { name: string; info: { dir: string; id?: string; name: string; lastActivity?: number } } | null = null;
+const mockSessions: Array<{ name: string; dir: string; lastActivity: number }> =
+  [];
+let mockActiveSession: {
+  name: string;
+  info: { dir: string; id?: string; name: string; lastActivity?: number };
+} | null = null;
 
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
   getActiveSession: mock(() => mockActiveSession),
   setActiveSession: mock((name: string) => {
-    const found = mockSessions.find(s => s.name === name);
+    const found = mockSessions.find((s) => s.name === name);
     if (found) {
-      mockActiveSession = { name: found.name, info: { dir: found.dir, name: found.name } };
+      mockActiveSession = {
+        name: found.name,
+        info: { dir: found.dir, name: found.name },
+      };
       return true;
     }
     return false;
   }),
   addTelegramSession: mock((path: string, name?: string) => {
     const sessionName = name || `telegram-${Date.now()}`;
-    const newSession = { name: sessionName, dir: path, lastActivity: Date.now() };
+    const newSession = {
+      name: sessionName,
+      dir: path,
+      lastActivity: Date.now(),
+    };
     mockSessions.push(newSession);
-    mockActiveSession = { name: sessionName, info: { dir: path, name: sessionName } };
+    mockActiveSession = {
+      name: sessionName,
+      info: { dir: path, name: sessionName },
+    };
     return newSession;
   }),
   forceRefresh: mock(() => Promise.resolve()),
@@ -81,14 +95,21 @@ const mockSessionState = {
   lastUsage: null as { input_tokens?: number; output_tokens?: number } | null,
   queryStarted: null as Date | null,
   isPlanMode: false,
-  pendingPlanApproval: null as { toolUseId: string; planSummary: string; planContent?: string; timestamp: number } | null,
+  pendingPlanApproval: null as {
+    toolUseId: string;
+    planSummary: string;
+    planContent?: string;
+    timestamp: number;
+  } | null,
 };
 
 const mockSessionMethods = {
   stop: mock(() => Promise.resolve()),
   clearStopRequested: mock(() => {}),
   kill: mock(() => Promise.resolve()),
-  setWorkingDir: mock((dir: string) => { mockSessionState.workingDir = dir; }),
+  setWorkingDir: mock((dir: string) => {
+    mockSessionState.workingDir = dir;
+  }),
   loadFromRegistry: mock((info: { dir: string; name: string }) => {
     mockSessionState.workingDir = info.dir;
     mockSessionState.sessionName = info.name;
@@ -97,37 +118,78 @@ const mockSessionMethods = {
   consumeInterruptFlag: mock(() => false),
   sendMessageStreaming: mock(async () => "Test response"),
   respondToPlanApproval: mock(async () => "Plan response"),
-  clearPendingPlanApproval: mock(() => { mockSessionState.pendingPlanApproval = null; }),
+  clearPendingPlanApproval: mock(() => {
+    mockSessionState.pendingPlanApproval = null;
+  }),
 };
 
 mock.module("../session", () => ({
   session: {
-    get isRunning() { return mockSessionState.isRunning; },
-    get isActive() { return mockSessionState.isActive; },
-    get sessionId() { return mockSessionState.sessionId; },
-    set sessionId(val: string | null) { mockSessionState.sessionId = val; },
-    get sessionName() { return mockSessionState.sessionName; },
-    get workingDir() { return mockSessionState.workingDir; },
-    get lastMessage() { return mockSessionState.lastMessage; },
-    set lastMessage(val: string | null) { mockSessionState.lastMessage = val; },
-    get lastActivity() { return mockSessionState.lastActivity; },
-    get lastTool() { return mockSessionState.lastTool; },
-    get currentTool() { return mockSessionState.currentTool; },
-    get lastError() { return mockSessionState.lastError; },
-    get lastUsage() { return mockSessionState.lastUsage; },
-    get queryStarted() { return mockSessionState.queryStarted; },
-    get isPlanMode() { return mockSessionState.isPlanMode; },
-    get pendingPlanApproval() { return mockSessionState.pendingPlanApproval; },
+    get isRunning() {
+      return mockSessionState.isRunning;
+    },
+    get isActive() {
+      return mockSessionState.isActive;
+    },
+    get sessionId() {
+      return mockSessionState.sessionId;
+    },
+    set sessionId(val: string | null) {
+      mockSessionState.sessionId = val;
+    },
+    get sessionName() {
+      return mockSessionState.sessionName;
+    },
+    get workingDir() {
+      return mockSessionState.workingDir;
+    },
+    get lastMessage() {
+      return mockSessionState.lastMessage;
+    },
+    set lastMessage(val: string | null) {
+      mockSessionState.lastMessage = val;
+    },
+    get lastActivity() {
+      return mockSessionState.lastActivity;
+    },
+    get lastTool() {
+      return mockSessionState.lastTool;
+    },
+    get currentTool() {
+      return mockSessionState.currentTool;
+    },
+    get lastError() {
+      return mockSessionState.lastError;
+    },
+    get lastUsage() {
+      return mockSessionState.lastUsage;
+    },
+    get queryStarted() {
+      return mockSessionState.queryStarted;
+    },
+    get isPlanMode() {
+      return mockSessionState.isPlanMode;
+    },
+    get pendingPlanApproval() {
+      return mockSessionState.pendingPlanApproval;
+    },
     ...mockSessionMethods,
   },
 }));
 
 // Mock security - must include all exports to avoid breaking other tests
 mock.module("../security", () => ({
-  isAuthorized: mock((userId: number, allowedUsers: number[]) => allowedUsers.includes(userId)),
+  isAuthorized: mock((userId: number, allowedUsers: number[]) =>
+    allowedUsers.includes(userId),
+  ),
   rateLimiter: {
     check: mock(() => [true, 0] as [boolean, number]),
-    getStatus: mock(() => ({ tokens: 20, lastUpdate: Date.now(), max: 20, refillRate: 1 })),
+    getStatus: mock(() => ({
+      tokens: 20,
+      lastUpdate: Date.now(),
+      max: 20,
+      refillRate: 1,
+    })),
   },
   checkCommandSafety: mock((cmd: string) => {
     if (cmd.includes("rm -rf /")) return [false, "Blocked"];
@@ -149,13 +211,15 @@ mock.module("../utils", () => ({
 }));
 
 // Test helpers
-function createMockContext(overrides: Partial<{
-  userId: number;
-  username: string;
-  chatId: number;
-  messageText: string;
-  callbackData: string;
-}> = {}) {
+function createMockContext(
+  overrides: Partial<{
+    userId: number;
+    username: string;
+    chatId: number;
+    messageText: string;
+    callbackData: string;
+  }> = {},
+) {
   const {
     userId = 123456,
     username = "testuser",
@@ -164,9 +228,14 @@ function createMockContext(overrides: Partial<{
     callbackData,
   } = overrides;
 
-  const replies: Array<{ text: string; options?: Record<string, unknown> }> = [];
-  const editedMessages: Array<{ text: string; options?: Record<string, unknown> }> = [];
-  const documents: Array<{ file: unknown; options?: Record<string, unknown> }> = [];
+  const replies: Array<{ text: string; options?: Record<string, unknown> }> =
+    [];
+  const editedMessages: Array<{
+    text: string;
+    options?: Record<string, unknown>;
+  }> = [];
+  const documents: Array<{ file: unknown; options?: Record<string, unknown> }> =
+    [];
 
   return {
     from: { id: userId, username },
@@ -177,14 +246,18 @@ function createMockContext(overrides: Partial<{
       replies.push({ text, options });
       return { chat: { id: chatId }, message_id: Date.now() };
     }),
-    replyWithDocument: mock(async (file: unknown, options?: Record<string, unknown>) => {
-      documents.push({ file, options });
-      return { chat: { id: chatId }, message_id: Date.now() };
-    }),
-    editMessageText: mock(async (text: string, options?: Record<string, unknown>) => {
-      editedMessages.push({ text, options });
-      return true;
-    }),
+    replyWithDocument: mock(
+      async (file: unknown, options?: Record<string, unknown>) => {
+        documents.push({ file, options });
+        return { chat: { id: chatId }, message_id: Date.now() };
+      },
+    ),
+    editMessageText: mock(
+      async (text: string, options?: Record<string, unknown>) => {
+        editedMessages.push({ text, options });
+        return true;
+      },
+    ),
     answerCallbackQuery: mock(async () => true),
     api: {
       sendMessage: mock(async () => ({ message_id: Date.now() })),
@@ -222,7 +295,8 @@ describe("plan-mode: createPlanApprovalKeyboard", () => {
   beforeEach(resetMocks);
 
   test("creates keyboard with Accept, Reject, Edit buttons", async () => {
-    const { createPlanApprovalKeyboard } = await import("../handlers/streaming");
+    const { createPlanApprovalKeyboard } =
+      await import("../handlers/streaming");
 
     const keyboard = createPlanApprovalKeyboard("req-123");
     const data = (keyboard as any).inline_keyboard;
@@ -232,7 +306,8 @@ describe("plan-mode: createPlanApprovalKeyboard", () => {
   });
 
   test("creates correct callback data for each button", async () => {
-    const { createPlanApprovalKeyboard } = await import("../handlers/streaming");
+    const { createPlanApprovalKeyboard } =
+      await import("../handlers/streaming");
 
     const keyboard = createPlanApprovalKeyboard("abc-123");
     const data = (keyboard as any).inline_keyboard;
@@ -251,7 +326,8 @@ describe("plan-mode: createPlanApprovalKeyboard", () => {
   });
 
   test("includes emoji icons in button text", async () => {
-    const { createPlanApprovalKeyboard } = await import("../handlers/streaming");
+    const { createPlanApprovalKeyboard } =
+      await import("../handlers/streaming");
 
     const keyboard = createPlanApprovalKeyboard("test");
     const data = (keyboard as any).inline_keyboard;
@@ -262,7 +338,8 @@ describe("plan-mode: createPlanApprovalKeyboard", () => {
   });
 
   test("handles different request IDs", async () => {
-    const { createPlanApprovalKeyboard } = await import("../handlers/streaming");
+    const { createPlanApprovalKeyboard } =
+      await import("../handlers/streaming");
 
     const keyboard1 = createPlanApprovalKeyboard("id-1");
     const keyboard2 = createPlanApprovalKeyboard("id-2");
@@ -282,7 +359,10 @@ describe("plan-mode: handlePlan command", () => {
 
   test("rejects unauthorized users", async () => {
     const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 999999, messageText: "/plan test" });
+    const ctx = createMockContext({
+      userId: 999999,
+      messageText: "/plan test",
+    });
 
     await handlePlan(ctx as any);
 
@@ -312,12 +392,14 @@ describe("plan-mode: handlePlan command", () => {
 
   test("starts plan mode with valid message", async () => {
     const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add a hello world endpoint" });
+    const ctx = createMockContext({
+      messageText: "/plan add a hello world endpoint",
+    });
 
     await handlePlan(ctx as any);
 
     // Should show "Starting plan mode..." message
-    const startMsg = ctx._replies.find(r => r.text.includes("plan mode"));
+    const startMsg = ctx._replies.find((r) => r.text.includes("plan mode"));
     expect(startMsg).toBeDefined();
   });
 
@@ -329,7 +411,9 @@ describe("plan-mode: handlePlan command", () => {
 
     expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
     // Verify the mock was called (implementation details may vary)
-    expect(mockSessionMethods.sendMessageStreaming.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      mockSessionMethods.sendMessageStreaming.mock.calls.length,
+    ).toBeGreaterThan(0);
   });
 
   test("shows approval buttons when plan is ready", async () => {
@@ -346,7 +430,9 @@ describe("plan-mode: handlePlan command", () => {
     await handlePlan(ctx as any);
 
     // Should show approval message with keyboard
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
     expect(approvalMsg?.options?.reply_markup).toBeDefined();
   });
@@ -379,7 +465,9 @@ describe("plan-mode: plan callbacks", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Unauthorized" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Unauthorized",
+    });
   });
 
   test("handles missing pending plan approval", async () => {
@@ -392,7 +480,9 @@ describe("plan-mode: plan callbacks", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "No pending plan" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "No pending plan",
+    });
   });
 
   test("handles accept action", async () => {
@@ -434,7 +524,8 @@ describe("plan-mode: plan callbacks", () => {
   });
 
   test("handles edit action - prompts for feedback", async () => {
-    const { handleCallback, pendingPlanFeedback } = await import("../handlers/callback");
+    const { handleCallback, pendingPlanFeedback } =
+      await import("../handlers/callback");
     const ctx = createMockContext({
       callbackData: "plan:edit:123",
       chatId: 789,
@@ -449,8 +540,12 @@ describe("plan-mode: plan callbacks", () => {
     await handleCallback(ctx as any);
 
     // Should prompt for feedback
-    expect(ctx.editMessageText).toHaveBeenCalledWith("✏️ Reply with your feedback for the plan:");
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Send your feedback" });
+    expect(ctx.editMessageText).toHaveBeenCalledWith(
+      "✏️ Reply with your feedback for the plan:",
+    );
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Send your feedback",
+    });
 
     // Should store pending feedback state
     expect(pendingPlanFeedback.has(789)).toBe(true);
@@ -471,7 +566,9 @@ describe("plan-mode: plan callbacks", () => {
     await handleCallback(ctx as any);
 
     expect(mockSessionMethods.respondToPlanApproval).toHaveBeenCalled();
-    expect(mockSessionMethods.respondToPlanApproval.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      mockSessionMethods.respondToPlanApproval.mock.calls.length,
+    ).toBeGreaterThan(0);
   });
 
   test("calls respondToPlanApproval on reject", async () => {
@@ -489,7 +586,9 @@ describe("plan-mode: plan callbacks", () => {
     await handleCallback(ctx as any);
 
     expect(mockSessionMethods.respondToPlanApproval).toHaveBeenCalled();
-    expect(mockSessionMethods.respondToPlanApproval.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      mockSessionMethods.respondToPlanApproval.mock.calls.length,
+    ).toBeGreaterThan(0);
   });
 
   test("handles invalid callback data format", async () => {
@@ -500,7 +599,9 @@ describe("plan-mode: plan callbacks", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Invalid callback" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Invalid callback",
+    });
   });
 });
 
@@ -540,7 +641,12 @@ describe("plan-mode: pending feedback flow", () => {
 
 describe("plan-mode: PlanApprovalState type", () => {
   test("has correct shape", async () => {
-    const state: { toolUseId: string; planSummary: string; planContent?: string; timestamp: number } = {
+    const state: {
+      toolUseId: string;
+      planSummary: string;
+      planContent?: string;
+      timestamp: number;
+    } = {
       toolUseId: "tool-use-123",
       planSummary: "This is a plan summary",
       timestamp: Date.now(),
@@ -553,7 +659,12 @@ describe("plan-mode: PlanApprovalState type", () => {
 
   test("planSummary can be truncated", async () => {
     const longPlan = "x".repeat(1000);
-    const state: { toolUseId: string; planSummary: string; planContent?: string; timestamp: number } = {
+    const state: {
+      toolUseId: string;
+      planSummary: string;
+      planContent?: string;
+      timestamp: number;
+    } = {
       toolUseId: "tool-123",
       planSummary: longPlan.slice(0, 500),
       timestamp: Date.now(),
@@ -563,14 +674,24 @@ describe("plan-mode: PlanApprovalState type", () => {
   });
 
   test("planContent is optional", async () => {
-    const stateWithContent: { toolUseId: string; planSummary: string; planContent?: string; timestamp: number } = {
+    const stateWithContent: {
+      toolUseId: string;
+      planSummary: string;
+      planContent?: string;
+      timestamp: number;
+    } = {
       toolUseId: "tool-123",
       planSummary: "Summary",
       planContent: "Full plan content here",
       timestamp: Date.now(),
     };
 
-    const stateWithoutContent: { toolUseId: string; planSummary: string; planContent?: string; timestamp: number } = {
+    const stateWithoutContent: {
+      toolUseId: string;
+      planSummary: string;
+      planContent?: string;
+      timestamp: number;
+    } = {
       toolUseId: "tool-456",
       planSummary: "Summary only",
       timestamp: Date.now(),
@@ -594,18 +715,21 @@ describe("plan-mode: plan content display", () => {
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Short summary",
-      planContent: "# Full Plan Implementation\n\n1. Step one: Create the feature module\n2. Step two: Add unit tests\n3. Step three: Update documentation",
+      planContent:
+        "# Full Plan Implementation\n\n1. Step one: Create the feature module\n2. Step two: Add unit tests\n3. Step three: Update documentation",
       timestamp: Date.now(),
     };
 
     await handlePlan(ctx as any);
 
     // Should show plan content
-    const contentMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const contentMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(contentMsg).toBeDefined();
 
     // Should show approval buttons after content
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
   });
 
@@ -616,14 +740,15 @@ describe("plan-mode: plan content display", () => {
     // Simulate pending plan approval without content (summary must be > 50 chars)
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
-      planSummary: "This is the plan summary fallback that is long enough to display in the response message",
+      planSummary:
+        "This is the plan summary fallback that is long enough to display in the response message",
       timestamp: Date.now(),
     };
 
     await handlePlan(ctx as any);
 
     // Should show summary as fallback (in Plan: message)
-    const summaryMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const summaryMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(summaryMsg).toBeDefined();
   });
 
@@ -643,7 +768,9 @@ describe("plan-mode: plan content display", () => {
 
     // Should send as document file
     expect(ctx._documents.length).toBe(1);
-    expect(ctx._documents[0]!.options?.caption).toBe("📋 Plan ready for review");
+    expect(ctx._documents[0]!.options?.caption).toBe(
+      "📋 Plan ready for review",
+    );
   });
 
   test("does not show plan content if too short", async () => {
@@ -661,7 +788,7 @@ describe("plan-mode: plan content display", () => {
     await handlePlan(ctx as any);
 
     // Should only show approval buttons, no separate content message
-    const planMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const planMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(planMsg).toBeUndefined();
   });
 
@@ -673,14 +800,15 @@ describe("plan-mode: plan content display", () => {
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Summary",
-      planContent: "This plan has <script>alert('xss')</script> and & characters that need escaping for proper display",
+      planContent:
+        "This plan has <script>alert('xss')</script> and & characters that need escaping for proper display",
       timestamp: Date.now(),
     };
 
     await handlePlan(ctx as any);
 
     // Content should be escaped (check that raw script tag is not present)
-    const contentMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const contentMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(contentMsg).toBeDefined();
     // The HTML should be escaped, so <script> should appear as &lt;script&gt;
     expect(contentMsg?.text).not.toContain("<script>");
@@ -713,7 +841,9 @@ describe("plan-mode: session state", () => {
     };
 
     expect(mockSessionState.pendingPlanApproval?.toolUseId).toBe("tool-abc");
-    expect(mockSessionState.pendingPlanApproval?.planSummary).toBe("Plan to implement feature");
+    expect(mockSessionState.pendingPlanApproval?.planSummary).toBe(
+      "Plan to implement feature",
+    );
     expect(mockSessionState.pendingPlanApproval?.timestamp).toBe(1234567890);
   });
 
@@ -740,7 +870,9 @@ describe("plan-mode: integration scenarios", () => {
     const { handleCallback } = await import("../handlers/callback");
 
     // Step 1: User sends /plan command
-    const planCtx = createMockContext({ messageText: "/plan add hello endpoint" });
+    const planCtx = createMockContext({
+      messageText: "/plan add hello endpoint",
+    });
 
     // Simulate ExitPlanMode detection
     mockSessionState.pendingPlanApproval = {
@@ -752,7 +884,9 @@ describe("plan-mode: integration scenarios", () => {
     await handlePlan(planCtx as any);
 
     // Should show approval buttons
-    const approvalMsg = planCtx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = planCtx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
 
     // Step 2: User clicks Accept
@@ -767,7 +901,8 @@ describe("plan-mode: integration scenarios", () => {
   });
 
   test("full flow: /plan -> ExitPlanMode -> Edit -> feedback", async () => {
-    const { handleCallback, pendingPlanFeedback } = await import("../handlers/callback");
+    const { handleCallback, pendingPlanFeedback } =
+      await import("../handlers/callback");
 
     // Setup pending plan
     mockSessionState.pendingPlanApproval = {
@@ -785,7 +920,9 @@ describe("plan-mode: integration scenarios", () => {
     await handleCallback(editCtx as any);
 
     // Should prompt for feedback
-    expect(editCtx.editMessageText).toHaveBeenCalledWith("✏️ Reply with your feedback for the plan:");
+    expect(editCtx.editMessageText).toHaveBeenCalledWith(
+      "✏️ Reply with your feedback for the plan:",
+    );
     expect(pendingPlanFeedback.has(789)).toBe(true);
 
     // Cleanup
@@ -804,7 +941,9 @@ describe("plan-mode: integration scenarios", () => {
     await handlePlan(ctx as any);
 
     // Should show rate limit message
-    const rateLimitMsg = ctx._replies.find(r => r.text.includes("Rate limited"));
+    const rateLimitMsg = ctx._replies.find((r) =>
+      r.text.includes("Rate limited"),
+    );
     expect(rateLimitMsg).toBeDefined();
   });
 });
@@ -832,29 +971,37 @@ describe("plan-mode: text handler plan display after streaming", () => {
     await handleText(ctx as any);
 
     // Should show plan content inline
-    const planMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const planMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(planMsg).toBeDefined();
     expect(planMsg?.options?.parse_mode).toBe("HTML");
 
     // Should show approval buttons
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
     expect(approvalMsg?.options?.reply_markup).toBeDefined();
   });
 
   test("sends long plan as .md document file", async () => {
     const { handleText } = await import("../handlers/text");
-    const documents: Array<{ file: unknown; options?: Record<string, unknown> }> = [];
+    const documents: Array<{
+      file: unknown;
+      options?: Record<string, unknown>;
+    }> = [];
     const ctx = {
       ...createMockContext({ messageText: "implement this feature" }),
-      replyWithDocument: mock(async (file: unknown, options?: Record<string, unknown>) => {
-        documents.push({ file, options });
-        return { chat: { id: 789 }, message_id: Date.now() };
-      }),
+      replyWithDocument: mock(
+        async (file: unknown, options?: Record<string, unknown>) => {
+          documents.push({ file, options });
+          return { chat: { id: 789 }, message_id: Date.now() };
+        },
+      ),
     };
 
     // Simulate plan approval with long content
-    const longContent = "# Long Plan\n\n" + "This is a very detailed step.\n".repeat(200);
+    const longContent =
+      "# Long Plan\n\n" + "This is a very detailed step.\n".repeat(200);
     mockSessionMethods.sendMessageStreaming.mockImplementation(async () => {
       mockSessionState.pendingPlanApproval = {
         toolUseId: "tool-123",
@@ -872,7 +1019,9 @@ describe("plan-mode: text handler plan display after streaming", () => {
     expect(documents[0]?.options?.caption).toBe("📋 Plan ready for review");
 
     // Should still show approval buttons
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
   });
 
@@ -893,11 +1042,13 @@ describe("plan-mode: text handler plan display after streaming", () => {
     await handleText(ctx as any);
 
     // Should not show plan content message (no planContent)
-    const planMsg = ctx._replies.find(r => r.text.includes("Plan:"));
+    const planMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
     expect(planMsg).toBeUndefined();
 
     // Should still show approval buttons
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeDefined();
   });
 
@@ -914,7 +1065,9 @@ describe("plan-mode: text handler plan display after streaming", () => {
     await handleText(ctx as any);
 
     // Should not show approval buttons
-    const approvalMsg = ctx._replies.find(r => r.text.includes("Review and approve"));
+    const approvalMsg = ctx._replies.find((r) =>
+      r.text.includes("Review and approve"),
+    );
     expect(approvalMsg).toBeUndefined();
   });
 });
@@ -969,6 +1122,8 @@ describe("plan-mode: edge cases", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "No pending plan" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "No pending plan",
+    });
   });
 });

@@ -37,7 +37,7 @@ async function downloadPhoto(ctx: Context): Promise<string> {
 
   // Download
   const response = await fetch(
-    `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
+    `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`,
   );
   const buffer = await response.arrayBuffer();
   await Bun.write(photoPath, buffer);
@@ -54,7 +54,7 @@ async function processPhotos(
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
 ): Promise<void> {
   // Mark processing started
   const stopProcessing = session.startProcessing();
@@ -86,7 +86,7 @@ async function processPhotos(
       userId,
       statusCallback,
       chatId,
-      ctx
+      ctx,
     );
 
     await auditLog(userId, username, "PHOTO", prompt, response);
@@ -126,7 +126,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
       await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
       );
       return;
     }
@@ -146,7 +146,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
         await ctx.api.editMessageText(
           statusMsg.chat.id,
           statusMsg.message_id,
-          "❌ Failed to download photo."
+          "❌ Failed to download photo.",
         );
       } catch (editError) {
         console.debug("Failed to edit status message:", editError);
@@ -166,7 +166,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       ctx.message?.caption,
       userId,
       username,
-      chatId
+      chatId,
     );
 
     // Clean up status message
@@ -187,6 +187,6 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     ctx,
     userId,
     username,
-    processPhotos
+    processPhotos,
   );
 }

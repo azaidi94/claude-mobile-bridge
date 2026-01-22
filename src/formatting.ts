@@ -79,7 +79,7 @@ export function convertMarkdownToHtml(text: string): string {
     const escapedCode = escapeHtml(inlineCodes[i]!);
     text = text.replace(
       `\x00INLINECODE${i}\x00`,
-      `<code>${escapedCode}</code>`
+      `<code>${escapedCode}</code>`,
     );
   }
 
@@ -111,7 +111,7 @@ function convertBlockquotes(text: string): string {
     } else {
       if (inBlockquote) {
         result.push(
-          "<blockquote>" + blockquoteLines.join("\n") + "</blockquote>"
+          "<blockquote>" + blockquoteLines.join("\n") + "</blockquote>",
         );
         blockquoteLines.length = 0;
         inBlockquote = false;
@@ -168,7 +168,7 @@ function code(text: string): string {
  */
 export function formatToolStatus(
   toolName: string,
-  toolInput: Record<string, unknown>
+  toolInput: Record<string, unknown>,
 ): string {
   const emojiMap: Record<string, string> = {
     Read: "📖",
@@ -237,7 +237,7 @@ export function formatToolStatus(
     const path = String(toolInput.path || "");
     if (path) {
       return `${emoji} Searching ${code(truncate(pattern, 30))} in ${code(
-        shortenPath(path)
+        shortenPath(path),
       )}`;
     }
     return `${emoji} Searching ${code(truncate(pattern, 40))}`;
@@ -297,7 +297,7 @@ export function formatToolStatus(
 
       if (summary) {
         return `🔧 ${server} ${action}: ${escapeHtml(
-          truncate(String(summary), 40)
+          truncate(String(summary), 40),
         )}`;
       }
       return `🔧 ${server}: ${action}`;

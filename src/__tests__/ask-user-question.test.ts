@@ -73,20 +73,36 @@ const mockSessionMethods = {
 
 mock.module("../session", () => ({
   session: {
-    get isRunning() { return mockSessionState.isRunning; },
-    get isActive() { return mockSessionState.isActive; },
-    get sessionId() { return mockSessionState.sessionId; },
-    get sessionName() { return mockSessionState.sessionName; },
-    get workingDir() { return mockSessionState.workingDir; },
-    get pendingPlanApproval() { return mockSessionState.pendingPlanApproval; },
-    get isPlanMode() { return mockSessionState.isPlanMode; },
+    get isRunning() {
+      return mockSessionState.isRunning;
+    },
+    get isActive() {
+      return mockSessionState.isActive;
+    },
+    get sessionId() {
+      return mockSessionState.sessionId;
+    },
+    get sessionName() {
+      return mockSessionState.sessionName;
+    },
+    get workingDir() {
+      return mockSessionState.workingDir;
+    },
+    get pendingPlanApproval() {
+      return mockSessionState.pendingPlanApproval;
+    },
+    get isPlanMode() {
+      return mockSessionState.isPlanMode;
+    },
     ...mockSessionMethods,
   },
 }));
 
 // Mock security
 mock.module("../security", () => ({
-  isAuthorized: mock((userId: number, allowedUsers: number[]) => allowedUsers.includes(userId)),
+  isAuthorized: mock((userId: number, allowedUsers: number[]) =>
+    allowedUsers.includes(userId),
+  ),
   rateLimiter: {
     check: mock(() => [true, 0] as [boolean, number]),
   },
@@ -103,13 +119,15 @@ mock.module("../utils", () => ({
 }));
 
 // Test helpers
-function createMockContext(overrides: Partial<{
-  userId: number;
-  username: string;
-  chatId: number;
-  callbackData: string;
-  messageText: string;
-}> = {}) {
+function createMockContext(
+  overrides: Partial<{
+    userId: number;
+    username: string;
+    chatId: number;
+    callbackData: string;
+    messageText: string;
+  }> = {},
+) {
   const {
     userId = 123456,
     username = "testuser",
@@ -118,8 +136,12 @@ function createMockContext(overrides: Partial<{
     messageText,
   } = overrides;
 
-  const replies: Array<{ text: string; options?: Record<string, unknown> }> = [];
-  const editedMessages: Array<{ text: string; options?: Record<string, unknown> }> = [];
+  const replies: Array<{ text: string; options?: Record<string, unknown> }> =
+    [];
+  const editedMessages: Array<{
+    text: string;
+    options?: Record<string, unknown>;
+  }> = [];
 
   return {
     from: { id: userId, username },
@@ -130,10 +152,12 @@ function createMockContext(overrides: Partial<{
       replies.push({ text, options });
       return { chat: { id: chatId }, message_id: Date.now() };
     }),
-    editMessageText: mock(async (text: string, options?: Record<string, unknown>) => {
-      editedMessages.push({ text, options });
-      return true;
-    }),
+    editMessageText: mock(
+      async (text: string, options?: Record<string, unknown>) => {
+        editedMessages.push({ text, options });
+        return true;
+      },
+    ),
     answerCallbackQuery: mock(async () => true),
     api: {
       editMessageText: mock(async () => ({})),
@@ -156,7 +180,8 @@ describe("AskUserQuestion: createAskUserQuestionKeyboard", () => {
   beforeEach(resetMocks);
 
   test("creates keyboard with options + custom + skip buttons", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "Which framework?",
@@ -188,7 +213,8 @@ describe("AskUserQuestion: createAskUserQuestionKeyboard", () => {
   });
 
   test("truncates long option labels", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "Pick one",
@@ -203,7 +229,8 @@ describe("AskUserQuestion: createAskUserQuestionKeyboard", () => {
   });
 
   test("handles single question (still shows skip)", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "Choose one",
@@ -217,11 +244,16 @@ describe("AskUserQuestion: createAskUserQuestionKeyboard", () => {
   });
 
   test("includes correct callback data format", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "Select",
-      options: [{ label: "Option A" }, { label: "Option B" }, { label: "Option C" }],
+      options: [
+        { label: "Option A" },
+        { label: "Option B" },
+        { label: "Option C" },
+      ],
     };
     const keyboard = createAskUserQuestionKeyboard(question, "abc-def", 0, 3);
 
@@ -238,7 +270,8 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
   beforeEach(resetMocks);
 
   test("returns true and sends keyboard when valid input provided", async () => {
-    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } = await import("../handlers/streaming");
+    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
 
     const input = {
@@ -250,7 +283,12 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
       ],
     };
 
-    const result = await checkPendingAskUserQuestionRequests(ctx as any, 789, input, "tool-123");
+    const result = await checkPendingAskUserQuestionRequests(
+      ctx as any,
+      789,
+      input,
+      "tool-123",
+    );
 
     expect(result).toBe(true);
     expect(ctx._replies.length).toBe(1);
@@ -265,19 +303,26 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
   });
 
   test("returns false when no questions provided", async () => {
-    const { checkPendingAskUserQuestionRequests } = await import("../handlers/streaming");
+    const { checkPendingAskUserQuestionRequests } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
 
     const input = { questions: [] };
 
-    const result = await checkPendingAskUserQuestionRequests(ctx as any, 789, input, "tool-123");
+    const result = await checkPendingAskUserQuestionRequests(
+      ctx as any,
+      789,
+      input,
+      "tool-123",
+    );
 
     expect(result).toBe(false);
     expect(ctx._replies.length).toBe(0);
   });
 
   test("includes header in question text when provided", async () => {
-    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } = await import("../handlers/streaming");
+    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
 
     const input = {
@@ -290,7 +335,12 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
       ],
     };
 
-    await checkPendingAskUserQuestionRequests(ctx as any, 789, input, "tool-123");
+    await checkPendingAskUserQuestionRequests(
+      ctx as any,
+      789,
+      input,
+      "tool-123",
+    );
 
     expect(ctx._replies[0]?.text).toContain("Framework Choice");
 
@@ -299,7 +349,8 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
   });
 
   test("includes option descriptions when provided", async () => {
-    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } = await import("../handlers/streaming");
+    const { checkPendingAskUserQuestionRequests, pendingAskUserQuestions } =
+      await import("../handlers/streaming");
     const ctx = createMockContext();
 
     const input = {
@@ -314,7 +365,12 @@ describe("AskUserQuestion: checkPendingAskUserQuestionRequests", () => {
       ],
     };
 
-    await checkPendingAskUserQuestionRequests(ctx as any, 789, input, "tool-123");
+    await checkPendingAskUserQuestionRequests(
+      ctx as any,
+      789,
+      input,
+      "tool-123",
+    );
 
     expect(ctx._replies[0]?.text).toContain("A library for building UIs");
     expect(ctx._replies[0]?.text).toContain("Progressive framework");
@@ -352,7 +408,8 @@ describe("AskUserQuestion: state management", () => {
   });
 
   test("pendingAskUserQuestionCustom tracks custom input state", async () => {
-    const { pendingAskUserQuestionCustom } = await import("../handlers/streaming");
+    const { pendingAskUserQuestionCustom } =
+      await import("../handlers/streaming");
 
     pendingAskUserQuestionCustom.set(789, "req-456");
 
@@ -405,7 +462,12 @@ describe("AskUserQuestion: callback handling", () => {
     // Setup pending state
     pendingAskUserQuestions.set("req-123", {
       toolUseId: "tool-abc",
-      questions: [{ question: "Q1", options: [{ label: "Option A" }, { label: "Option B" }] }],
+      questions: [
+        {
+          question: "Q1",
+          options: [{ label: "Option A" }, { label: "Option B" }],
+        },
+      ],
       currentIndex: 0,
       answers: [],
       chatId: 789,
@@ -448,7 +510,9 @@ describe("AskUserQuestion: callback handling", () => {
     await handleCallback(ctx as any);
 
     // Should edit message to show skipped
-    expect(ctx._editedMessages.some(m => m.text.includes("Skipped"))).toBe(true);
+    expect(ctx._editedMessages.some((m) => m.text.includes("Skipped"))).toBe(
+      true,
+    );
 
     // Should clear pending state
     expect(pendingAskUserQuestions.has("req-456")).toBe(false);
@@ -459,12 +523,15 @@ describe("AskUserQuestion: callback handling", () => {
 
   test("handles custom callback", async () => {
     const { handleCallback } = await import("../handlers/callback");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } = await import("../handlers/streaming");
+    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
+      await import("../handlers/streaming");
 
     // Setup pending state
     pendingAskUserQuestions.set("req-789", {
       toolUseId: "tool-ghi",
-      questions: [{ question: "What is your preference?", options: [{ label: "A" }] }],
+      questions: [
+        { question: "What is your preference?", options: [{ label: "A" }] },
+      ],
       currentIndex: 0,
       answers: [],
       chatId: 789,
@@ -479,7 +546,9 @@ describe("AskUserQuestion: callback handling", () => {
     await handleCallback(ctx as any);
 
     // Should prompt for custom input
-    expect(ctx._editedMessages.some(m => m.text.includes("Type your answer"))).toBe(true);
+    expect(
+      ctx._editedMessages.some((m) => m.text.includes("Type your answer")),
+    ).toBe(true);
 
     // Should store custom input state
     expect(pendingAskUserQuestionCustom.get(789)).toBe("req-789");
@@ -522,7 +591,9 @@ describe("AskUserQuestion: callback handling", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Invalid option" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Invalid option",
+    });
 
     // Cleanup
     pendingAskUserQuestions.clear();
@@ -552,7 +623,7 @@ describe("AskUserQuestion: callback handling", () => {
     await handleCallback(ctx as any);
 
     // Should show next question
-    expect(ctx._editedMessages.some(m => m.text.includes("Q2"))).toBe(true);
+    expect(ctx._editedMessages.some((m) => m.text.includes("Q2"))).toBe(true);
 
     // State should be updated
     const state = pendingAskUserQuestions.get("req-multi");
@@ -584,7 +655,9 @@ describe("AskUserQuestion: callback handling", () => {
     await handleCallback(ctx as any);
 
     // Should show completion message
-    expect(ctx._editedMessages.some(m => m.text.includes("Answered"))).toBe(true);
+    expect(ctx._editedMessages.some((m) => m.text.includes("Answered"))).toBe(
+      true,
+    );
 
     // Should send to Claude
     expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
@@ -604,7 +677,8 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("captures custom text as answer", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } = await import("../handlers/streaming");
+    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
+      await import("../handlers/streaming");
 
     // Setup pending custom input state
     pendingAskUserQuestions.set("req-custom", {
@@ -625,7 +699,7 @@ describe("AskUserQuestion: custom text input", () => {
     await handleText(ctx as any);
 
     // Should show completion
-    expect(ctx._replies.some(r => r.text.includes("Answered"))).toBe(true);
+    expect(ctx._replies.some((r) => r.text.includes("Answered"))).toBe(true);
 
     // Custom input state should be cleared
     expect(pendingAskUserQuestionCustom.has(789)).toBe(false);
@@ -637,7 +711,8 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("advances to next question with custom answer", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } = await import("../handlers/streaming");
+    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
+      await import("../handlers/streaming");
 
     // Setup multi-question state
     pendingAskUserQuestions.set("req-custom-multi", {
@@ -661,7 +736,7 @@ describe("AskUserQuestion: custom text input", () => {
     await handleText(ctx as any);
 
     // Should show Q2
-    expect(ctx._replies.some(r => r.text.includes("Q2"))).toBe(true);
+    expect(ctx._replies.some((r) => r.text.includes("Q2"))).toBe(true);
 
     // State should be updated
     const state = pendingAskUserQuestions.get("req-custom-multi");
@@ -675,7 +750,8 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("handles expired custom input state", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestionCustom } = await import("../handlers/streaming");
+    const { pendingAskUserQuestionCustom } =
+      await import("../handlers/streaming");
 
     // Setup expired state (no matching question state)
     pendingAskUserQuestionCustom.set(789, "req-expired");
@@ -688,7 +764,7 @@ describe("AskUserQuestion: custom text input", () => {
     await handleText(ctx as any);
 
     // Should show expired message
-    expect(ctx._replies.some(r => r.text.includes("expired"))).toBe(true);
+    expect(ctx._replies.some((r) => r.text.includes("expired"))).toBe(true);
 
     // Cleanup
     pendingAskUserQuestionCustom.clear();
@@ -709,7 +785,9 @@ describe("AskUserQuestion: edge cases", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Unauthorized" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Unauthorized",
+    });
   });
 
   test("handles malformed callback data", async () => {
@@ -720,11 +798,14 @@ describe("AskUserQuestion: edge cases", () => {
 
     await handleCallback(ctx as any);
 
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "Invalid callback" });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "Invalid callback",
+    });
   });
 
   test("handles question with no options", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "No options question",
@@ -738,11 +819,14 @@ describe("AskUserQuestion: edge cases", () => {
   });
 
   test("handles question with many options", async () => {
-    const { createAskUserQuestionKeyboard } = await import("../handlers/streaming");
+    const { createAskUserQuestionKeyboard } =
+      await import("../handlers/streaming");
 
     const question = {
       question: "Many options",
-      options: Array.from({ length: 10 }, (_, i) => ({ label: `Option ${i + 1}` })),
+      options: Array.from({ length: 10 }, (_, i) => ({
+        label: `Option ${i + 1}`,
+      })),
     };
     const keyboard = createAskUserQuestionKeyboard(question, "req123", 0, 1);
 

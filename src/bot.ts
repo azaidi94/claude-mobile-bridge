@@ -53,7 +53,7 @@ export function createBot(options: BotOptions): Bot {
         return undefined;
       }
       return ctx.chat?.id.toString();
-    })
+    }),
   );
 
   // Command handlers

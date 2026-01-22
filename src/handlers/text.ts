@@ -67,17 +67,25 @@ export async function handleText(ctx: Context): Promise<void> {
         userId,
         statusCallback,
         chatId,
-        ctx
+        ctx,
       );
 
       // Check if another plan approval is pending
       if (session.pendingPlanApproval) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        await ctx.reply("📋 Revised plan ready. Review and approve?", { reply_markup: keyboard });
+        await ctx.reply("📋 Revised plan ready. Review and approve?", {
+          reply_markup: keyboard,
+        });
       }
 
-      await auditLog(userId, ctx.from?.username || "unknown", "PLAN_EDIT", message, response);
+      await auditLog(
+        userId,
+        ctx.from?.username || "unknown",
+        "PLAN_EDIT",
+        message,
+        response,
+      );
     } catch (error) {
       console.error("Error in plan feedback:", error);
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
@@ -109,8 +117,16 @@ export async function handleText(ctx: Context): Promise<void> {
       if (nextQ.header) {
         questionText = `<b>${nextQ.header}</b>\n\n${questionText}`;
       }
-      const keyboard = createAskUserQuestionKeyboard(nextQ, requestId, pending.currentIndex, pending.questions.length);
-      await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+      const keyboard = createAskUserQuestionKeyboard(
+        nextQ,
+        requestId,
+        pending.currentIndex,
+        pending.questions.length,
+      );
+      await ctx.reply(questionText, {
+        reply_markup: keyboard,
+        parse_mode: "HTML",
+      });
     } else {
       // All questions answered - send to Claude
       const wasPlanMode = pending.isPlanMode;
@@ -132,13 +148,15 @@ export async function handleText(ctx: Context): Promise<void> {
           statusCallback,
           chatId,
           ctx,
-          permissionMode
+          permissionMode,
         );
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
 
         // Check if plan approval is pending (ExitPlanMode was called)
         if (session.pendingPlanApproval) {
-          const displayContent = session.pendingPlanApproval.planContent || session.pendingPlanApproval.planSummary;
+          const displayContent =
+            session.pendingPlanApproval.planContent ||
+            session.pendingPlanApproval.planSummary;
           if (displayContent && displayContent.length > 50) {
             await sendPlanContent(ctx, displayContent);
           }
@@ -167,7 +185,7 @@ export async function handleText(ctx: Context): Promise<void> {
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
     await ctx.reply(
-      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
     );
     return;
   }
@@ -212,7 +230,7 @@ export async function handleText(ctx: Context): Promise<void> {
         userId,
         statusCallback,
         chatId,
-        ctx
+        ctx,
       );
 
       // 12. Audit log
@@ -250,7 +268,7 @@ export async function handleText(ctx: Context): Promise<void> {
       // Retry on Claude Code crash (not user cancellation)
       if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
         console.log(
-          `Claude Code crashed, retrying (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
+          `Claude Code crashed, retrying (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`,
         );
         await session.kill(); // Clear corrupted session
         await ctx.reply(`⚠️ Claude crashed, retrying...`);

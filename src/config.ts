@@ -75,7 +75,7 @@ try {
   if (mcpModule?.MCP_SERVERS) {
     MCP_SERVERS = mcpModule.MCP_SERVERS;
     console.log(
-      `Loaded ${Object.keys(MCP_SERVERS).length} MCP servers from mcp-config.ts`
+      `Loaded ${Object.keys(MCP_SERVERS).length} MCP servers from mcp-config.ts`,
     );
   }
 } catch {
@@ -201,11 +201,11 @@ export const RATE_LIMIT_ENABLED =
   (process.env.RATE_LIMIT_ENABLED || "true").toLowerCase() === "true";
 export const RATE_LIMIT_REQUESTS = parseInt(
   process.env.RATE_LIMIT_REQUESTS || "20",
-  10
+  10,
 );
 export const RATE_LIMIT_WINDOW = parseInt(
   process.env.RATE_LIMIT_WINDOW || "60",
-  10
+  10,
 );
 
 // ============== File Paths ==============
@@ -229,11 +229,11 @@ if (!TELEGRAM_TOKEN) {
 
 if (ALLOWED_USERS.length === 0) {
   console.error(
-    "ERROR: TELEGRAM_ALLOWED_USERS environment variable is required"
+    "ERROR: TELEGRAM_ALLOWED_USERS environment variable is required",
   );
   process.exit(1);
 }
 
 console.log(
-  `Config loaded: ${ALLOWED_USERS.length} allowed users, working dir: ${WORKING_DIR}`
+  `Config loaded: ${ALLOWED_USERS.length} allowed users, working dir: ${WORKING_DIR}`,
 );

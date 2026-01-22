@@ -9,7 +9,7 @@ import type { Message } from "grammy/types";
 export type StatusCallback = (
   type: "thinking" | "tool" | "text" | "segment_end" | "done",
   content: string,
-  segmentId?: number
+  segmentId?: number,
 ) => Promise<void>;
 
 // Rate limit bucket for token bucket algorithm

@@ -17,7 +17,12 @@ import {
   forceRefresh,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback, createPlanApprovalKeyboard, sendPlanContent } from "./streaming";
+import {
+  StreamingState,
+  createStatusCallback,
+  createPlanApprovalKeyboard,
+  sendPlanContent,
+} from "./streaming";
 
 /**
  * /start - Show welcome message and status.
@@ -37,7 +42,7 @@ export async function handleStart(ctx: Context): Promise<void> {
     `🤖 <b>Claude Coding Bot</b>\n\n` +
       `Active: <code>${sessionName}</code>\n\n` +
       `Use /help for commands`,
-    { parse_mode: "HTML" }
+    { parse_mode: "HTML" },
   );
 }
 
@@ -69,7 +74,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `• Say "think" for extended reasoning\n` +
       `• Send voice/photo/files directly\n` +
       `• Use /new to reset conversation`,
-    { parse_mode: "HTML" }
+    { parse_mode: "HTML" },
   );
 }
 
@@ -107,9 +112,8 @@ export async function handleNew(ctx: Context): Promise<void> {
   session.setWorkingDir(explicitPath);
 
   await ctx.reply(
-    `🆕 <code>${newSession.name}</code>\n` +
-      `📁 <code>${explicitPath}</code>`,
-    { parse_mode: "HTML" }
+    `🆕 <code>${newSession.name}</code>\n` + `📁 <code>${explicitPath}</code>`,
+    { parse_mode: "HTML" },
   );
 }
 
@@ -173,7 +177,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   // Last activity
   if (session.lastActivity) {
     const ago = Math.floor(
-      (Date.now() - session.lastActivity.getTime()) / 1000
+      (Date.now() - session.lastActivity.getTime()) / 1000,
     );
     lines.push(`⏱️ ${ago}s ago`);
   }
@@ -192,7 +196,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Working directory
-  const dir = (session.workingDir || activeSession?.info.dir || WORKING_DIR).replace(/^\/Users\/[^/]+/, "~");
+  const dir = (
+    session.workingDir ||
+    activeSession?.info.dir ||
+    WORKING_DIR
+  ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
@@ -220,7 +228,7 @@ export async function handleRestart(ctx: Context): Promise<void> {
           chat_id: chatId,
           message_id: msg.message_id,
           timestamp: Date.now(),
-        })
+        }),
       );
     } catch (e) {
       console.warn("Failed to save restart info:", e);
@@ -282,7 +290,9 @@ export async function handleList(ctx: Context): Promise<void> {
   const active = getActiveSession();
 
   if (sessions.length === 0) {
-    await ctx.reply("📋 No sessions\n\nStart Claude Code to see sessions here.");
+    await ctx.reply(
+      "📋 No sessions\n\nStart Claude Code to see sessions here.",
+    );
     return;
   }
 
@@ -294,18 +304,16 @@ export async function handleList(ctx: Context): Promise<void> {
     const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     const ago = formatTimeAgo(s.lastActivity);
 
-    lines.push(
-      `${marker}<code>${s.name}</code>`,
-      `   ${dir}`,
-      `   ${ago}`
-    );
+    lines.push(`${marker}<code>${s.name}</code>`, `   ${dir}`, `   ${ago}`);
   }
 
   // Create inline buttons for all sessions (mark active with ✓)
-  const buttons = sessions.map(s => [{
-    text: active?.name === s.name ? `✓ ${s.name}` : s.name,
-    callback_data: `switch:${s.name}`,
-  }]);
+  const buttons = sessions.map((s) => [
+    {
+      text: active?.name === s.name ? `✓ ${s.name}` : s.name,
+      callback_data: `switch:${s.name}`,
+    },
+  ]);
 
   await ctx.reply(lines.join("\n"), {
     parse_mode: "HTML",
@@ -339,10 +347,9 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     if (active) {
       session.loadFromRegistry(active.info);
       const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
-      await ctx.reply(
-        `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
-        { parse_mode: "HTML" }
-      );
+      await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
+        parse_mode: "HTML",
+      });
     }
   } else {
     await ctx.reply(`❌ "${name}" not found. Use /list.`);
@@ -386,7 +393,9 @@ export async function handlePlan(ctx: Context): Promise<void> {
   // Parse message after /plan
   const message = text.replace(/^\/plan\s*/, "").trim();
   if (!message) {
-    await ctx.reply("Usage: /plan &lt;your planning request&gt;", { parse_mode: "HTML" });
+    await ctx.reply("Usage: /plan &lt;your planning request&gt;", {
+      parse_mode: "HTML",
+    });
     return;
   }
 
@@ -424,12 +433,14 @@ export async function handlePlan(ctx: Context): Promise<void> {
       statusCallback,
       chatId,
       ctx,
-      "plan"
+      "plan",
     );
 
     // Check if plan is ready for approval
     if (session.pendingPlanApproval) {
-      const displayContent = session.pendingPlanApproval.planContent || session.pendingPlanApproval.planSummary;
+      const displayContent =
+        session.pendingPlanApproval.planContent ||
+        session.pendingPlanApproval.planSummary;
       if (displayContent && displayContent.length > 50) {
         await sendPlanContent(ctx, displayContent);
       }

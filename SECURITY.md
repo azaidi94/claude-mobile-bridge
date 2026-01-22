@@ -8,11 +8,12 @@ This document describes the security architecture of the Claude Telegram Bot.
 
 ```typescript
 // src/session.ts
-permissionMode: "bypassPermissions"
-allowDangerouslySkipPermissions: true
+permissionMode: "bypassPermissions";
+allowDangerouslySkipPermissions: true;
 ```
 
 This means Claude can:
+
 - **Read and write files** without asking for confirmation
 - **Execute shell commands** without permission prompts
 - **Use all tools** (Bash, Edit, Write, etc.) autonomously
@@ -55,6 +56,7 @@ Default: 20 requests per 60 seconds per user
 ```
 
 Configure via:
+
 - `RATE_LIMIT_ENABLED` - Enable/disable (default: true)
 - `RATE_LIMIT_REQUESTS` - Requests per window (default: 20)
 - `RATE_LIMIT_WINDOW` - Window in seconds (default: 60)
@@ -74,11 +76,13 @@ Default allowed paths:
 Customize via `ALLOWED_PATHS` (comma-separated).
 
 **Validation uses proper path containment checks:**
+
 - Symlinks are resolved before checking
 - Path traversal attacks (../) are prevented
 - Only exact directory matches are allowed
 
 **Exception for temp files:**
+
 - Reading from /tmp/ and /var/folders/ is allowed
 - This enables handling of Telegram-downloaded files
 
@@ -90,16 +94,16 @@ Dangerous shell commands are blocked as defense-in-depth.
 
 These patterns are **always rejected**, regardless of context:
 
-| Pattern | Reason |
-|---------|--------|
-| `rm -rf /` | System destruction |
-| `rm -rf ~` | Home directory wipe |
-| `rm -rf $HOME` | Home directory wipe |
-| `sudo rm` | Privileged deletion |
-| `:(){ :\|:& };:` | Fork bomb |
-| `> /dev/sd` | Disk overwrite |
-| `mkfs.` | Filesystem formatting |
-| `dd if=` | Raw disk operations |
+| Pattern          | Reason                |
+| ---------------- | --------------------- |
+| `rm -rf /`       | System destruction    |
+| `rm -rf ~`       | Home directory wipe   |
+| `rm -rf $HOME`   | Home directory wipe   |
+| `sudo rm`        | Privileged deletion   |
+| `:(){ :\|:& };:` | Fork bomb             |
+| `> /dev/sd`      | Disk overwrite        |
+| `mkfs.`          | Filesystem formatting |
+| `dd if=`         | Raw disk operations   |
 
 #### Path-Validated Commands
 
@@ -134,6 +138,7 @@ Log location: /tmp/claude-telegram-audit.log (configurable)
 ```
 
 Logged events:
+
 - `message` - User messages and Claude responses
 - `auth` - Authorization attempts
 - `tool_use` - Claude tool usage

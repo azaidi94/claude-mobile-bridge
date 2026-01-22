@@ -7,7 +7,12 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard, InputFile } from "grammy";
-import type { StatusCallback, AskUserQuestionInput, AskUserQuestionItem, AskUserQuestionState } from "../types";
+import type {
+  StatusCallback,
+  AskUserQuestionInput,
+  AskUserQuestionItem,
+  AskUserQuestionState,
+} from "../types";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import {
   TELEGRAM_MESSAGE_LIMIT,
@@ -25,7 +30,7 @@ export const pendingAskUserQuestionCustom = new Map<number, string>(); // chatId
  */
 export function createAskUserKeyboard(
   requestId: string,
-  options: string[]
+  options: string[],
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (let idx = 0; idx < options.length; idx++) {
@@ -46,15 +51,20 @@ export function createAskUserKeyboard(
  */
 export function createPlanApprovalKeyboard(requestId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✅ Accept", `plan:accept:${requestId}`).row()
-    .text("❌ Reject", `plan:reject:${requestId}`).row()
+    .text("✅ Accept", `plan:accept:${requestId}`)
+    .row()
+    .text("❌ Reject", `plan:reject:${requestId}`)
+    .row()
     .text("✏️ Edit", `plan:edit:${requestId}`);
 }
 
 /**
  * Send plan content to Telegram - file for long plans, inline for short.
  */
-export async function sendPlanContent(ctx: Context, content: string): Promise<void> {
+export async function sendPlanContent(
+  ctx: Context,
+  content: string,
+): Promise<void> {
   if (content.length > 4000) {
     // Long plan - send as file
     const buffer = Buffer.from(content, "utf-8");
@@ -71,7 +81,10 @@ export async function sendPlanContent(ctx: Context, content: string): Promise<vo
 /**
  * Truncate label for button display.
  */
-function truncateLabel(label: string, maxLength: number = BUTTON_LABEL_MAX_LENGTH): string {
+function truncateLabel(
+  label: string,
+  maxLength: number = BUTTON_LABEL_MAX_LENGTH,
+): string {
   return label.length > maxLength ? label.slice(0, maxLength) + "..." : label;
 }
 
@@ -82,7 +95,7 @@ export function createAskUserQuestionKeyboard(
   question: AskUserQuestionItem,
   requestId: string,
   questionIndex: number,
-  totalQuestions: number
+  totalQuestions: number,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
@@ -110,7 +123,7 @@ export async function checkPendingAskUserQuestionRequests(
   chatId: number,
   input: AskUserQuestionInput,
   toolUseId: string,
-  isPlanMode: boolean = false
+  isPlanMode: boolean = false,
 ): Promise<boolean> {
   if (!input.questions || input.questions.length === 0) {
     return false;
@@ -136,7 +149,7 @@ export async function checkPendingAskUserQuestionRequests(
   }
 
   // Add descriptions if present
-  if (question.options.some(o => o.description)) {
+  if (question.options.some((o) => o.description)) {
     questionText += "\n";
     question.options.forEach((opt, i) => {
       if (opt.description) {
@@ -145,7 +158,12 @@ export async function checkPendingAskUserQuestionRequests(
     });
   }
 
-  const keyboard = createAskUserQuestionKeyboard(question, requestId, 0, input.questions.length);
+  const keyboard = createAskUserQuestionKeyboard(
+    question,
+    requestId,
+    0,
+    input.questions.length,
+  );
   await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
 
   return true;
@@ -156,7 +174,7 @@ export async function checkPendingAskUserQuestionRequests(
  */
 export async function checkPendingAskUserRequests(
   ctx: Context,
-  chatId: number
+  chatId: number,
 ): Promise<boolean> {
   const glob = new Bun.Glob("ask-user-*.json");
   let buttonsSent = false;
@@ -208,7 +226,7 @@ export class StreamingState {
  */
 export function createStatusCallback(
   ctx: Context,
-  state: StreamingState
+  state: StreamingState,
 ): StatusCallback {
   return async (statusType: string, content: string, segmentId?: number) => {
     try {
@@ -266,7 +284,7 @@ export function createStatusCallback(
               formatted,
               {
                 parse_mode: "HTML",
-              }
+              },
             );
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
@@ -275,7 +293,7 @@ export function createStatusCallback(
               await ctx.api.editMessageText(
                 msg.chat.id,
                 msg.message_id,
-                formatted
+                formatted,
               );
               state.lastContent.set(segmentId, formatted);
             } catch (editError) {
@@ -302,7 +320,7 @@ export function createStatusCallback(
                 formatted,
                 {
                   parse_mode: "HTML",
-                }
+                },
               );
             } catch (error) {
               console.debug("Failed to edit final message:", error);
@@ -321,7 +339,7 @@ export function createStatusCallback(
               } catch (htmlError) {
                 console.debug(
                   "HTML chunk failed, using plain text:",
-                  htmlError
+                  htmlError,
                 );
                 await ctx.reply(chunk);
               }

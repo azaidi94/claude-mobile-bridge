@@ -5,7 +5,12 @@
  */
 
 import { run } from "@grammyjs/runner";
-import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
+import {
+  TELEGRAM_TOKEN,
+  WORKING_DIR,
+  ALLOWED_USERS,
+  RESTART_FILE,
+} from "./config";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import { startWatcher, stopWatcher } from "./sessions";
 import { createBot } from "./bot";
@@ -41,13 +46,15 @@ if (existsSync(RESTART_FILE)) {
       await bot.api.editMessageText(
         data.chat_id,
         data.message_id,
-        "✅ Restarted"
+        "✅ Restarted",
       );
     }
     unlinkSync(RESTART_FILE);
   } catch (e) {
     console.warn("Failed to update restart message:", e);
-    try { unlinkSync(RESTART_FILE); } catch {}
+    try {
+      unlinkSync(RESTART_FILE);
+    } catch {}
   }
 }
 

@@ -5,7 +5,15 @@
  * These protect against breaking changes during refactoring.
  */
 
-import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import {
+  describe,
+  expect,
+  test,
+  mock,
+  beforeEach,
+  afterEach,
+  spyOn,
+} from "bun:test";
 
 // Mock grammy before importing bot
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,7 +98,7 @@ describe("smoke: bot lifecycle", () => {
 
     // Check some expected commands
     const registeredCommands = mockBot.command.mock.calls.map(
-      (call: unknown[]) => call[0]
+      (call: unknown[]) => call[0],
     );
     expect(registeredCommands).toContain("start");
     expect(registeredCommands).toContain("help");
@@ -106,7 +114,7 @@ describe("smoke: bot lifecycle", () => {
     expect(mockBot.on.mock.calls.length).toBeGreaterThan(0);
 
     const registeredEvents = mockBot.on.mock.calls.map(
-      (call: unknown[]) => call[0]
+      (call: unknown[]) => call[0],
     );
     expect(registeredEvents).toContain("message:text");
     expect(registeredEvents).toContain("message:voice");
@@ -153,15 +161,17 @@ describe("smoke: message flow", () => {
     capturedTextHandler = null;
     capturedVoiceHandler = null;
 
-    mockBot.on.mockImplementation((event: string, handler: (ctx: unknown) => Promise<void>) => {
-      if (event === "message:text") {
-        capturedTextHandler = handler;
-      }
-      if (event === "message:voice") {
-        capturedVoiceHandler = handler;
-      }
-      return mockBot;
-    });
+    mockBot.on.mockImplementation(
+      (event: string, handler: (ctx: unknown) => Promise<void>) => {
+        if (event === "message:text") {
+          capturedTextHandler = handler;
+        }
+        if (event === "message:voice") {
+          capturedVoiceHandler = handler;
+        }
+        return mockBot;
+      },
+    );
   });
 
   test("can receive mock Telegram text message", async () => {

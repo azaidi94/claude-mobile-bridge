@@ -34,7 +34,7 @@ export type ProcessGroupCallback = (
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
 ) => Promise<void>;
 
 /**
@@ -50,7 +50,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
    */
   async function processGroup(
     groupId: string,
-    processCallback: ProcessGroupCallback
+    processCallback: ProcessGroupCallback,
   ): Promise<void> {
     const group = pendingGroups.get(groupId);
     if (!group) return;
@@ -64,7 +64,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
     if (!userId || !chatId) return;
 
     console.log(
-      `Processing ${group.items.length} ${config.itemLabelPlural} from @${username}`
+      `Processing ${group.items.length} ${config.itemLabelPlural} from @${username}`,
     );
 
     // Update status message
@@ -73,7 +73,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
         await group.ctx.api.editMessageText(
           group.statusMsg.chat.id,
           group.statusMsg.message_id,
-          `${config.emoji} Processing ${group.items.length} ${config.itemLabelPlural}...`
+          `${config.emoji} Processing ${group.items.length} ${config.itemLabelPlural}...`,
         );
       } catch (error) {
         console.debug("Failed to update status message:", error);
@@ -86,7 +86,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       group.caption,
       userId,
       username,
-      chatId
+      chatId,
     );
 
     // Delete status message
@@ -94,7 +94,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       try {
         await group.ctx.api.deleteMessage(
           group.statusMsg.chat.id,
-          group.statusMsg.message_id
+          group.statusMsg.message_id,
         );
       } catch (error) {
         console.debug("Failed to delete status message:", error);
@@ -113,7 +113,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
     ctx: Context,
     userId: number,
     username: string,
-    processCallback: ProcessGroupCallback
+    processCallback: ProcessGroupCallback,
   ): Promise<boolean> {
     if (!pendingGroups.has(mediaGroupId)) {
       // Rate limit on first item only
@@ -121,7 +121,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       if (!allowed) {
         await auditLogRateLimit(userId, username, retryAfter!);
         await ctx.reply(
-          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+          `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
         );
         return false;
       }
@@ -129,7 +129,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       // Create new group
       console.log(`Receiving ${config.itemLabel} album from @${username}`);
       const statusMsg = await ctx.reply(
-        `${config.emoji} Receiving ${config.itemLabelPlural}...`
+        `${config.emoji} Receiving ${config.itemLabelPlural}...`,
       );
 
       pendingGroups.set(mediaGroupId, {
@@ -139,7 +139,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
         statusMsg,
         timeout: setTimeout(
           () => processGroup(mediaGroupId, processCallback),
-          MEDIA_GROUP_TIMEOUT
+          MEDIA_GROUP_TIMEOUT,
         ),
       });
     } else {
@@ -156,7 +156,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       clearTimeout(group.timeout);
       group.timeout = setTimeout(
         () => processGroup(mediaGroupId, processCallback),
-        MEDIA_GROUP_TIMEOUT
+        MEDIA_GROUP_TIMEOUT,
       );
     }
 
@@ -178,7 +178,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
 export async function handleProcessingError(
   ctx: Context,
   error: unknown,
-  toolMessages: Message[]
+  toolMessages: Message[],
 ): Promise<void> {
   console.error("Error processing media:", error);
 

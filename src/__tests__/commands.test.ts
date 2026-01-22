@@ -42,25 +42,39 @@ mock.module("../config", () => ({
 }));
 
 // Mock sessions module
-const mockSessions: Array<{ name: string; dir: string; lastActivity: number }> = [];
-let mockActiveSession: { name: string; info: { dir: string; id?: string; name: string; lastActivity?: number } } | null = null;
+const mockSessions: Array<{ name: string; dir: string; lastActivity: number }> =
+  [];
+let mockActiveSession: {
+  name: string;
+  info: { dir: string; id?: string; name: string; lastActivity?: number };
+} | null = null;
 
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
   getActiveSession: mock(() => mockActiveSession),
   setActiveSession: mock((name: string) => {
-    const found = mockSessions.find(s => s.name === name);
+    const found = mockSessions.find((s) => s.name === name);
     if (found) {
-      mockActiveSession = { name: found.name, info: { dir: found.dir, name: found.name } };
+      mockActiveSession = {
+        name: found.name,
+        info: { dir: found.dir, name: found.name },
+      };
       return true;
     }
     return false;
   }),
   addTelegramSession: mock((path: string, name?: string) => {
     const sessionName = name || `telegram-${Date.now()}`;
-    const newSession = { name: sessionName, dir: path, lastActivity: Date.now() };
+    const newSession = {
+      name: sessionName,
+      dir: path,
+      lastActivity: Date.now(),
+    };
     mockSessions.push(newSession);
-    mockActiveSession = { name: sessionName, info: { dir: path, name: sessionName } };
+    mockActiveSession = {
+      name: sessionName,
+      info: { dir: path, name: sessionName },
+    };
     return newSession;
   }),
   forceRefresh: mock(() => Promise.resolve()),
@@ -86,7 +100,9 @@ const mockSessionMethods = {
   stop: mock(() => Promise.resolve()),
   clearStopRequested: mock(() => {}),
   kill: mock(() => Promise.resolve()),
-  setWorkingDir: mock((dir: string) => { mockSessionState.workingDir = dir; }),
+  setWorkingDir: mock((dir: string) => {
+    mockSessionState.workingDir = dir;
+  }),
   loadFromRegistry: mock((info: { dir: string; name: string }) => {
     mockSessionState.workingDir = info.dir;
     mockSessionState.sessionName = info.name;
@@ -95,29 +111,55 @@ const mockSessionMethods = {
 
 mock.module("../session", () => ({
   session: {
-    get isRunning() { return mockSessionState.isRunning; },
-    get isActive() { return mockSessionState.isActive; },
-    get sessionId() { return mockSessionState.sessionId; },
-    get sessionName() { return mockSessionState.sessionName; },
-    get workingDir() { return mockSessionState.workingDir; },
-    get lastMessage() { return mockSessionState.lastMessage; },
-    get lastActivity() { return mockSessionState.lastActivity; },
-    get lastTool() { return mockSessionState.lastTool; },
-    get currentTool() { return mockSessionState.currentTool; },
-    get lastError() { return mockSessionState.lastError; },
-    get lastUsage() { return mockSessionState.lastUsage; },
-    get queryStarted() { return mockSessionState.queryStarted; },
+    get isRunning() {
+      return mockSessionState.isRunning;
+    },
+    get isActive() {
+      return mockSessionState.isActive;
+    },
+    get sessionId() {
+      return mockSessionState.sessionId;
+    },
+    get sessionName() {
+      return mockSessionState.sessionName;
+    },
+    get workingDir() {
+      return mockSessionState.workingDir;
+    },
+    get lastMessage() {
+      return mockSessionState.lastMessage;
+    },
+    get lastActivity() {
+      return mockSessionState.lastActivity;
+    },
+    get lastTool() {
+      return mockSessionState.lastTool;
+    },
+    get currentTool() {
+      return mockSessionState.currentTool;
+    },
+    get lastError() {
+      return mockSessionState.lastError;
+    },
+    get lastUsage() {
+      return mockSessionState.lastUsage;
+    },
+    get queryStarted() {
+      return mockSessionState.queryStarted;
+    },
     ...mockSessionMethods,
   },
 }));
 
 // Test helpers
-function createMockContext(overrides: Partial<{
-  userId: number;
-  username: string;
-  chatId: number;
-  messageText: string;
-}> = {}) {
+function createMockContext(
+  overrides: Partial<{
+    userId: number;
+    username: string;
+    chatId: number;
+    messageText: string;
+  }> = {},
+) {
   const {
     userId = 123456,
     username = "testuser",
@@ -125,7 +167,8 @@ function createMockContext(overrides: Partial<{
     messageText = "/test",
   } = overrides;
 
-  const replies: Array<{ text: string; options?: Record<string, unknown> }> = [];
+  const replies: Array<{ text: string; options?: Record<string, unknown> }> =
+    [];
 
   return {
     from: { id: userId, username },
@@ -203,7 +246,10 @@ describe("commands: /start", () => {
 
   test("handleStart shows session name when active session exists", async () => {
     const { handleStart } = await import("../handlers/commands");
-    mockActiveSession = { name: "my-project", info: { dir: "/tmp/project", name: "my-project" } };
+    mockActiveSession = {
+      name: "my-project",
+      info: { dir: "/tmp/project", name: "my-project" },
+    };
     const ctx = createMockContext({ userId: 123456 });
 
     await handleStart(ctx as any);
@@ -297,8 +343,12 @@ describe("commands: /list", () => {
   test("handleList shows available sessions", async () => {
     const { handleList } = await import("../handlers/commands");
     mockSessions.push(
-      { name: "project-1", dir: "/tmp/project1", lastActivity: Date.now() - 60000 },
-      { name: "project-2", dir: "/tmp/project2", lastActivity: Date.now() }
+      {
+        name: "project-1",
+        dir: "/tmp/project1",
+        lastActivity: Date.now() - 60000,
+      },
+      { name: "project-2", dir: "/tmp/project2", lastActivity: Date.now() },
     );
     const ctx = createMockContext({ userId: 123456 });
 
@@ -311,10 +361,15 @@ describe("commands: /list", () => {
 
   test("handleList marks active session with checkmark", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push(
-      { name: "active-project", dir: "/tmp/active", lastActivity: Date.now() }
-    );
-    mockActiveSession = { name: "active-project", info: { dir: "/tmp/active", name: "active-project" } };
+    mockSessions.push({
+      name: "active-project",
+      dir: "/tmp/active",
+      lastActivity: Date.now(),
+    });
+    mockActiveSession = {
+      name: "active-project",
+      info: { dir: "/tmp/active", name: "active-project" },
+    };
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -325,23 +380,29 @@ describe("commands: /list", () => {
 
   test("handleList includes inline keyboard buttons", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push(
-      { name: "project-1", dir: "/tmp/project1", lastActivity: Date.now() }
-    );
+    mockSessions.push({
+      name: "project-1",
+      dir: "/tmp/project1",
+      lastActivity: Date.now(),
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
 
-    const keyboard = ctx._replies[0]?.options?.reply_markup as { inline_keyboard: unknown[] };
+    const keyboard = ctx._replies[0]?.options?.reply_markup as {
+      inline_keyboard: unknown[];
+    };
     expect(keyboard?.inline_keyboard).toBeDefined();
     expect(keyboard?.inline_keyboard.length).toBeGreaterThan(0);
   });
 
   test("handleList shows time ago for sessions", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push(
-      { name: "recent", dir: "/tmp/recent", lastActivity: Date.now() - 30000 }
-    );
+    mockSessions.push({
+      name: "recent",
+      dir: "/tmp/recent",
+      lastActivity: Date.now() - 30000,
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -359,7 +420,10 @@ describe("commands: /switch", () => {
 
   test("handleSwitch returns unauthorized for non-allowed user", async () => {
     const { handleSwitch } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 999999, messageText: "/switch test" });
+    const ctx = createMockContext({
+      userId: 999999,
+      messageText: "/switch test",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -378,7 +442,10 @@ describe("commands: /switch", () => {
 
   test("handleSwitch shows error for non-existent session", async () => {
     const { handleSwitch } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/switch nonexistent" });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/switch nonexistent",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -388,10 +455,15 @@ describe("commands: /switch", () => {
 
   test("handleSwitch successfully switches to existing session", async () => {
     const { handleSwitch } = await import("../handlers/commands");
-    mockSessions.push(
-      { name: "target-session", dir: "/tmp/target", lastActivity: Date.now() }
-    );
-    const ctx = createMockContext({ userId: 123456, messageText: "/switch target-session" });
+    mockSessions.push({
+      name: "target-session",
+      dir: "/tmp/target",
+      lastActivity: Date.now(),
+    });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/switch target-session",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -401,10 +473,15 @@ describe("commands: /switch", () => {
 
   test("handleSwitch shows directory after successful switch", async () => {
     const { handleSwitch } = await import("../handlers/commands");
-    mockSessions.push(
-      { name: "my-project", dir: "/tmp/my-project", lastActivity: Date.now() }
-    );
-    const ctx = createMockContext({ userId: 123456, messageText: "/switch my-project" });
+    mockSessions.push({
+      name: "my-project",
+      dir: "/tmp/my-project",
+      lastActivity: Date.now(),
+    });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/switch my-project",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -437,7 +514,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows running status when query running", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "running-session", info: { dir: "/tmp/running", name: "running-session" } };
+    mockActiveSession = {
+      name: "running-session",
+      info: { dir: "/tmp/running", name: "running-session" },
+    };
     mockSessionState.isRunning = true;
     mockSessionState.queryStarted = new Date(Date.now() - 5000);
     const ctx = createMockContext({ userId: 123456 });
@@ -450,7 +530,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows ready status when session active but not running", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "ready-session", info: { dir: "/tmp/ready", name: "ready-session" } };
+    mockActiveSession = {
+      name: "ready-session",
+      info: { dir: "/tmp/ready", name: "ready-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-session-id-123";
     const ctx = createMockContext({ userId: 123456 });
@@ -463,7 +546,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows not started status when session not active", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "new-session", info: { dir: "/tmp/new", name: "new-session" } };
+    mockActiveSession = {
+      name: "new-session",
+      info: { dir: "/tmp/new", name: "new-session" },
+    };
     mockSessionState.sessionName = "new-session";
     const ctx = createMockContext({ userId: 123456 });
 
@@ -475,7 +561,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows current tool when running", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "tool-session", info: { dir: "/tmp/tool", name: "tool-session" } };
+    mockActiveSession = {
+      name: "tool-session",
+      info: { dir: "/tmp/tool", name: "tool-session" },
+    };
     mockSessionState.isRunning = true;
     mockSessionState.currentTool = "Reading file.ts";
     mockSessionState.queryStarted = new Date();
@@ -489,7 +578,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows last activity time", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "activity-session", info: { dir: "/tmp/activity", name: "activity-session" } };
+    mockActiveSession = {
+      name: "activity-session",
+      info: { dir: "/tmp/activity", name: "activity-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-123";
     mockSessionState.lastActivity = new Date(Date.now() - 30000);
@@ -503,7 +595,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows usage stats when available", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "usage-session", info: { dir: "/tmp/usage", name: "usage-session" } };
+    mockActiveSession = {
+      name: "usage-session",
+      info: { dir: "/tmp/usage", name: "usage-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-123";
     mockSessionState.lastUsage = { input_tokens: 5000, output_tokens: 2000 };
@@ -518,7 +613,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows error when present", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "error-session", info: { dir: "/tmp/error", name: "error-session" } };
+    mockActiveSession = {
+      name: "error-session",
+      info: { dir: "/tmp/error", name: "error-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-123";
     mockSessionState.lastError = "Connection timeout";
@@ -532,7 +630,10 @@ describe("commands: /status", () => {
 
   test("handleStatus shows working directory", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "dir-session", info: { dir: "/tmp/mydir", name: "dir-session" } };
+    mockActiveSession = {
+      name: "dir-session",
+      info: { dir: "/tmp/mydir", name: "dir-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-123";
     mockSessionState.workingDir = "/tmp/mydir";
@@ -571,7 +672,10 @@ describe("commands: /new", () => {
 
   test("handleNew creates session with custom name", async () => {
     const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/new myproject" });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new myproject",
+    });
 
     await handleNew(ctx as any);
 
@@ -580,12 +684,17 @@ describe("commands: /new", () => {
 
   test("handleNew creates session with custom path", async () => {
     const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/new myproject /custom/path" });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new myproject /custom/path",
+    });
 
     await handleNew(ctx as any);
 
     expect(ctx._replies[0]?.text).toContain("/custom/path");
-    expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith("/custom/path");
+    expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith(
+      "/custom/path",
+    );
   });
 
   test("handleNew stops running query before creating new session", async () => {
@@ -710,7 +819,11 @@ describe("commands: /refresh", () => {
 
   test("handleRefresh shows session count after refresh", async () => {
     const { handleRefresh } = await import("../handlers/commands");
-    mockSessions.push({ name: "session-1", dir: "/tmp/1", lastActivity: Date.now() });
+    mockSessions.push({
+      name: "session-1",
+      dir: "/tmp/1",
+      lastActivity: Date.now(),
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleRefresh(ctx as any);
@@ -728,8 +841,15 @@ describe("commands: parsing", () => {
   test("switch command parses name with spaces correctly", async () => {
     // /switch only takes first word after command
     const { handleSwitch } = await import("../handlers/commands");
-    mockSessions.push({ name: "project", dir: "/tmp/project", lastActivity: Date.now() });
-    const ctx = createMockContext({ userId: 123456, messageText: "/switch project extra words" });
+    mockSessions.push({
+      name: "project",
+      dir: "/tmp/project",
+      lastActivity: Date.now(),
+    });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/switch project extra words",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -739,7 +859,10 @@ describe("commands: parsing", () => {
 
   test("new command parses name and path", async () => {
     const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/new myname /my/path" });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new myname /my/path",
+    });
 
     await handleNew(ctx as any);
 
@@ -780,7 +903,11 @@ describe("commands: formatTimeAgo helper", () => {
 
   test("shows 'just now' for very recent activity", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push({ name: "recent", dir: "/tmp/recent", lastActivity: Date.now() - 10000 });
+    mockSessions.push({
+      name: "recent",
+      dir: "/tmp/recent",
+      lastActivity: Date.now() - 10000,
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -790,7 +917,11 @@ describe("commands: formatTimeAgo helper", () => {
 
   test("shows minutes for activity within hour", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push({ name: "minutes", dir: "/tmp/minutes", lastActivity: Date.now() - 5 * 60000 });
+    mockSessions.push({
+      name: "minutes",
+      dir: "/tmp/minutes",
+      lastActivity: Date.now() - 5 * 60000,
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -800,7 +931,11 @@ describe("commands: formatTimeAgo helper", () => {
 
   test("shows hours for activity within day", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push({ name: "hours", dir: "/tmp/hours", lastActivity: Date.now() - 3 * 3600000 });
+    mockSessions.push({
+      name: "hours",
+      dir: "/tmp/hours",
+      lastActivity: Date.now() - 3 * 3600000,
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -810,7 +945,11 @@ describe("commands: formatTimeAgo helper", () => {
 
   test("shows days for old activity", async () => {
     const { handleList } = await import("../handlers/commands");
-    mockSessions.push({ name: "days", dir: "/tmp/days", lastActivity: Date.now() - 3 * 86400000 });
+    mockSessions.push({
+      name: "days",
+      dir: "/tmp/days",
+      lastActivity: Date.now() - 3 * 86400000,
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
@@ -840,7 +979,10 @@ describe("commands: edge cases", () => {
 
   test("switch with empty session name after command", async () => {
     const { handleSwitch } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/switch   " });
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/switch   ",
+    });
 
     await handleSwitch(ctx as any);
 
@@ -852,7 +994,11 @@ describe("commands: edge cases", () => {
 
     // Add multiple sessions
     for (let i = 0; i < 10; i++) {
-      mockSessions.push({ name: `project-${i}`, dir: `/tmp/project${i}`, lastActivity: Date.now() - i * 60000 });
+      mockSessions.push({
+        name: `project-${i}`,
+        dir: `/tmp/project${i}`,
+        lastActivity: Date.now() - i * 60000,
+      });
     }
     const ctx = createMockContext({ userId: 123456 });
 
@@ -865,7 +1011,10 @@ describe("commands: edge cases", () => {
 
   test("status with very long error truncates", async () => {
     const { handleStatus } = await import("../handlers/commands");
-    mockActiveSession = { name: "error-session", info: { dir: "/tmp/error", name: "error-session" } };
+    mockActiveSession = {
+      name: "error-session",
+      info: { dir: "/tmp/error", name: "error-session" },
+    };
     mockSessionState.isActive = true;
     mockSessionState.sessionId = "test-123";
     mockSessionState.lastError = "a".repeat(200);
@@ -881,7 +1030,11 @@ describe("commands: edge cases", () => {
   test("home directory path is abbreviated with ~", async () => {
     const { handleList } = await import("../handlers/commands");
     const homeDir = process.env.HOME || "/Users/test";
-    mockSessions.push({ name: "home-project", dir: `${homeDir}/projects/test`, lastActivity: Date.now() });
+    mockSessions.push({
+      name: "home-project",
+      dir: `${homeDir}/projects/test`,
+      lastActivity: Date.now(),
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);

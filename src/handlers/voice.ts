@@ -37,7 +37,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
     await ctx.reply(
-      "Voice transcription is not configured. Set OPENAI_API_KEY in .env"
+      "Voice transcription is not configured. Set OPENAI_API_KEY in .env",
     );
     return;
   }
@@ -47,7 +47,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
     await ctx.reply(
-      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
+      `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
     );
     return;
   }
@@ -68,7 +68,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
 
     // Download the file
     const downloadRes = await fetch(
-      `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
+      `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`,
     );
     const buffer = await downloadRes.arrayBuffer();
     await Bun.write(voicePath, buffer);
@@ -81,7 +81,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
-        "❌ Transcription failed."
+        "❌ Transcription failed.",
       );
       stopProcessing();
       return;
@@ -91,7 +91,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     await ctx.api.editMessageText(
       chatId,
       statusMsg.message_id,
-      `🎤 "${transcript}"`
+      `🎤 "${transcript}"`,
     );
 
     // 9. Create streaming state and callback
@@ -105,7 +105,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       userId,
       statusCallback,
       chatId,
-      ctx
+      ctx,
     );
 
     // 11. Audit log

@@ -203,53 +203,53 @@ const sendSpy = spyOn(ctx, "reply");
 
 ### Required
 
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/botfather) |
-| `TELEGRAM_ALLOWED_USERS` | Comma-separated Telegram user IDs |
+| Variable                 | Description                                         |
+| ------------------------ | --------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`     | Bot token from [@BotFather](https://t.me/botfather) |
+| `TELEGRAM_ALLOWED_USERS` | Comma-separated Telegram user IDs                   |
 
 ### Recommended
 
-| Variable | Description |
-|----------|-------------|
+| Variable             | Description                                            |
+| -------------------- | ------------------------------------------------------ |
 | `CLAUDE_WORKING_DIR` | Working directory for Claude (loads CLAUDE.md, skills) |
-| `OPENAI_API_KEY` | OpenAI API key for voice transcription |
+| `OPENAI_API_KEY`     | OpenAI API key for voice transcription                 |
 
 ### Security
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALLOWED_PATHS` | Working dir + ~/Documents, ~/Downloads, ~/Desktop, ~/.claude | Paths Claude can access |
-| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
-| `RATE_LIMIT_REQUESTS` | `20` | Requests per window |
-| `RATE_LIMIT_WINDOW` | `60` | Window in seconds |
+| Variable              | Default                                                      | Description             |
+| --------------------- | ------------------------------------------------------------ | ----------------------- |
+| `ALLOWED_PATHS`       | Working dir + ~/Documents, ~/Downloads, ~/Desktop, ~/.claude | Paths Claude can access |
+| `RATE_LIMIT_ENABLED`  | `true`                                                       | Enable rate limiting    |
+| `RATE_LIMIT_REQUESTS` | `20`                                                         | Requests per window     |
+| `RATE_LIMIT_WINDOW`   | `60`                                                         | Window in seconds       |
 
 ### Claude Authentication
 
-| Variable | Description |
-|----------|-------------|
+| Variable            | Description                                         |
+| ------------------- | --------------------------------------------------- |
 | `ANTHROPIC_API_KEY` | API key (alternative to CLI auth, billed per token) |
-| `CLAUDE_CLI_PATH` | Path to Claude CLI (auto-detected) |
+| `CLAUDE_CLI_PATH`   | Path to Claude CLI (auto-detected)                  |
 
 ### Extended Thinking
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `THINKING_KEYWORDS` | `think,pensa,ragiona` | Trigger extended thinking |
+| Variable                 | Default                            | Description                        |
+| ------------------------ | ---------------------------------- | ---------------------------------- |
+| `THINKING_KEYWORDS`      | `think,pensa,ragiona`              | Trigger extended thinking          |
 | `THINKING_DEEP_KEYWORDS` | `ultrathink,think hard,pensa bene` | Trigger deep thinking (50k tokens) |
 
 ### Voice Transcription
 
-| Variable | Description |
-|----------|-------------|
+| Variable                | Description                                        |
+| ----------------------- | -------------------------------------------------- |
 | `TRANSCRIPTION_CONTEXT` | Context for transcription (names, technical terms) |
 
 ### Logging
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable         | Default                          | Description        |
+| ---------------- | -------------------------------- | ------------------ |
 | `AUDIT_LOG_PATH` | `/tmp/claude-telegram-audit.log` | Audit log location |
-| `AUDIT_LOG_JSON` | `false` | Output JSON format |
+| `AUDIT_LOG_JSON` | `false`                          | Output JSON format |
 
 ## Session Auto-Discovery
 
@@ -271,6 +271,7 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 ```
 
 **Logs:**
+
 ```bash
 tail -f /tmp/claude-telegram-bot-ts.log
 ```
@@ -315,6 +316,7 @@ restart - Restart bot
 ### Rate limiting
 
 If you hit rate limits:
+
 1. Adjust `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW`
 2. Or set `RATE_LIMIT_ENABLED=false` (not recommended for production)
 
@@ -325,6 +327,7 @@ bun run typecheck
 ```
 
 Common fixes:
+
 - Run `bun install` to ensure all types are installed
 - Check for missing `@types/*` packages
 

@@ -23,9 +23,18 @@ import {
   WORKING_DIR,
 } from "./config";
 import { formatToolStatus } from "./formatting";
-import { checkPendingAskUserRequests, checkPendingAskUserQuestionRequests } from "./handlers/streaming";
+import {
+  checkPendingAskUserRequests,
+  checkPendingAskUserQuestionRequests,
+} from "./handlers/streaming";
 import { checkCommandSafety, isPathAllowed } from "./security";
-import type { SessionData, StatusCallback, TokenUsage, PlanApprovalState, AskUserQuestionInput } from "./types";
+import type {
+  SessionData,
+  StatusCallback,
+  TokenUsage,
+  PlanApprovalState,
+  AskUserQuestionInput,
+} from "./types";
 import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
 
@@ -191,7 +200,7 @@ class ClaudeSession {
     statusCallback: StatusCallback,
     chatId?: number,
     ctx?: Context,
-    permissionMode: "bypassPermissions" | "plan" = "bypassPermissions"
+    permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
   ): Promise<string> {
     // Set chat context for ask_user MCP tool
     if (chatId) {
@@ -218,7 +227,7 @@ class ClaudeSession {
           hour: "2-digit",
           minute: "2-digit",
           timeZoneName: "short",
-        }
+        },
       )}]\n\n`;
       messageToSend = datePrefix + message;
     }
@@ -249,8 +258,8 @@ class ClaudeSession {
       console.log(
         `RESUMING session ${this.sessionId.slice(
           0,
-          8
-        )}... (thinking=${thinkingLabel})`
+          8,
+        )}... (thinking=${thinkingLabel})`,
       );
     } else {
       console.log(`STARTING new Claude session (thinking=${thinkingLabel})`);
@@ -260,7 +269,7 @@ class ClaudeSession {
     // Check if stop was requested during processing phase
     if (this.stopRequested) {
       console.log(
-        "Query cancelled before starting (stop was requested during processing)"
+        "Query cancelled before starting (stop was requested during processing)",
       );
       this.stopRequested = false;
       throw new Error("Query cancelled");
@@ -320,10 +329,14 @@ class ClaudeSession {
         // Handle local command output (slash commands like /cost, /compact)
         if (event.type === "user" && event.message?.content) {
           const content = String(event.message.content);
-          const match = content.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+          const match = content.match(
+            /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/,
+          );
           if (match?.[1]) {
             const cmdOutput = match[1].trim();
-            console.log(`[QUERY] Local command output: ${cmdOutput.slice(0, 100)}`);
+            console.log(
+              `[QUERY] Local command output: ${cmdOutput.slice(0, 100)}`,
+            );
             if (cmdOutput) {
               responseParts.push(cmdOutput);
               await statusCallback("text", cmdOutput, currentSegmentId);
@@ -371,7 +384,7 @@ class ClaudeSession {
 
                   if (!isTmpRead && !isPathAllowed(filePath)) {
                     console.warn(
-                      `BLOCKED: File access outside allowed paths: ${filePath}`
+                      `BLOCKED: File access outside allowed paths: ${filePath}`,
                     );
                     await statusCallback("tool", `Access denied: ${filePath}`);
                     throw new Error(`File access blocked: ${filePath}`);
@@ -384,7 +397,7 @@ class ClaudeSession {
                 await statusCallback(
                   "segment_end",
                   currentSegmentText,
-                  currentSegmentId
+                  currentSegmentId,
                 );
                 currentSegmentId++;
                 currentSegmentText = "";
@@ -397,7 +410,10 @@ class ClaudeSession {
               console.log(`Tool: ${toolDisplay}`);
 
               // Don't show tool status for ask_user or TodoWrite (reduces noise)
-              if (!toolName.startsWith("mcp__ask-user") && toolName !== "TodoWrite") {
+              if (
+                !toolName.startsWith("mcp__ask-user") &&
+                toolName !== "TodoWrite"
+              ) {
                 await statusCallback("tool", toolDisplay);
               }
 
@@ -410,7 +426,7 @@ class ClaudeSession {
                 for (let attempt = 0; attempt < 3; attempt++) {
                   const buttonsSent = await checkPendingAskUserRequests(
                     ctx,
-                    chatId
+                    chatId,
                   );
                   if (buttonsSent) {
                     askUserTriggered = true;
@@ -432,13 +448,17 @@ class ClaudeSession {
               // Detect AskUserQuestion tool - Claude wants user input
               if (toolName === "AskUserQuestion") {
                 askUserQuestionTriggered = true;
-                askUserQuestionInput = toolInput as unknown as AskUserQuestionInput;
+                askUserQuestionInput =
+                  toolInput as unknown as AskUserQuestionInput;
                 askUserQuestionToolUseId = block.id;
                 console.log(`AskUserQuestion detected, toolUseId: ${block.id}`);
               }
 
               // Track Write/Edit operations to plan files (for showing plan content later)
-              if ((toolName === "Write" || toolName === "Edit") && this._isPlanMode) {
+              if (
+                (toolName === "Write" || toolName === "Edit") &&
+                this._isPlanMode
+              ) {
                 const filePath = String(toolInput.file_path || "");
                 if (filePath.endsWith(".md") || filePath.includes("plan")) {
                   lastPlanFilePath = filePath;
@@ -461,7 +481,7 @@ class ClaudeSession {
                 await statusCallback(
                   "text",
                   currentSegmentText,
-                  currentSegmentId
+                  currentSegmentId,
                 );
                 lastTextUpdate = now;
               }
@@ -469,7 +489,11 @@ class ClaudeSession {
           }
 
           // Break out of event loop if ask_user, askUserQuestion, or exitPlanMode was triggered
-          if (askUserTriggered || askUserQuestionTriggered || exitPlanModeTriggered) {
+          if (
+            askUserTriggered ||
+            askUserQuestionTriggered ||
+            exitPlanModeTriggered
+          ) {
             break;
           }
         }
@@ -486,7 +510,7 @@ class ClaudeSession {
             console.log(
               `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${
                 u.cache_read_input_tokens || 0
-              } cache_create=${u.cache_creation_input_tokens || 0}`
+              } cache_create=${u.cache_creation_input_tokens || 0}`,
             );
           }
         }
@@ -500,7 +524,10 @@ class ClaudeSession {
 
       if (
         isCleanupError &&
-        (queryCompleted || askUserTriggered || askUserQuestionTriggered || this.stopRequested)
+        (queryCompleted ||
+          askUserTriggered ||
+          askUserQuestionTriggered ||
+          this.stopRequested)
       ) {
         console.warn(`Suppressed post-completion error: ${error}`);
       } else {
@@ -527,13 +554,19 @@ class ClaudeSession {
     }
 
     // If AskUserQuestion was triggered, send buttons and return
-    if (askUserQuestionTriggered && askUserQuestionInput && askUserQuestionToolUseId && ctx && chatId) {
+    if (
+      askUserQuestionTriggered &&
+      askUserQuestionInput &&
+      askUserQuestionToolUseId &&
+      ctx &&
+      chatId
+    ) {
       const buttonsSent = await checkPendingAskUserQuestionRequests(
         ctx,
         chatId,
         askUserQuestionInput,
         askUserQuestionToolUseId,
-        this._isPlanMode
+        this._isPlanMode,
       );
       if (buttonsSent) {
         await statusCallback("done", "");
@@ -549,7 +582,9 @@ class ClaudeSession {
         try {
           const file = Bun.file(lastPlanFilePath);
           planContent = await file.text();
-          console.log(`Read plan content from ${lastPlanFilePath}: ${planContent.length} chars`);
+          console.log(
+            `Read plan content from ${lastPlanFilePath}: ${planContent.length} chars`,
+          );
         } catch (err) {
           console.warn(`Failed to read plan file: ${err}`);
         }
@@ -602,7 +637,9 @@ class ClaudeSession {
     this._sessionName = info.name;
     this._workingDir = info.dir;
     this.lastActivity = info.lastActivity ? new Date(info.lastActivity) : null;
-    console.log(`Loaded session "${info.name}" (id: ${info.id?.slice(0, 8) || "pending"}...)`);
+    console.log(
+      `Loaded session "${info.name}" (id: ${info.id?.slice(0, 8) || "pending"}...)`,
+    );
   }
 
   /**
@@ -641,7 +678,7 @@ class ClaudeSession {
     userId: number,
     statusCallback: StatusCallback,
     chatId?: number,
-    ctx?: Context
+    ctx?: Context,
   ): Promise<string> {
     if (!this._pendingPlanApproval) {
       throw new Error("No pending plan approval");
@@ -651,7 +688,8 @@ class ClaudeSession {
     this._pendingPlanApproval = null;
 
     // Determine next permission mode
-    const nextPermissionMode = action === "accept" ? "bypassPermissions" : "plan";
+    const nextPermissionMode =
+      action === "accept" ? "bypassPermissions" : "plan";
 
     // Build approval message
     let message: string;
@@ -673,7 +711,7 @@ class ClaudeSession {
       statusCallback,
       chatId,
       ctx,
-      nextPermissionMode
+      nextPermissionMode,
     );
   }
 
@@ -683,7 +721,6 @@ class ClaudeSession {
   clearPendingPlanApproval(): void {
     this._pendingPlanApproval = null;
   }
-
 }
 
 // Global session instance

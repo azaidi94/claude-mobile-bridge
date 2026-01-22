@@ -14,7 +14,10 @@ import type { SessionInfo } from "./types";
 const execAsync = promisify(exec);
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects");
-const ACTIVE_SESSION_FILE = join(tmpdir(), "claude-telegram-active-session.txt");
+const ACTIVE_SESSION_FILE = join(
+  tmpdir(),
+  "claude-telegram-active-session.txt",
+);
 const POLL_INTERVAL_MS = 60_000; // 60s backup poll
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -69,7 +72,7 @@ async function getRunningClaudeDirectories(): Promise<Set<string>> {
   try {
     // Find claude processes with a TTY (not "??") and get their working directories
     const { stdout } = await execAsync(
-      `ps -eo pid,tty,comm | awk '($3 == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`
+      `ps -eo pid,tty,comm | awk '($3 == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`,
     );
     for (const line of stdout.trim().split("\n")) {
       if (line) dirs.add(line);
@@ -84,7 +87,7 @@ async function getRunningClaudeDirectories(): Promise<Set<string>> {
  * Parse a session JSONL file to extract session info.
  */
 async function parseSessionFile(
-  filePath: string
+  filePath: string,
 ): Promise<{ sessionId: string; cwd: string } | null> {
   try {
     const content = await readFile(filePath, "utf-8");
@@ -119,7 +122,7 @@ async function parseSessionFile(
  */
 function isUuid(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    str
+    str,
   );
 }
 
@@ -278,9 +281,7 @@ async function refresh(): Promise<void> {
 /**
  * Start watching for session changes.
  */
-export async function startWatcher(
-  onChange?: () => void
-): Promise<void> {
+export async function startWatcher(onChange?: () => void): Promise<void> {
   onChangeCallback = onChange || null;
 
   // Initial scan
@@ -289,17 +290,24 @@ export async function startWatcher(
 
   // Start fs.watch on projects directory
   try {
-    watcher = watch(PROJECTS_DIR, { recursive: true }, async (event, filename) => {
-      // Only trigger on file creation/deletion ('rename'), not content changes ('change')
-      if (event === "rename" && filename?.endsWith(".jsonl")) {
-        console.log(`Session change detected: ${event} ${filename}`);
-        await refresh();
-        onChangeCallback?.();
-      }
-    });
+    watcher = watch(
+      PROJECTS_DIR,
+      { recursive: true },
+      async (event, filename) => {
+        // Only trigger on file creation/deletion ('rename'), not content changes ('change')
+        if (event === "rename" && filename?.endsWith(".jsonl")) {
+          console.log(`Session change detected: ${event} ${filename}`);
+          await refresh();
+          onChangeCallback?.();
+        }
+      },
+    );
     console.log(`Session watcher: watching ${PROJECTS_DIR}`);
   } catch (error) {
-    console.warn("Session watcher: fs.watch failed, using polling only:", error);
+    console.warn(
+      "Session watcher: fs.watch failed, using polling only:",
+      error,
+    );
   }
 
   // Backup polling
@@ -332,7 +340,7 @@ export async function forceRefresh(): Promise<void> {
  */
 export function getSessions(): SessionInfo[] {
   return Array.from(cache.sessions.values()).sort(
-    (a, b) => b.lastActivity - a.lastActivity
+    (a, b) => b.lastActivity - a.lastActivity,
   );
 }
 
@@ -366,7 +374,10 @@ export function getSession(name: string): SessionInfo | null {
 /**
  * Add a telegram-created session.
  */
-export function addTelegramSession(dir: string, explicitName?: string): SessionInfo {
+export function addTelegramSession(
+  dir: string,
+  explicitName?: string,
+): SessionInfo {
   const name = explicitName?.trim() || generateName(dir);
 
   const info: SessionInfo = {

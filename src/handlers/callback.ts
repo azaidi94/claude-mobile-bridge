@@ -64,7 +64,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
         const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
         await ctx.editMessageText(
           `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
-          { parse_mode: "HTML" }
+          { parse_mode: "HTML" },
         );
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
       }
@@ -100,8 +100,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
     }
 
     // Accept or Reject
-    await ctx.editMessageText(action === "accept" ? "✅ Plan accepted" : "❌ Plan rejected");
-    await ctx.answerCallbackQuery({ text: action === "accept" ? "Accepted" : "Rejected" });
+    await ctx.editMessageText(
+      action === "accept" ? "✅ Plan accepted" : "❌ Plan rejected",
+    );
+    await ctx.answerCallbackQuery({
+      text: action === "accept" ? "Accepted" : "Rejected",
+    });
 
     // Start typing
     const typing = startTypingIndicator(ctx);
@@ -117,17 +121,25 @@ export async function handleCallback(ctx: Context): Promise<void> {
         userId,
         statusCallback,
         chatId,
-        ctx
+        ctx,
       );
 
       // Check if another plan approval is pending (for reject flow)
       if (session.pendingPlanApproval) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        await ctx.reply("📋 Revised plan ready. Review and approve?", { reply_markup: keyboard });
+        await ctx.reply("📋 Revised plan ready. Review and approve?", {
+          reply_markup: keyboard,
+        });
       }
 
-      await auditLog(userId, username, "PLAN_" + action.toUpperCase(), "", response);
+      await auditLog(
+        userId,
+        username,
+        "PLAN_" + action.toUpperCase(),
+        "",
+        response,
+      );
     } catch (error) {
       console.error("Error in plan approval:", error);
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
@@ -147,7 +159,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     const requestId = parts[1]!;
     const action = parts[2]!; // "opt", "custom", "skip"
-    const optionIdx = parts[3] !== undefined ? parseInt(parts[3]!, 10) : undefined;
+    const optionIdx =
+      parts[3] !== undefined ? parseInt(parts[3]!, 10) : undefined;
 
     const pending = pendingAskUserQuestions.get(requestId);
     if (!pending) {
@@ -173,7 +186,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
           userId,
           statusCallback,
           chatId,
-          ctx
+          ctx,
         );
         await auditLog(userId, username, "AUQ_SKIP", "skip", response);
       } catch (error) {
@@ -189,7 +202,10 @@ export async function handleCallback(ctx: Context): Promise<void> {
       // Store pending custom input
       pendingAskUserQuestionCustom.set(chatId, requestId);
       const currentQ = pending.questions[pending.currentIndex]!;
-      await ctx.editMessageText(`✏️ Type your answer:\n\n<i>${currentQ.question}</i>`, { parse_mode: "HTML" });
+      await ctx.editMessageText(
+        `✏️ Type your answer:\n\n<i>${currentQ.question}</i>`,
+        { parse_mode: "HTML" },
+      );
       await ctx.answerCallbackQuery({ text: "Type your answer" });
       return;
     }
@@ -206,7 +222,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
       pending.answers.push(selectedOption);
       pending.currentIndex++;
 
-      await ctx.answerCallbackQuery({ text: `Selected: ${selectedOption.slice(0, 30)}` });
+      await ctx.answerCallbackQuery({
+        text: `Selected: ${selectedOption.slice(0, 30)}`,
+      });
 
       if (pending.currentIndex < pending.questions.length) {
         // Show next question
@@ -215,8 +233,16 @@ export async function handleCallback(ctx: Context): Promise<void> {
         if (nextQ.header) {
           questionText = `<b>${nextQ.header}</b>\n\n${questionText}`;
         }
-        const keyboard = createAskUserQuestionKeyboard(nextQ, requestId, pending.currentIndex, pending.questions.length);
-        await ctx.editMessageText(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+        const keyboard = createAskUserQuestionKeyboard(
+          nextQ,
+          requestId,
+          pending.currentIndex,
+          pending.questions.length,
+        );
+        await ctx.editMessageText(questionText, {
+          reply_markup: keyboard,
+          parse_mode: "HTML",
+        });
       } else {
         // All questions answered - send to Claude
         const wasPlanMode = pending.isPlanMode;
@@ -238,13 +264,15 @@ export async function handleCallback(ctx: Context): Promise<void> {
             statusCallback,
             chatId,
             ctx,
-            permissionMode
+            permissionMode,
           );
           await auditLog(userId, username, "AUQ_ANSWER", answersText, response);
 
           // Check if plan approval is pending (ExitPlanMode was called)
           if (session.pendingPlanApproval) {
-            const displayContent = session.pendingPlanApproval.planContent || session.pendingPlanApproval.planSummary;
+            const displayContent =
+              session.pendingPlanApproval.planContent ||
+              session.pendingPlanApproval.planSummary;
             if (displayContent && displayContent.length > 50) {
               await sendPlanContent(ctx, displayContent);
             }
@@ -351,7 +379,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
       userId,
       statusCallback,
       chatId,
-      ctx
+      ctx,
     );
 
     await auditLog(userId, username, "CALLBACK", message, response);

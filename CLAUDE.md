@@ -53,6 +53,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 Configure via `.env` (see `.env.example`):
 
 Key variables:
+
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
 - `CLAUDE_WORKING_DIR` - Working directory for Claude
 - `ALLOWED_PATHS` - Directories Claude can access

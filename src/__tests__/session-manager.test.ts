@@ -21,7 +21,8 @@ import {
 } from "../sessions";
 
 // Generate unique test names to avoid conflicts with persistent state
-const uniqueId = () => `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const uniqueId = () =>
+  `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 describe("session-manager: basic operations", () => {
   test("getSessions returns an array", () => {
@@ -232,7 +233,7 @@ describe("session-manager: session discovery", () => {
 
     for (let i = 1; i < sessions.length; i++) {
       expect(sessions[i - 1]!.lastActivity).toBeGreaterThanOrEqual(
-        sessions[i]!.lastActivity
+        sessions[i]!.lastActivity,
       );
     }
   });
@@ -245,7 +246,10 @@ describe("session-manager: concurrent operations", () => {
 
     // Add multiple sessions rapidly
     for (let i = 0; i < 5; i++) {
-      addTelegramSession(`/path/project-${prefix}-${i}`, `session-${prefix}-${i}`);
+      addTelegramSession(
+        `/path/project-${prefix}-${i}`,
+        `session-${prefix}-${i}`,
+      );
     }
 
     const sessions = getSessions();

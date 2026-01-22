@@ -5,7 +5,15 @@
  * error handling, and message formatting/sanitization.
  */
 
-import { describe, expect, test, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import {
+  describe,
+  expect,
+  test,
+  beforeEach,
+  afterEach,
+  mock,
+  spyOn,
+} from "bun:test";
 
 // Mock config before importing handlers - must use mock.module() for it to take effect
 mock.module("../config", () => ({
@@ -49,12 +57,14 @@ mock.module("../config", () => ({
 }));
 
 // Test helpers
-function createMockContext(overrides: Partial<{
-  userId: number;
-  username: string;
-  chatId: number;
-  messageText: string;
-}> = {}) {
+function createMockContext(
+  overrides: Partial<{
+    userId: number;
+    username: string;
+    chatId: number;
+    messageText: string;
+  }> = {},
+) {
   const {
     userId = 123456,
     username = "testuser",
@@ -169,7 +179,7 @@ describe("message-router: message formatting", () => {
 
     // Single quotes are not escaped (only needed for attribute values with single quotes)
     expect(escapeHtml("<script>alert('xss')</script>")).toBe(
-      "&lt;script&gt;alert('xss')&lt;/script&gt;"
+      "&lt;script&gt;alert('xss')&lt;/script&gt;",
     );
   });
 
@@ -259,7 +269,7 @@ describe("message-router: tool status formatting", () => {
     const { formatToolStatus } = await import("../formatting");
     const result = formatToolStatus("Bash", {
       command: "npm install",
-      description: "Install dependencies"
+      description: "Install dependencies",
     });
     expect(result).toContain("Install dependencies");
   });
@@ -272,7 +282,10 @@ describe("message-router: tool status formatting", () => {
 
   test("formatToolStatus formats Grep tool", async () => {
     const { formatToolStatus } = await import("../formatting");
-    const result = formatToolStatus("Grep", { pattern: "function", path: "/src" });
+    const result = formatToolStatus("Grep", {
+      pattern: "function",
+      path: "/src",
+    });
     expect(result).toContain("Searching");
     expect(result).toContain("function");
   });
@@ -488,7 +501,8 @@ describe("message-router: session routing", () => {
   });
 
   test("addTelegramSession and switch routes correctly", async () => {
-    const { addTelegramSession, setActiveSession, getActiveSession } = await import("../sessions");
+    const { addTelegramSession, setActiveSession, getActiveSession } =
+      await import("../sessions");
 
     const name1 = `route-test-1-${Date.now()}`;
     const name2 = `route-test-2-${Date.now()}`;

@@ -59,7 +59,7 @@ export async function auditLog(
   username: string,
   messageType: string,
   content: string,
-  response = ""
+  response = "",
 ): Promise<void> {
   const event: AuditEvent = {
     timestamp: new Date().toISOString(),
@@ -78,7 +78,7 @@ export async function auditLog(
 export async function auditLogAuth(
   userId: number,
   username: string,
-  authorized: boolean
+  authorized: boolean,
 ): Promise<void> {
   await writeAuditLog({
     timestamp: new Date().toISOString(),
@@ -95,7 +95,7 @@ export async function auditLogTool(
   toolName: string,
   toolInput: Record<string, unknown>,
   blocked = false,
-  reason = ""
+  reason = "",
 ): Promise<void> {
   const event: AuditEvent = {
     timestamp: new Date().toISOString(),
@@ -116,7 +116,7 @@ export async function auditLogError(
   userId: number,
   username: string,
   error: string,
-  context = ""
+  context = "",
 ): Promise<void> {
   const event: AuditEvent = {
     timestamp: new Date().toISOString(),
@@ -134,7 +134,7 @@ export async function auditLogError(
 export async function auditLogRateLimit(
   userId: number,
   username: string,
-  retryAfter: number
+  retryAfter: number,
 ): Promise<void> {
   await writeAuditLog({
     timestamp: new Date().toISOString(),
@@ -148,7 +148,7 @@ export async function auditLogRateLimit(
 // ============== Voice Transcription ==============
 
 export async function transcribeVoice(
-  filePath: string
+  filePath: string,
 ): Promise<string | null> {
   if (!openaiClient) {
     console.warn("OpenAI client not available for transcription");

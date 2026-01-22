@@ -40,7 +40,7 @@ class RateLimiter {
     const elapsed = (now - bucket.lastUpdate) / 1000;
     bucket.tokens = Math.min(
       this.maxTokens,
-      bucket.tokens + elapsed * this.refillRate
+      bucket.tokens + elapsed * this.refillRate,
     );
     bucket.lastUpdate = now;
 
@@ -113,7 +113,7 @@ export function isPathAllowed(path: string): boolean {
 // ============== Command Safety ==============
 
 export function checkCommandSafety(
-  command: string
+  command: string,
 ): [safe: boolean, reason: string] {
   const lowerCommand = command.toLowerCase();
 
@@ -154,7 +154,7 @@ export function checkCommandSafety(
 
 export function isAuthorized(
   userId: number | undefined,
-  allowedUsers: number[]
+  allowedUsers: number[],
 ): boolean {
   if (!userId) return false;
   if (allowedUsers.length === 0) return false;
