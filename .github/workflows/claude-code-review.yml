@@ -1,0 +1,82 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened]
+    # Optional: Only run on specific file changes
+    # paths:
+    #   - "src/**/*.ts"
+    #   - "src/**/*.tsx"
+    #   - "src/**/*.js"
+    #   - "src/**/*.jsx"
+
+jobs:
+  claude-review:
+    # Optional: Filter by PR author
+    # if: |
+    #   github.event.pull_request.user.login == 'external-contributor' ||
+    #   github.event.pull_request.user.login == 'new-developer' ||
+    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Extract issue number from PR title
+        id: extract-issue
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          echo "PR Title: $PR_TITLE"
+
+          # Extract issue number from title (matches #123 or (#123))
+          ISSUE_NUMBER=$(echo "$PR_TITLE" | grep -oP '(?<=#)\d+' | head -1 || echo "")
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "Found issue number: #$ISSUE_NUMBER"
+            echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+            echo "has_issue=true" >> $GITHUB_OUTPUT
+          else
+            echo "No issue number found in PR title"
+            echo "has_issue=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          show_full_output: true
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR TITLE: ${{ github.event.pull_request.title }}
+            ${{ steps.extract-issue.outputs.has_issue == 'true' && format('LINKED ISSUE: #{0}', steps.extract-issue.outputs.issue_number) || '' }}
+
+            Please review this pull request thoroughly.
+
+            ${{ steps.extract-issue.outputs.has_issue == 'true' && format('IMPORTANT: This PR references issue #{0}. Use `gh issue view {0}` to fetch the issue details and validate that the code changes properly implement ALL requirements, acceptance criteria, and test cases specified in the issue. Check that nothing from the issue is missing.', steps.extract-issue.outputs.issue_number, steps.extract-issue.outputs.issue_number) || '' }}
+
+            Review for:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+            ${{ steps.extract-issue.outputs.has_issue == 'true' && '- VALIDATION: Verify all issue requirements are met' || '' }}
+
+            Be constructive and helpful in your feedback.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
