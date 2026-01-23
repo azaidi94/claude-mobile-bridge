@@ -416,3 +416,15 @@ export function updateSessionActivity(name: string): void {
     info.lastActivity = Date.now();
   }
 }
+
+/**
+ * Remove a session from the cache.
+ */
+export function removeSession(name: string): boolean {
+  const deleted = cache.sessions.delete(name);
+  if (deleted && cache.active === name) {
+    cache.active = null;
+    saveActiveSession();
+  }
+  return deleted;
+}

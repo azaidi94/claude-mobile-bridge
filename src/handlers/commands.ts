@@ -15,6 +15,7 @@ import {
   setActiveSession,
   addTelegramSession,
   forceRefresh,
+  removeSession,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import {
@@ -167,7 +168,12 @@ export async function handleKill(ctx: Context): Promise<void> {
     return;
   }
 
+  // Get session name before killing (kill() clears it)
+  const sessionName = session.sessionName;
   await session.kill();
+  if (sessionName) {
+    removeSession(sessionName);
+  }
   await ctx.reply("💀 Session terminated. Next message starts fresh.");
 }
 

@@ -15,4 +15,5 @@ export {
   addTelegramSession,
   updateSessionId,
   updateSessionActivity,
+  removeSession,
 } from "./watcher";
