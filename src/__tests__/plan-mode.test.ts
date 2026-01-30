@@ -78,6 +78,8 @@ mock.module("../sessions", () => ({
     return newSession;
   }),
   forceRefresh: mock(() => Promise.resolve()),
+  updatePinnedStatus: mock(() => Promise.resolve()),
+  removeSession: mock(() => true),
 }));
 
 // Mock session singleton with plan mode state

@@ -17,3 +17,21 @@ export {
   updateSessionActivity,
   removeSession,
 } from "./watcher";
+
+export {
+  registerChatId,
+  loadChatIds,
+  createNotificationHandler,
+  getChatIds,
+} from "./notifications";
+
+export {
+  loadPinnedMessageIds,
+  getPinnedMessageId,
+  setPinnedMessageId,
+  clearPinnedMessageId,
+  formatStatusMessage,
+  updatePinnedStatus,
+  removePinnedStatus,
+  type StatusInfo,
+} from "./status-message";

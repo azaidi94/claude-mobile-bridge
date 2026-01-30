@@ -59,6 +59,7 @@ mock.module("../handlers", () => ({
   handleSwitch: mock(() => {}),
   handleRefresh: mock(() => {}),
   handlePlan: mock(() => {}),
+  handlePin: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),

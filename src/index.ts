@@ -12,8 +12,18 @@ import {
   RESTART_FILE,
 } from "./config";
 import { unlinkSync, readFileSync, existsSync } from "fs";
-import { startWatcher, stopWatcher } from "./sessions";
+import {
+  startWatcher,
+  stopWatcher,
+  loadChatIds,
+  loadPinnedMessageIds,
+  getChatIds,
+  updatePinnedStatus,
+  createNotificationHandler,
+  getActiveSession,
+} from "./sessions";
 import { createBot } from "./bot";
+import { session } from "./session";
 import { info, warn } from "./logger";
 import pkg from "../package.json";
 
@@ -26,8 +36,25 @@ info(
   `cwd: ${WORKING_DIR} (${ALLOWED_USERS.length} user${ALLOWED_USERS.length !== 1 ? "s" : ""})`,
 );
 
-// Start session watcher
-await startWatcher();
+// Load persisted chat IDs and pinned message IDs
+await loadChatIds();
+await loadPinnedMessageIds();
+
+// Wire up mode change callback to update pinned status
+session.onModeChange = (isPlanMode) => {
+  const active = getActiveSession();
+  const status = {
+    sessionName: active?.name || null,
+    isPlanMode,
+    model: session.modelDisplayName,
+  };
+  for (const chatId of getChatIds()) {
+    updatePinnedStatus(bot.api, chatId, status).catch(() => {});
+  }
+};
+
+const notifyHandler = createNotificationHandler(bot.api);
+await startWatcher(notifyHandler);
 
 // Get bot info
 const botInfo = await bot.api.getMe();

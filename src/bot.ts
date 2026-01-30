@@ -7,6 +7,15 @@
 
 import { Bot } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
+import { ALLOWED_USERS } from "./config";
+import {
+  registerChatId,
+  getChatIds,
+  getActiveSession,
+  updatePinnedStatus,
+} from "./sessions";
+import { isAuthorized } from "./security";
+import { session } from "./session";
 import {
   handleStart,
   handleHelp,
@@ -21,6 +30,7 @@ import {
   handleSwitch,
   handleRefresh,
   handlePlan,
+  handlePin,
   handleText,
   handleVoice,
   handlePhoto,
@@ -58,6 +68,26 @@ export function createBot(options: BotOptions): Bot {
     }),
   );
 
+  // Register chat IDs of allowed users for proactive notifications
+  bot.use(async (ctx, next) => {
+    const userId = ctx.from?.id;
+    if (userId && ctx.chat?.id && isAuthorized(userId, ALLOWED_USERS)) {
+      const isNew = !getChatIds().has(ctx.chat.id);
+      registerChatId(ctx.chat.id);
+
+      // Create pinned status for new chats
+      if (isNew) {
+        const active = getActiveSession();
+        updatePinnedStatus(bot.api, ctx.chat.id, {
+          sessionName: active?.name || null,
+          isPlanMode: session.isPlanMode,
+          model: session.modelDisplayName,
+        }).catch(() => {});
+      }
+    }
+    await next();
+  });
+
   // Command handlers
   bot.command("start", handleStart);
   bot.command("help", handleHelp);
@@ -72,6 +102,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);
   bot.command("plan", handlePlan);
+  bot.command("pin", handlePin);
 
   // Message handlers
   bot.on("message:text", handleText);

@@ -10,6 +10,7 @@ import { homedir, tmpdir } from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import type { SessionInfo } from "./types";
+import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
 
 const execAsync = promisify(exec);
@@ -35,7 +36,7 @@ const cache: SessionCache = {
 
 let watcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
-let onChangeCallback: (() => void) | null = null;
+let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
 let debounceTimer: Timer | null = null;
 const DEBOUNCE_MS = 500;
 
@@ -221,9 +222,17 @@ async function scanSessions(): Promise<SessionInfo[]> {
 }
 
 /**
- * Refresh the session cache.
+ * Refresh the session cache. Returns diff of desktop sessions.
  */
-async function refresh(): Promise<void> {
+async function refresh(): Promise<SessionDiff> {
+  // Snapshot current desktop sessions by dir
+  const oldDesktop = new Map<string, { name: string; dir: string }>();
+  for (const s of cache.sessions.values()) {
+    if (s.source === "desktop") {
+      oldDesktop.set(s.dir, { name: s.name, dir: s.dir });
+    }
+  }
+
   const discovered = await scanSessions();
 
   // Keep telegram sessions, replace discovered ones
@@ -241,18 +250,38 @@ async function refresh(): Promise<void> {
   cache.sessions.clear();
 
   // Add discovered sessions with generated names
-  for (const info of discovered) {
-    info.name = generateName(info.dir);
-    cache.sessions.set(info.name, info);
+  for (const si of discovered) {
+    si.name = generateName(si.dir);
+    cache.sessions.set(si.name, si);
   }
 
   // Add telegram sessions back
-  for (const info of telegramSessions) {
+  for (const si of telegramSessions) {
     // Re-generate name in case of conflict
-    if (cache.sessions.has(info.name)) {
-      info.name = generateName(info.dir);
+    if (cache.sessions.has(si.name)) {
+      si.name = generateName(si.dir);
     }
-    cache.sessions.set(info.name, info);
+    cache.sessions.set(si.name, si);
+  }
+
+  // Compute diff
+  const newDesktopDirs = new Set<string>();
+  for (const s of cache.sessions.values()) {
+    if (s.source === "desktop") newDesktopDirs.add(s.dir);
+  }
+
+  const added: SessionInfo[] = [];
+  for (const s of cache.sessions.values()) {
+    if (s.source === "desktop" && !oldDesktop.has(s.dir)) {
+      added.push(s);
+    }
+  }
+
+  const removed: { name: string; dir: string }[] = [];
+  for (const [dir, old] of oldDesktop) {
+    if (!newDesktopDirs.has(dir)) {
+      removed.push(old);
+    }
   }
 
   // Validate active session
@@ -279,15 +308,19 @@ async function refresh(): Promise<void> {
       }
     }
   }
+
+  return { added, removed };
 }
 
 /**
  * Start watching for session changes.
  */
-export async function startWatcher(onChange?: () => void): Promise<void> {
+export async function startWatcher(
+  onChange?: (diff: SessionDiff) => void,
+): Promise<void> {
   onChangeCallback = onChange || null;
 
-  // Initial scan
+  // Initial scan (no notifications on startup)
   await refresh();
   info(
     `watcher: ${cache.sessions.size} session${cache.sessions.size !== 1 ? "s" : ""}`,
@@ -301,8 +334,10 @@ export async function startWatcher(onChange?: () => void): Promise<void> {
         // Debounce rapid events
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(async () => {
-          await refresh();
-          onChangeCallback?.();
+          const diff = await refresh();
+          if (diff.added.length || diff.removed.length) {
+            onChangeCallback?.(diff);
+          }
         }, DEBOUNCE_MS);
       }
     });
@@ -313,7 +348,10 @@ export async function startWatcher(onChange?: () => void): Promise<void> {
 
   // Backup polling
   pollInterval = setInterval(async () => {
-    await refresh();
+    const diff = await refresh();
+    if (diff.added.length || diff.removed.length) {
+      onChangeCallback?.(diff);
+    }
   }, POLL_INTERVAL_MS);
 }
 

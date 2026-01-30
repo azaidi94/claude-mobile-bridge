@@ -48,6 +48,8 @@ mock.module("../sessions", () => ({
   setActiveSession: mock(() => false),
   addTelegramSession: mock(() => ({ name: "test", dir: "/tmp" })),
   forceRefresh: mock(() => Promise.resolve()),
+  updatePinnedStatus: mock(() => Promise.resolve()),
+  removeSession: mock(() => true),
 }));
 
 // Mock session singleton

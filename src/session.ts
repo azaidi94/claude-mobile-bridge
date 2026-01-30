@@ -116,6 +116,9 @@ class ClaudeSession {
   private _isPlanMode = false;
   private _pendingPlanApproval: PlanApprovalState | null = null;
 
+  // Mode change callback
+  onModeChange?: (isPlanMode: boolean) => void;
+
   get workingDir(): string {
     return this._workingDir;
   }
@@ -275,7 +278,11 @@ class ClaudeSession {
     };
 
     // Track plan mode
+    const wasPlanMode = this._isPlanMode;
     this._isPlanMode = permissionMode === "plan";
+    if (this._isPlanMode !== wasPlanMode) {
+      this.onModeChange?.(this._isPlanMode);
+    }
 
     // Add Claude Code executable path if set (required for standalone builds)
     if (process.env.CLAUDE_CODE_PATH) {
@@ -715,6 +722,7 @@ class ClaudeSession {
     if (action === "accept") {
       message = "Plan approved. Proceed with implementation.";
       this._isPlanMode = false;
+      this.onModeChange?.(false);
     } else if (action === "reject") {
       message = `Plan rejected. ${feedback || "Please revise the plan."}`;
     } else {

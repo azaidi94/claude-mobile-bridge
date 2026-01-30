@@ -16,6 +16,7 @@ import {
   addTelegramSession,
   forceRefresh,
   removeSession,
+  updatePinnedStatus,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import {
@@ -547,6 +548,31 @@ export async function handlePlan(ctx: Context): Promise<void> {
     stopProcessing();
     typing.stop();
   }
+}
+
+/**
+ * /pin - Update/create pinned status message.
+ */
+export async function handlePin(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (!chatId) return;
+
+  const active = getActiveSession();
+  const status = {
+    sessionName: active?.name || session.sessionName || null,
+    isPlanMode: session.isPlanMode,
+    model: session.modelDisplayName,
+  };
+
+  await updatePinnedStatus(ctx.api, chatId, status);
+  await ctx.reply("📌 Status pinned.");
 }
 
 // Helper

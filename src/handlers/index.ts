@@ -16,6 +16,7 @@ export {
   handleSwitch,
   handleRefresh,
   handlePlan,
+  handlePin,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";

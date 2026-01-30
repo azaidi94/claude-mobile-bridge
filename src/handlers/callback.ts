@@ -19,7 +19,12 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { setActiveSession, getActiveSession, getSessions } from "../sessions";
+import {
+  setActiveSession,
+  getActiveSession,
+  getSessions,
+  updatePinnedStatus,
+} from "../sessions";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -101,6 +106,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
     await ctx.answerCallbackQuery({
       text: `Switched to ${MODEL_DISPLAY_NAMES[modelId]}`,
     });
+
+    // Update pinned status with new model
+    const active = getActiveSession();
+    updatePinnedStatus(ctx.api, chatId, {
+      sessionName: active?.name || null,
+      isPlanMode: session.isPlanMode,
+      model: session.modelDisplayName,
+    }).catch(() => {});
     return;
   }
 
@@ -151,6 +164,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
           reply_markup: { inline_keyboard: buttons },
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
+
+        // Update pinned status with new session
+        updatePinnedStatus(ctx.api, chatId, {
+          sessionName: active.name,
+          isPlanMode: session.isPlanMode,
+          model: session.modelDisplayName,
+        }).catch(() => {});
       }
     } else {
       await ctx.answerCallbackQuery({ text: "Session not found" });
