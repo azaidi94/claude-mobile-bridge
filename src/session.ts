@@ -9,6 +9,8 @@ import {
   query,
   type Options,
   type SDKMessage,
+  type HookCallback,
+  type PreToolUseHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Context } from "grammy";
 import {
@@ -58,6 +60,25 @@ function getThinkingLevel(message: string): number {
   // Default: no thinking
   return 0;
 }
+
+/**
+ * Hook to auto-approve WebSearch and WebFetch tools.
+ * These tools have a known issue where they prompt for permission
+ * even with allowDangerouslySkipPermissions enabled.
+ */
+const autoApproveWebTools: HookCallback = async (input) => {
+  const preInput = input as PreToolUseHookInput;
+  if (preInput.tool_name === "WebSearch" || preInput.tool_name === "WebFetch") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse" as const,
+        permissionDecision: "allow" as const,
+        permissionDecisionReason: "Auto-approved for Telegram bot",
+      },
+    };
+  }
+  return {};
+};
 
 /**
  * Extract text content from SDK message.
@@ -275,6 +296,12 @@ class ClaudeSession {
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
       resume: this.sessionId || undefined,
+      // Hook to auto-approve WebSearch/WebFetch (workaround for known permission bug)
+      hooks: {
+        PreToolUse: [
+          { matcher: "WebSearch|WebFetch", hooks: [autoApproveWebTools] },
+        ],
+      },
     };
 
     // Track plan mode
