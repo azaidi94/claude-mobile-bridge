@@ -65,8 +65,12 @@ function getThinkingLevel(message: string): number {
  * Hook to auto-approve WebSearch and WebFetch tools.
  * These tools have a known issue where they prompt for permission
  * even with allowDangerouslySkipPermissions enabled.
+ *
+ * TODO: Remove this workaround when the Claude Agent SDK properly respects
+ * allowDangerouslySkipPermissions for WebSearch/WebFetch tools.
+ * See: https://github.com/anthropics/claude-code/issues/11881
  */
-const autoApproveWebTools: HookCallback = async (input) => {
+export const autoApproveWebTools: HookCallback = async (input) => {
   const preInput = input as PreToolUseHookInput;
   if (preInput.tool_name === "WebSearch" || preInput.tool_name === "WebFetch") {
     return {
