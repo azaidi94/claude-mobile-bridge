@@ -102,16 +102,17 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 /**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
-// Available models (SDK accepts short names only)
-export type ModelId = "opus" | "sonnet" | "haiku";
+// Available models
+export type ModelId = "claude-opus-4-6" | "opus" | "sonnet" | "haiku";
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
+  "claude-opus-4-6": "Opus 4.6",
   opus: "Opus 4.5",
   sonnet: "Sonnet 4.5",
   haiku: "Haiku 4.5",
 };
 
-const DEFAULT_MODEL: ModelId = "opus";
+const DEFAULT_MODEL: ModelId = "claude-opus-4-6";
 
 class ClaudeSession {
   sessionId: string | null = null;

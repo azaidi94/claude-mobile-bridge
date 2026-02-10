@@ -176,14 +176,15 @@ mock.module("../session", () => ({
       return mockSessionState.pendingPlanApproval;
     },
     get model() {
-      return "claude-opus-4-5-20250514";
+      return "claude-opus-4-6";
     },
     get modelDisplayName() {
-      return "Opus 4.5";
+      return "Opus 4.6";
     },
     ...mockSessionMethods,
   },
   MODEL_DISPLAY_NAMES: {
+    "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-5-20250514": "Opus 4.5",
     "claude-sonnet-4-5-20250514": "Sonnet 4.5",
     "claude-haiku-4-5-20250514": "Haiku 4.5",
