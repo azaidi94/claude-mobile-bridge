@@ -320,6 +320,7 @@ export function createStatusCallback(
         const toolMsg = await ctx.reply(content, { parse_mode: "HTML" });
         state.toolMessages.push(toolMsg);
       } else if (statusType === "text" && segmentId !== undefined) {
+        if (!content) return; // Skip empty text segments (e.g. file-only responses)
         const now = Date.now();
         const lastEdit = state.lastEditTimes.get(segmentId) || 0;
 
