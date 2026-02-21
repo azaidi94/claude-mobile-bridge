@@ -4,6 +4,7 @@
  * Provides a reusable status callback for streaming Claude responses.
  */
 
+import { basename, extname, resolve } from "path";
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard, InputFile } from "grammy";
@@ -20,7 +21,82 @@ import {
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
 } from "../config";
-import { debug, warn, error } from "../logger";
+import { isPathAllowed } from "../security";
+import { debug, warn, error, info } from "../logger";
+
+/**
+ * Image extensions that Telegram Bot API accepts via sendPhoto.
+ * GIF is excluded: Telegram converts GIFs to MPEG-4, losing the original.
+ * BMP is excluded: not supported by Telegram's photo API.
+ */
+const PHOTO_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+
+/** Max file size Telegram accepts (50 MB). */
+const TELEGRAM_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+
+/**
+ * Send a file to the user via Telegram.
+ * Photos (.jpg, .png, .webp) are sent natively; everything else as a document.
+ */
+export async function sendFileToTelegram(
+  ctx: Context,
+  filePath: string,
+): Promise<void> {
+  // Normalize to absolute path to prevent traversal
+  const resolvedPath = resolve(filePath);
+
+  // Security: validate path is within allowed directories
+  if (!isPathAllowed(resolvedPath)) {
+    warn(`send_file blocked: ${resolvedPath}`);
+    await ctx.reply(`⚠️ Cannot send file outside allowed directories.`);
+    return;
+  }
+
+  const filename = basename(resolvedPath);
+
+  // Read file atomically via Bun.file() — avoids TOCTOU race
+  let fileBuffer: Buffer;
+  try {
+    const file = Bun.file(resolvedPath);
+    const size = file.size;
+
+    if (size === 0) {
+      await ctx.reply(`⚠️ File is empty: ${filename}`);
+      return;
+    }
+    if (size > TELEGRAM_FILE_SIZE_LIMIT) {
+      const sizeMB = (size / (1024 * 1024)).toFixed(1);
+      await ctx.reply(
+        `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
+      );
+      return;
+    }
+
+    fileBuffer = Buffer.from(await file.arrayBuffer());
+  } catch {
+    await ctx.reply(`⚠️ Could not read file: ${filename}`);
+    return;
+  }
+
+  const ext = extname(filename).toLowerCase();
+  const isPhoto = PHOTO_EXTENSIONS.has(ext);
+  const inputFile = new InputFile(fileBuffer, filename);
+
+  info(`send_file: ${filename} (${isPhoto ? "photo" : "document"})`);
+
+  if (isPhoto) {
+    try {
+      await ctx.replyWithPhoto(inputFile, { caption: filename });
+    } catch {
+      // Fall back to document if photo send fails (e.g. too large for photo API)
+      debug(`photo fallback to document: ${filename}`);
+      const fallbackFile = new InputFile(fileBuffer, filename);
+      await ctx.replyWithDocument(fallbackFile, { caption: filename });
+    }
+  } else {
+    await ctx.replyWithDocument(inputFile, { caption: filename });
+  }
+}
 
 // State maps for AskUserQuestion
 export const pendingAskUserQuestions = new Map<string, AskUserQuestionState>();
@@ -343,6 +419,14 @@ export function createStatusCallback(
               }
             }
           }
+        }
+      } else if (statusType === "send_file") {
+        // Send a file to the user via Telegram
+        try {
+          await sendFileToTelegram(ctx, content);
+        } catch (err) {
+          warn(`send_file error: ${err}`);
+          await ctx.reply(`⚠️ Failed to send file.`);
         }
       } else if (statusType === "done") {
         // Delete tool messages - text messages stay

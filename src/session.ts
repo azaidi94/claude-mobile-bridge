@@ -41,6 +41,22 @@ import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
 import { info, warn, error, debug } from "./logger";
 
+// ============== File Send Directive Helpers ==============
+
+/** Extract <<SEND_FILE:path>> directives from text, returning matched paths. */
+function extractFileDirectives(text: string): string[] {
+  const paths: string[] = [];
+  for (const match of text.matchAll(/<<SEND_FILE:(.+?)>>/g)) {
+    paths.push(match[1]!);
+  }
+  return paths;
+}
+
+/** Strip <<SEND_FILE:path>> directives from text for display. */
+function stripFileDirectives(text: string): string {
+  return text.replace(/<<SEND_FILE:.+?>>\n?/g, "");
+}
+
 /**
  * Determine thinking token budget based on message keywords.
  */
@@ -346,6 +362,7 @@ class ClaudeSession {
 
     // Response tracking
     const responseParts: string[] = [];
+    const filesToSend: string[] = [];
     let currentSegmentId = 0;
     let currentSegmentText = "";
     let lastTextUpdate = 0;
@@ -449,11 +466,12 @@ class ClaudeSession {
                 }
               }
 
-              // Segment ends when tool starts
+              // Segment ends when tool starts — extract directives from accumulated text
               if (currentSegmentText) {
+                filesToSend.push(...extractFileDirectives(currentSegmentText));
                 await statusCallback(
                   "segment_end",
-                  currentSegmentText,
+                  stripFileDirectives(currentSegmentText),
                   currentSegmentId,
                 );
                 currentSegmentId++;
@@ -524,12 +542,14 @@ class ClaudeSession {
               }
             }
 
-            // Text content
+            // Text content — accumulate raw, strip directives only for display.
+            // Directive extraction happens at segment boundaries to handle
+            // directives split across streaming chunks.
             if (block.type === "text") {
               responseParts.push(block.text);
               currentSegmentText += block.text;
 
-              // Stream text updates (throttled)
+              // Stream text updates (throttled) — strip directives for display
               const now = Date.now();
               if (
                 now - lastTextUpdate > STREAMING_THROTTLE_MS &&
@@ -537,7 +557,7 @@ class ClaudeSession {
               ) {
                 await statusCallback(
                   "text",
-                  currentSegmentText,
+                  stripFileDirectives(currentSegmentText),
                   currentSegmentId,
                 );
                 lastTextUpdate = now;
@@ -648,14 +668,24 @@ class ClaudeSession {
       return "[Plan ready for approval]";
     }
 
-    // Emit final segment
+    // Emit final segment — extract directives from accumulated text
     if (currentSegmentText) {
-      await statusCallback("segment_end", currentSegmentText, currentSegmentId);
+      filesToSend.push(...extractFileDirectives(currentSegmentText));
+      await statusCallback(
+        "segment_end",
+        stripFileDirectives(currentSegmentText),
+        currentSegmentId,
+      );
+    }
+
+    // Send any requested files to Telegram (deduplicated)
+    for (const filePath of new Set(filesToSend)) {
+      await statusCallback("send_file", filePath);
     }
 
     await statusCallback("done", "");
 
-    return responseParts.join("") || "No response from Claude.";
+    return stripFileDirectives(responseParts.join("")) || "No response from Claude.";
   }
 
   /**
