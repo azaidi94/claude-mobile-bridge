@@ -108,8 +108,8 @@ export class SessionTailer {
 
       const lines = text.split("\n").filter(Boolean);
       for (const line of lines) {
-        const event = this.parseLine(line);
-        if (event) {
+        const events = this.parseLine(line);
+        for (const event of events) {
           try {
             this.callback(event);
           } catch (err) {
@@ -123,37 +123,38 @@ export class SessionTailer {
   }
 
   /**
-   * Parse a JSONL line into a TailEvent, or null if not relevant.
+   * Parse a JSONL line into TailEvents. Returns all relevant blocks
+   * from a single entry (e.g. thinking + tool_use in the same turn).
    */
-  private parseLine(line: string): TailEvent | null {
+  parseLine(line: string): TailEvent[] {
     try {
       const entry = JSON.parse(line);
 
       // Skip sidechain messages
-      if (entry.isSidechain) return null;
+      if (entry.isSidechain) return [];
 
       // User message from desktop
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
         if (text) {
-          return { type: "user", content: text };
+          return [{ type: "user", content: text }];
         }
-        return null;
+        return [];
       }
 
-      // Assistant message
+      // Assistant message — emit all blocks
       if (entry.type === "assistant") {
         const content = entry.message?.content;
-        if (!Array.isArray(content)) return null;
+        if (!Array.isArray(content)) return [];
 
-        // Process blocks - emit the most interesting one
+        const events: TailEvent[] = [];
         for (const block of content) {
           if (block.type === "thinking" && block.thinking) {
             const preview =
               block.thinking.length > 200
                 ? block.thinking.slice(0, 200) + "..."
                 : block.thinking;
-            return { type: "thinking", content: preview };
+            events.push({ type: "thinking", content: preview });
           }
 
           if (block.type === "tool_use") {
@@ -161,20 +162,20 @@ export class SessionTailer {
               block.name,
               (block.input as Record<string, unknown>) || {},
             );
-            return { type: "tool", content: toolDisplay };
+            events.push({ type: "tool", content: toolDisplay });
           }
 
           if (block.type === "text" && block.text) {
-            return { type: "text", content: block.text };
+            events.push({ type: "text", content: block.text });
           }
         }
 
-        return null;
+        return events;
       }
     } catch {
       // Malformed JSON line
     }
-    return null;
+    return [];
   }
 
   /**

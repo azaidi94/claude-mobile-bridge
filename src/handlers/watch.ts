@@ -8,8 +8,7 @@
  * Typing a message triggers takeover (resumes session on mobile).
  */
 
-import type { Context } from "grammy";
-import type { Api } from "grammy";
+import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
 import { session } from "../session";
 import { ALLOWED_USERS, STREAMING_THROTTLE_MS } from "../config";
@@ -28,6 +27,7 @@ import {
   updatePinnedStatus,
   getGitBranch,
 } from "../sessions";
+import { homedir } from "os";
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 
@@ -59,18 +59,19 @@ export function isWatching(chatId: number): boolean {
 }
 
 /**
- * Get the watch state for a chat.
- */
-export function getWatchState(chatId: number): WatchState | undefined {
-  return watches.get(chatId);
-}
-
-/**
  * Stop watching for a chat and clean up.
+ * If botApi is provided, flushes any pending text message before stopping.
  */
-export function stopWatching(chatId: number): WatchState | undefined {
+export function stopWatching(
+  chatId: number,
+  botApi?: Api,
+): WatchState | undefined {
   const state = watches.get(chatId);
   if (state) {
+    // Flush pending text before stopping
+    if (botApi && state.currentTextMsg && !state.segmentDone) {
+      finalizeTextMessage(botApi, chatId, state);
+    }
     state.tailer.stop();
     watches.delete(chatId);
     info(`watch: stopped for chat ${chatId}`);
@@ -121,6 +122,12 @@ export async function handleWatch(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  // Don't start watching while a query is running
+  if (session.isRunning) {
+    await ctx.reply("A query is in progress. Use /stop first.");
     return;
   }
 
@@ -192,12 +199,17 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  // Create watch state
+  // Create tailer first, then state. The callback captures watchState via
+  // closure and only fires asynchronously, so the reference is safe.
+  const botApi = ctx.api;
+  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    handleTailEvent(botApi, chatId, watchState, event);
+  });
   const watchState: WatchState = {
     sessionName: targetName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
-    tailer: null as unknown as SessionTailer, // set below
+    tailer,
     chatId,
     lastEventTime: Date.now(),
     currentToolMsg: null,
@@ -206,19 +218,14 @@ export async function handleWatch(ctx: Context): Promise<void> {
     lastTextUpdate: 0,
     segmentDone: true,
   };
-
-  // Create tailer with callback bound to this chat
-  const botApi = ctx.api;
-  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    handleTailEvent(botApi, chatId, watchState, event);
-  });
-
-  watchState.tailer = tailer;
   watches.set(chatId, watchState);
 
   await tailer.start();
 
-  const dir = sessionInfo.dir.replace(/^\/Users\/[^/]+/, "~");
+  const home = homedir();
+  const dir = sessionInfo.dir.startsWith(home)
+    ? "~" + sessionInfo.dir.slice(home.length)
+    : sessionInfo.dir;
   await ctx.reply(
     `👁 Watching <b>${escapeHtml(targetName)}</b>\n` +
       `📁 <code>${escapeHtml(dir)}</code>\n\n` +
@@ -255,7 +262,7 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
     return;
   }
 
-  const state = stopWatching(chatId);
+  const state = stopWatching(chatId, ctx.api);
 
   if (state) {
     await ctx.reply(

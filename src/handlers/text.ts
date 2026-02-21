@@ -178,7 +178,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 1.7. Check for active watch — takeover flow
   if (isWatching(chatId)) {
-    const watchState = stopWatching(chatId);
+    const watchState = stopWatching(chatId, ctx.api);
     if (watchState) {
       info(`takeover: ${watchState.sessionName} from chat ${chatId}`);
       await ctx.reply(`🔄 Taking over <b>${watchState.sessionName}</b>...`, {
@@ -187,10 +187,15 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // Load the desktop session for mobile use
       const sessionInfo = getSession(watchState.sessionName);
-      if (sessionInfo) {
-        session.loadFromRegistry(sessionInfo);
-        setActiveSession(watchState.sessionName);
+      if (!sessionInfo) {
+        await ctx.reply(
+          `❌ Session <b>${watchState.sessionName}</b> is no longer available.`,
+          { parse_mode: "HTML" },
+        );
+        return;
       }
+      session.loadFromRegistry(sessionInfo);
+      setActiveSession(watchState.sessionName);
       // Fall through to send the message normally via sendMessageStreaming
     }
   }
