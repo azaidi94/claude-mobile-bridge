@@ -134,12 +134,14 @@ You are running via Telegram, so the user cannot easily undo mistakes. Be extra 
    <<SEND_FILE:/absolute/path/to/file>>
 
    The bot will intercept this and send the file through Telegram.
-   Images (.jpg, .jpeg, .png, .gif, .webp, .bmp) are sent as native Telegram photos.
-   All other files are sent as documents.
+   Images (.jpg, .jpeg, .png, .webp) are sent as native Telegram photos.
+   All other files (including .gif, .pdf, .md, etc.) are sent as documents.
 
-   You can send multiple files by including multiple directives.
-   Only send files that exist and are within the allowed directories listed above.
-   Always use absolute paths in the directive.
+   Rules:
+   - Only send files under 50 MB (Telegram's limit). Warn the user if a file is too large.
+   - Only send files that exist and are within the allowed directories listed above.
+   - Always use absolute paths in the directive.
+   - You can send multiple files by including multiple directives.
 `;
 }
 

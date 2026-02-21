@@ -4,8 +4,7 @@
  * Provides a reusable status callback for streaming Claude responses.
  */
 
-import { existsSync, statSync } from "fs";
-import { basename } from "path";
+import { basename, extname, resolve } from "path";
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard, InputFile } from "grammy";
@@ -25,62 +24,62 @@ import {
 import { isPathAllowed } from "../security";
 import { debug, warn, error, info } from "../logger";
 
-/** Image extensions that Telegram can display natively as photos. */
-const PHOTO_EXTENSIONS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".bmp",
-]);
+/**
+ * Image extensions that Telegram Bot API accepts via sendPhoto.
+ * GIF is excluded: Telegram converts GIFs to MPEG-4, losing the original.
+ * BMP is excluded: not supported by Telegram's photo API.
+ */
+const PHOTO_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
 /** Max file size Telegram accepts (50 MB). */
 const TELEGRAM_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
 
 /**
  * Send a file to the user via Telegram.
- * Photos are sent natively as photos; everything else as a document.
+ * Photos (.jpg, .png, .webp) are sent natively; everything else as a document.
  */
 export async function sendFileToTelegram(
   ctx: Context,
   filePath: string,
 ): Promise<void> {
+  // Normalize to absolute path to prevent traversal
+  const resolvedPath = resolve(filePath);
+
   // Security: validate path is within allowed directories
-  if (!isPathAllowed(filePath)) {
-    warn(`send_file blocked: ${filePath}`);
+  if (!isPathAllowed(resolvedPath)) {
+    warn(`send_file blocked: ${resolvedPath}`);
     await ctx.reply(`⚠️ Cannot send file outside allowed directories.`);
     return;
   }
 
-  // Check file exists
-  if (!existsSync(filePath)) {
-    await ctx.reply(`⚠️ File not found: ${basename(filePath)}`);
+  const filename = basename(resolvedPath);
+
+  // Read file atomically via Bun.file() — avoids TOCTOU race
+  let fileBuffer: Buffer;
+  try {
+    const file = Bun.file(resolvedPath);
+    const size = file.size;
+
+    if (size === 0) {
+      await ctx.reply(`⚠️ File is empty: ${filename}`);
+      return;
+    }
+    if (size > TELEGRAM_FILE_SIZE_LIMIT) {
+      const sizeMB = (size / (1024 * 1024)).toFixed(1);
+      await ctx.reply(
+        `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
+      );
+      return;
+    }
+
+    fileBuffer = Buffer.from(await file.arrayBuffer());
+  } catch {
+    await ctx.reply(`⚠️ Could not read file: ${filename}`);
     return;
   }
 
-  // Check file size
-  const stats = statSync(filePath);
-  if (stats.size === 0) {
-    await ctx.reply(`⚠️ File is empty: ${basename(filePath)}`);
-    return;
-  }
-  if (stats.size > TELEGRAM_FILE_SIZE_LIMIT) {
-    const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
-    await ctx.reply(
-      `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
-    );
-    return;
-  }
-
-  const filename = basename(filePath);
-  const ext = filename.includes(".")
-    ? "." + filename.split(".").pop()!.toLowerCase()
-    : "";
+  const ext = extname(filename).toLowerCase();
   const isPhoto = PHOTO_EXTENSIONS.has(ext);
-
-  // Read file into buffer
-  const fileBuffer = Buffer.from(await Bun.file(filePath).arrayBuffer());
   const inputFile = new InputFile(fileBuffer, filename);
 
   info(`send_file: ${filename} (${isPhoto ? "photo" : "document"})`);
@@ -88,9 +87,9 @@ export async function sendFileToTelegram(
   if (isPhoto) {
     try {
       await ctx.replyWithPhoto(inputFile, { caption: filename });
-    } catch (photoErr) {
+    } catch {
       // Fall back to document if photo send fails (e.g. too large for photo API)
-      debug(`photo fallback to document: ${photoErr}`);
+      debug(`photo fallback to document: ${filename}`);
       const fallbackFile = new InputFile(fileBuffer, filename);
       await ctx.replyWithDocument(fallbackFile, { caption: filename });
     }
@@ -427,7 +426,7 @@ export function createStatusCallback(
           await sendFileToTelegram(ctx, content);
         } catch (err) {
           warn(`send_file error: ${err}`);
-          await ctx.reply(`⚠️ Failed to send file: ${String(err).slice(0, 200)}`);
+          await ctx.reply(`⚠️ Failed to send file.`);
         }
       } else if (statusType === "done") {
         // Delete tool messages - text messages stay
