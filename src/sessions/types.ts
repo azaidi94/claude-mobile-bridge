@@ -3,7 +3,8 @@
  */
 
 export interface SessionInfo {
-  id: string; // Claude session UUID
+  /** Claude session UUID. Empty string ("") until the first message initializes it. */
+  id: string;
   name: string; // Human-friendly name
   dir: string; // Working directory
   lastActivity: number; // Unix timestamp

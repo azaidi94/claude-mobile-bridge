@@ -23,7 +23,10 @@ export {
   loadChatIds,
   createNotificationHandler,
   getChatIds,
+  setSessionOfflineCallback,
 } from "./notifications";
+
+export { SessionTailer, findSessionJsonlPath } from "./tailer";
 
 export {
   loadPinnedMessageIds,

@@ -69,6 +69,9 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/list - Show all sessions\n` +
       `/switch &lt;name&gt; - Switch to session\n` +
       `/new [name] [path] - Create new session\n\n` +
+      `<b>Watch:</b>\n` +
+      `/watch [name] - Watch desktop session live\n` +
+      `/unwatch - Stop watching\n\n` +
       `<b>Control:</b>\n` +
       `/plan &lt;msg&gt; - Start plan mode\n` +
       `/stop - Interrupt current query\n` +
