@@ -29,6 +29,7 @@ import {
   createPlanApprovalKeyboard,
   sendPlanContent,
 } from "./streaming";
+import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
 
 /**
  * /start - Show welcome message and status.
@@ -71,6 +72,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/new [name] [path] - Create new session\n\n` +
       `<b>Control:</b>\n` +
       `/plan &lt;msg&gt; - Start plan mode\n` +
+      `/queue - Queue tasks for batch execution\n` +
       `/stop - Interrupt current query\n` +
       `/kill - Terminate session\n` +
       `/retry - Retry last message\n` +
@@ -139,13 +141,23 @@ export async function handleNew(ctx: Context): Promise<void> {
 }
 
 /**
- * /stop - Interrupt current generation.
+ * /stop - Interrupt current generation or cancel queue.
  */
 export async function handleStop(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  // Check for active queue
+  const queue = getActiveQueue();
+  if (queue) {
+    queue.cancel();
+    await ctx.reply("🛑 Queue cancelled.");
+    await Bun.sleep(100);
+    session.clearStopRequested();
     return;
   }
 
@@ -626,4 +638,109 @@ export async function handlePin(ctx: Context): Promise<void> {
 
   await updatePinnedStatus(ctx.api, chatId, status);
   await ctx.reply("📌 Status pinned.");
+}
+
+/**
+ * /queue - Queue multiple tasks for sequential execution.
+ *
+ * Usage:
+ *   /queue
+ *   1. Fix the failing test
+ *   2. Add input validation
+ *   3. Write tests
+ *   4. Create a PR
+ *
+ * With no tasks: show current queue status.
+ */
+export async function handleQueue(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const username = ctx.from?.username || "unknown";
+  const chatId = ctx.chat?.id;
+  const text = ctx.message?.text || "";
+
+  if (!userId || !chatId) return;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  // Check for active queue status request
+  const queue = getActiveQueue();
+
+  // Parse tasks from message (everything after /queue)
+  const body = text.replace(/^\/queue\s*/, "").trim();
+
+  if (!body) {
+    // No tasks provided - show status or usage
+    if (queue) {
+      await ctx.reply(queue.formatProgress(), { parse_mode: "HTML" });
+    } else {
+      await ctx.reply(
+        `📋 <b>Task Queue</b>\n\n` +
+          `Send a list of tasks:\n\n` +
+          `<code>/queue\n` +
+          `1. Fix the failing test\n` +
+          `2. Add input validation\n` +
+          `3. Write tests\n` +
+          `4. Create a PR</code>`,
+        { parse_mode: "HTML" },
+      );
+    }
+    return;
+  }
+
+  // Check if a queue is already running
+  if (queue) {
+    await ctx.reply("⏳ A queue is already running. Use /stop to cancel it.");
+    return;
+  }
+
+  // Check if session is busy
+  if (session.isRunning) {
+    await ctx.reply("⏳ Session is busy. Use /stop first.");
+    return;
+  }
+
+  // Rate limit
+  const [allowed, retryAfter] = rateLimiter.check(userId);
+  if (!allowed) {
+    await auditLogRateLimit(userId, username, retryAfter!);
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  // Parse the task list
+  const taskDescriptions = parseTasks(body);
+
+  if (taskDescriptions.length === 0) {
+    await ctx.reply("❌ No tasks found. Send a numbered or bulleted list.");
+    return;
+  }
+
+  if (taskDescriptions.length > 20) {
+    await ctx.reply("❌ Too many tasks (max 20).");
+    return;
+  }
+
+  // Create and start the queue
+  const taskQueue = new TaskQueue(taskDescriptions, chatId, userId, username);
+
+  await auditLog(
+    userId,
+    username,
+    "QUEUE_START",
+    `${taskDescriptions.length} tasks`,
+    taskDescriptions.join(" | "),
+  );
+
+  // Process queue (runs in background, doesn't block the command)
+  taskQueue.process(ctx).catch(async (error) => {
+    console.error("Queue processing error:", error);
+    try {
+      await ctx.reply(`❌ Queue error: ${String(error).slice(0, 200)}`);
+    } catch {
+      // Can't send message, ignore
+    }
+  });
 }

@@ -72,6 +72,7 @@ await bot.api.setMyCommands([
   { command: "switch", description: "Switch to session" },
   { command: "new", description: "Create new session" },
   { command: "plan", description: "Start plan mode" },
+  { command: "queue", description: "Queue tasks for batch execution" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
