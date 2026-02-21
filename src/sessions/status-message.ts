@@ -89,12 +89,19 @@ export interface StatusInfo {
   isPlanMode: boolean;
   model: string;
   branch?: string | null;
+  isWatching?: string | null; // session name being watched
 }
 
 /**
  * Format status message text.
  */
 export function formatStatusMessage(status: StatusInfo): string {
+  if (status.isWatching) {
+    const parts = [`👁 Watching: ${status.isWatching}`, status.model];
+    if (status.branch) parts.push(`🌿 ${status.branch}`);
+    return parts.join(" | ");
+  }
+
   const name = status.sessionName || "no session";
   const mode = status.isPlanMode ? "📋 Plan" : "⚡ Normal";
   const parts = [`✅ ${name}`, mode, status.model];

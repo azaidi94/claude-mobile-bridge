@@ -25,6 +25,13 @@ export { handlePhoto } from "./photo";
 export { handleDocument } from "./document";
 export { handleCallback } from "./callback";
 export {
+  handleWatch,
+  handleUnwatch,
+  isWatching,
+  stopWatching,
+  notifySessionOffline,
+} from "./watch";
+export {
   StreamingState,
   createStatusCallback,
   createPlanApprovalKeyboard,

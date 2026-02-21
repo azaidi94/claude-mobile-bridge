@@ -70,6 +70,21 @@ export interface SessionDiff {
   removed: { name: string; dir: string }[];
 }
 
+// Callback for when sessions go offline (used by watch handler for resume)
+let onSessionOfflineCallback:
+  | ((botApi: Api, sessionDir: string) => void)
+  | null = null;
+
+/**
+ * Set a callback to be notified when sessions go offline.
+ * Used by the watch handler to trigger resume flow.
+ */
+export function setSessionOfflineCallback(
+  callback: (botApi: Api, sessionDir: string) => void,
+): void {
+  onSessionOfflineCallback = callback;
+}
+
 /**
  * Create the onChange callback for the watcher.
  * Buffers notifications for FLAP_BUFFER_MS to suppress rapid on/off flapping.
@@ -115,6 +130,10 @@ export function createNotificationHandler(
       const wasActive = active?.info.dir === session.dir;
       const timer = setTimeout(() => {
         pending.delete(session.dir);
+
+        // Notify watch handler for resume flow
+        onSessionOfflineCallback?.(botApi, session.dir);
+
         let msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
         if (wasActive) msg += "\n⚠️ was active session";
         broadcast(botApi, msg);

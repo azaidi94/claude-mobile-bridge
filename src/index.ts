@@ -20,9 +20,11 @@ import {
   getChatIds,
   updatePinnedStatus,
   createNotificationHandler,
+  setSessionOfflineCallback,
   getActiveSession,
   getGitBranch,
 } from "./sessions";
+import { notifySessionOffline } from "./handlers";
 import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn } from "./logger";
@@ -59,6 +61,9 @@ session.onModeChange = (isPlanMode) => {
     .catch(() => {});
 };
 
+// Wire up watch handler's offline callback for resume flow
+setSessionOfflineCallback(notifySessionOffline);
+
 const notifyHandler = createNotificationHandler(bot.api);
 await startWatcher(notifyHandler);
 
@@ -73,6 +78,8 @@ await bot.api.setMyCommands([
   { command: "new", description: "Create new session" },
   { command: "plan", description: "Start plan mode" },
   { command: "queue", description: "Queue tasks for batch execution" },
+  { command: "watch", description: "Watch a desktop session live" },
+  { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
