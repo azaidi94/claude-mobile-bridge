@@ -21,9 +21,10 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { getActiveSession, getSession } from "../sessions";
+import { getActiveSession, getSession, setActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
-import { debug, truncate } from "../logger";
+import { isWatching, stopWatching } from "./watch";
+import { debug, info, truncate } from "../logger";
 
 /**
  * Handle incoming text messages.
@@ -173,6 +174,25 @@ export async function handleText(ctx: Context): Promise<void> {
       }
     }
     return;
+  }
+
+  // 1.7. Check for active watch — takeover flow
+  if (isWatching(chatId)) {
+    const watchState = stopWatching(chatId);
+    if (watchState) {
+      info(`takeover: ${watchState.sessionName} from chat ${chatId}`);
+      await ctx.reply(`🔄 Taking over <b>${watchState.sessionName}</b>...`, {
+        parse_mode: "HTML",
+      });
+
+      // Load the desktop session for mobile use
+      const sessionInfo = getSession(watchState.sessionName);
+      if (sessionInfo) {
+        session.loadFromRegistry(sessionInfo);
+        setActiveSession(watchState.sessionName);
+      }
+      // Fall through to send the message normally via sendMessageStreaming
+    }
   }
 
   // 2. Check for interrupt prefix

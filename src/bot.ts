@@ -32,6 +32,8 @@ import {
   handleRefresh,
   handlePlan,
   handlePin,
+  handleWatch,
+  handleUnwatch,
   handleText,
   handleVoice,
   handlePhoto,
@@ -108,6 +110,8 @@ export function createBot(options: BotOptions): Bot {
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);
   bot.command("plan", handlePlan);
+  bot.command("watch", handleWatch);
+  bot.command("unwatch", handleUnwatch);
   bot.command("pin", handlePin);
 
   // Message handlers
