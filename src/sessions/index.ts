@@ -36,3 +36,5 @@ export {
   getGitBranch,
   type StatusInfo,
 } from "./status-message";
+
+export { getRecentHistory, formatHistoryMessage } from "./history";

@@ -8,6 +8,7 @@
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
+import { formatTimeAgo } from "../formatting";
 import { isAuthorized, rateLimiter } from "../security";
 import {
   getSessions,
@@ -18,6 +19,8 @@ import {
   removeSession,
   updatePinnedStatus,
   getGitBranch,
+  getRecentHistory,
+  formatHistoryMessage,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import {
@@ -399,7 +402,7 @@ export async function handleList(ctx: Context): Promise<void> {
     const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
       .filter(Boolean)
       .join(" · ");
-    lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`);
+    lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
   }
 
   // Create inline buttons for all sessions (mark active with ✓)
@@ -445,6 +448,17 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
         parse_mode: "HTML",
       });
+
+      // Show conversation history for desktop sessions
+      if (active.info.source === "desktop" && active.info.id) {
+        getRecentHistory(active.info.id)
+          .then((turns) => {
+            if (turns.length > 0) {
+              ctx.reply(formatHistoryMessage(turns), { parse_mode: "HTML" });
+            }
+          })
+          .catch(() => {});
+      }
 
       // Update pinned status
       const chatId = ctx.chat?.id;
@@ -612,17 +626,4 @@ export async function handlePin(ctx: Context): Promise<void> {
 
   await updatePinnedStatus(ctx.api, chatId, status);
   await ctx.reply("📌 Status pinned.");
-}
-
-// Helper
-function formatTimeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
 }

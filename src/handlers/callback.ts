@@ -8,6 +8,7 @@ import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { ALLOWED_USERS } from "../config";
+import { formatTimeAgo } from "../formatting";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
 import {
@@ -25,6 +26,8 @@ import {
   getSessions,
   updatePinnedStatus,
   getGitBranch,
+  getRecentHistory,
+  formatHistoryMessage,
 } from "../sessions";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -159,7 +162,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
           const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
             .filter(Boolean)
             .join(" · ");
-          lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`);
+          lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
         }
 
         // Rebuild buttons with updated checkmark
@@ -175,6 +178,19 @@ export async function handleCallback(ctx: Context): Promise<void> {
           reply_markup: { inline_keyboard: buttons },
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
+
+        // Show conversation history for desktop sessions
+        if (active.info.source === "desktop" && active.info.id) {
+          getRecentHistory(active.info.id)
+            .then((turns) => {
+              if (turns.length > 0) {
+                ctx.reply(formatHistoryMessage(turns), {
+                  parse_mode: "HTML",
+                });
+              }
+            })
+            .catch(() => {});
+        }
 
         // Update pinned status with new session
         getGitBranch(active.info.dir)
@@ -526,17 +542,4 @@ export async function handleCallback(ctx: Context): Promise<void> {
   } finally {
     typing.stop();
   }
-}
-
-// Helper
-function formatTimeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
 }
