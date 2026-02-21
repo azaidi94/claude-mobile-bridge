@@ -128,6 +128,18 @@ ${pathsList}
 4. For any destructive or irreversible action, ALWAYS ask for confirmation first.
 
 You are running via Telegram, so the user cannot easily undo mistakes. Be extra careful!
+
+5. SENDING FILES TO THE USER:
+   When the user asks you to send them a file, include this directive in your response:
+   <<SEND_FILE:/absolute/path/to/file>>
+
+   The bot will intercept this and send the file through Telegram.
+   Images (.jpg, .jpeg, .png, .gif, .webp, .bmp) are sent as native Telegram photos.
+   All other files are sent as documents.
+
+   You can send multiple files by including multiple directives.
+   Only send files that exist and are within the allowed directories listed above.
+   Always use absolute paths in the directive.
 `;
 }
 

@@ -4,6 +4,8 @@
  * Provides a reusable status callback for streaming Claude responses.
  */
 
+import { existsSync, statSync } from "fs";
+import { basename } from "path";
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard, InputFile } from "grammy";
@@ -20,7 +22,82 @@ import {
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
 } from "../config";
-import { debug, warn, error } from "../logger";
+import { isPathAllowed } from "../security";
+import { debug, warn, error, info } from "../logger";
+
+/** Image extensions that Telegram can display natively as photos. */
+const PHOTO_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".bmp",
+]);
+
+/** Max file size Telegram accepts (50 MB). */
+const TELEGRAM_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+
+/**
+ * Send a file to the user via Telegram.
+ * Photos are sent natively as photos; everything else as a document.
+ */
+export async function sendFileToTelegram(
+  ctx: Context,
+  filePath: string,
+): Promise<void> {
+  // Security: validate path is within allowed directories
+  if (!isPathAllowed(filePath)) {
+    warn(`send_file blocked: ${filePath}`);
+    await ctx.reply(`⚠️ Cannot send file outside allowed directories.`);
+    return;
+  }
+
+  // Check file exists
+  if (!existsSync(filePath)) {
+    await ctx.reply(`⚠️ File not found: ${basename(filePath)}`);
+    return;
+  }
+
+  // Check file size
+  const stats = statSync(filePath);
+  if (stats.size === 0) {
+    await ctx.reply(`⚠️ File is empty: ${basename(filePath)}`);
+    return;
+  }
+  if (stats.size > TELEGRAM_FILE_SIZE_LIMIT) {
+    const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
+    await ctx.reply(
+      `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
+    );
+    return;
+  }
+
+  const filename = basename(filePath);
+  const ext = filename.includes(".")
+    ? "." + filename.split(".").pop()!.toLowerCase()
+    : "";
+  const isPhoto = PHOTO_EXTENSIONS.has(ext);
+
+  // Read file into buffer
+  const fileBuffer = Buffer.from(await Bun.file(filePath).arrayBuffer());
+  const inputFile = new InputFile(fileBuffer, filename);
+
+  info(`send_file: ${filename} (${isPhoto ? "photo" : "document"})`);
+
+  if (isPhoto) {
+    try {
+      await ctx.replyWithPhoto(inputFile, { caption: filename });
+    } catch (photoErr) {
+      // Fall back to document if photo send fails (e.g. too large for photo API)
+      debug(`photo fallback to document: ${photoErr}`);
+      const fallbackFile = new InputFile(fileBuffer, filename);
+      await ctx.replyWithDocument(fallbackFile, { caption: filename });
+    }
+  } else {
+    await ctx.replyWithDocument(inputFile, { caption: filename });
+  }
+}
 
 // State maps for AskUserQuestion
 export const pendingAskUserQuestions = new Map<string, AskUserQuestionState>();
@@ -343,6 +420,14 @@ export function createStatusCallback(
               }
             }
           }
+        }
+      } else if (statusType === "send_file") {
+        // Send a file to the user via Telegram
+        try {
+          await sendFileToTelegram(ctx, content);
+        } catch (err) {
+          warn(`send_file error: ${err}`);
+          await ctx.reply(`⚠️ Failed to send file: ${String(err).slice(0, 200)}`);
         }
       } else if (statusType === "done") {
         // Delete tool messages - text messages stay

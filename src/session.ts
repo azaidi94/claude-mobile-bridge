@@ -346,6 +346,7 @@ class ClaudeSession {
 
     // Response tracking
     const responseParts: string[] = [];
+    const filesToSend: string[] = [];
     let currentSegmentId = 0;
     let currentSegmentText = "";
     let lastTextUpdate = 0;
@@ -526,8 +527,21 @@ class ClaudeSession {
 
             // Text content
             if (block.type === "text") {
-              responseParts.push(block.text);
-              currentSegmentText += block.text;
+              let text = block.text;
+
+              // Detect and extract file send directives
+              const fileSendPattern = /<<SEND_FILE:(.+?)>>\n?/g;
+              let fileSendMatch;
+              while (
+                (fileSendMatch = fileSendPattern.exec(text)) !== null
+              ) {
+                filesToSend.push(fileSendMatch[1]!);
+              }
+              // Strip directives from displayed text
+              text = text.replace(/<<SEND_FILE:.+?>>\n?/g, "");
+
+              responseParts.push(text);
+              currentSegmentText += text;
 
               // Stream text updates (throttled)
               const now = Date.now();
@@ -651,6 +665,11 @@ class ClaudeSession {
     // Emit final segment
     if (currentSegmentText) {
       await statusCallback("segment_end", currentSegmentText, currentSegmentId);
+    }
+
+    // Send any requested files to Telegram
+    for (const filePath of filesToSend) {
+      await statusCallback("send_file", filePath);
     }
 
     await statusCallback("done", "");
