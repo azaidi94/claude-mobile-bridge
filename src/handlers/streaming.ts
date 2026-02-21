@@ -58,6 +58,12 @@ export async function sendFileToTelegram(
   let fileBuffer: Buffer;
   try {
     const file = Bun.file(resolvedPath);
+
+    if (!(await file.exists())) {
+      await ctx.reply(`⚠️ Could not read file: ${filename}`);
+      return;
+    }
+
     const size = file.size;
 
     if (size === 0) {

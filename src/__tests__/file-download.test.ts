@@ -38,7 +38,43 @@ mock.module("../config", () => ({
   SESSION_FILE: "/tmp/test-session.json",
   RESTART_FILE: "/tmp/test-restart.json",
   TEMP_DIR: "/tmp/telegram-bot",
-  TEMP_PATHS: ["/tmp/"],
+  TEMP_PATHS: ["/tmp/", "/private/tmp/", "/var/folders/"],
+}));
+
+// Mock security module directly to avoid cross-test mock contamination
+import { resolve, normalize } from "path";
+import { realpathSync } from "fs";
+
+const MOCK_ALLOWED_PATHS = ["/tmp"];
+const MOCK_TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
+
+mock.module("../security", () => ({
+  isPathAllowed: (path: string) => {
+    try {
+      const expanded = path.replace(/^~/, process.env.HOME || "");
+      const normalized = normalize(expanded);
+      let resolved: string;
+      try {
+        resolved = realpathSync(normalized);
+      } catch {
+        resolved = resolve(normalized);
+      }
+      for (const tempPath of MOCK_TEMP_PATHS) {
+        if (resolved.startsWith(tempPath)) return true;
+      }
+      for (const allowed of MOCK_ALLOWED_PATHS) {
+        const allowedResolved = resolve(allowed);
+        if (resolved === allowedResolved || resolved.startsWith(allowedResolved + "/"))
+          return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+  rateLimiter: { check: () => [true], getStatus: () => ({ tokens: 20, max: 20, refillRate: 0.33 }) },
+  checkCommandSafety: () => [true, ""],
+  isAuthorized: (userId: number, allowed: number[]) => allowed.includes(userId),
 }));
 
 const TEST_DIR = "/tmp/test-file-download";
