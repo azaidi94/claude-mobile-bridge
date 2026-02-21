@@ -17,31 +17,17 @@ Right now the bot is reactive: you send a message, Claude responds. Flip that.
 
 **Why it's killer**: You're away from your desk but still in the loop. You catch production issues in minutes, not hours.
 
-### 2. Background Tasks & Queued Workflows
+### ~~2. Background Tasks & Queued Workflows~~ ✅ IMPLEMENTED
 
-Send Claude a batch of work and walk away.
+~~Send Claude a batch of work and walk away.~~
 
-```
-/queue
-1. Fix the failing test in auth.test.ts
-2. Add input validation to the signup endpoint
-3. Write tests for the new validation
-4. Create a PR with a good description
-```
+Implemented as `/queue` command. Parses numbered/bulleted task lists, processes sequentially with live progress updates, per-task notifications, final summary, and `/stop` cancellation. See `src/queue.ts` and `src/handlers/commands.ts`.
 
-Claude works through the list sequentially, sends you a summary when done, and pauses for approval on anything destructive. Each step gets its own progress notification.
+### ~~3. Live Desktop ↔ Mobile Handoff~~ ✅ IMPLEMENTED
 
-**Why it's killer**: This is async-first development. Fire off work during your commute, review results at your desk.
+~~The session auto-discovery already exists. Take it further.~~
 
-### 3. Live Desktop ↔ Mobile Handoff
-
-The session auto-discovery already exists. Take it further:
-
-- **Watch mode**: `/watch` a desktop session. Every tool call and text response streams to your phone in real-time. You're reading over Claude's shoulder.
-- **Takeover**: While watching, type a correction and it injects directly into the running desktop session. "No, use the other API endpoint."
-- **Resume**: Start a task on desktop, close your laptop, pick up exactly where you left off on mobile.
-
-**Why it's killer**: True device continuity. Your coding session follows you, not the other way around.
+Implemented as `/watch` and `/unwatch` commands. Streams desktop session activity (tool calls, text responses) to your phone in real-time via session JSONL tailing. See `src/handlers/watch.ts` and `src/sessions/tailer.ts`.
 
 ### 4. GitHub-Native Workflow
 

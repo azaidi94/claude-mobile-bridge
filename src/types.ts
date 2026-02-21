@@ -109,3 +109,20 @@ export interface AskUserQuestionState {
   chatId: number;
   isPlanMode: boolean;
 }
+
+// Task queue types
+export type QueueTaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export interface QueueTask {
+  index: number;
+  description: string;
+  status: QueueTaskStatus;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+}

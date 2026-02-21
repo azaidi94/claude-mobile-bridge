@@ -77,6 +77,7 @@ await bot.api.setMyCommands([
   { command: "switch", description: "Switch to session" },
   { command: "new", description: "Create new session" },
   { command: "plan", description: "Start plan mode" },
+  { command: "queue", description: "Queue tasks for batch execution" },
   { command: "watch", description: "Watch a desktop session live" },
   { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },
