@@ -24,6 +24,7 @@ import {
   getActiveSession,
   getSessions,
   updatePinnedStatus,
+  getGitBranch,
 } from "../sessions";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -109,11 +110,16 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Update pinned status with new model
     const active = getActiveSession();
-    updatePinnedStatus(ctx.api, chatId, {
-      sessionName: active?.name || null,
-      isPlanMode: session.isPlanMode,
-      model: session.modelDisplayName,
-    }).catch(() => {});
+    getGitBranch(session.workingDir)
+      .then((branch) =>
+        updatePinnedStatus(ctx.api, chatId, {
+          sessionName: active?.name || null,
+          isPlanMode: session.isPlanMode,
+          model: session.modelDisplayName,
+          branch,
+        }),
+      )
+      .catch(() => {});
     return;
   }
 
@@ -137,18 +143,23 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         // Rebuild session list with updated active marker
         const sessions = getSessions();
+        const branches = await Promise.all(
+          sessions.map((s) => getGitBranch(s.dir)),
+        );
         const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-        for (const s of sessions) {
+        for (let i = 0; i < sessions.length; i++) {
+          const s = sessions[i]!;
           const isActive = active.name === s.name;
           const marker = isActive ? "✅ " : "• ";
           const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
           const ago = formatTimeAgo(s.lastActivity);
-          lines.push(
-            `${marker}<code>${s.name}</code>`,
-            `   ${dir}`,
-            `   ${ago}`,
-          );
+          const branch = branches[i];
+
+          const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
+            .filter(Boolean)
+            .join(" · ");
+          lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`);
         }
 
         // Rebuild buttons with updated checkmark
@@ -166,11 +177,16 @@ export async function handleCallback(ctx: Context): Promise<void> {
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
         // Update pinned status with new session
-        updatePinnedStatus(ctx.api, chatId, {
-          sessionName: active.name,
-          isPlanMode: session.isPlanMode,
-          model: session.modelDisplayName,
-        }).catch(() => {});
+        getGitBranch(active.info.dir)
+          .then((branch) =>
+            updatePinnedStatus(ctx.api, chatId, {
+              sessionName: active.name,
+              isPlanMode: session.isPlanMode,
+              model: session.modelDisplayName,
+              branch,
+            }),
+          )
+          .catch(() => {});
       }
     } else {
       await ctx.answerCallbackQuery({ text: "Session not found" });

@@ -17,6 +17,7 @@ import {
   forceRefresh,
   removeSession,
   updatePinnedStatus,
+  getGitBranch,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import {
@@ -115,10 +116,23 @@ export async function handleNew(ctx: Context): Promise<void> {
   // Update working directory for this session
   session.setWorkingDir(explicitPath);
 
+  const chatId = ctx.chat?.id;
+  const branch = await getGitBranch(explicitPath);
+
   await ctx.reply(
     `🆕 <code>${newSession.name}</code>\n` + `📁 <code>${explicitPath}</code>`,
     { parse_mode: "HTML" },
   );
+
+  // Pin status for new session
+  if (chatId) {
+    updatePinnedStatus(ctx.api, chatId, {
+      sessionName: newSession.name,
+      isPlanMode: false,
+      model: session.modelDisplayName,
+      branch,
+    }).catch(() => {});
+  }
 }
 
 /**
@@ -369,15 +383,23 @@ export async function handleList(ctx: Context): Promise<void> {
     return;
   }
 
+  // Resolve branches for all sessions
+  const branches = await Promise.all(sessions.map((s) => getGitBranch(s.dir)));
+
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-  for (const s of sessions) {
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i]!;
     const isActive = active?.name === s.name;
     const marker = isActive ? "✅ " : "• ";
     const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     const ago = formatTimeAgo(s.lastActivity);
+    const branch = branches[i];
 
-    lines.push(`${marker}<code>${s.name}</code>`, `   ${dir}`, `   ${ago}`);
+    const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`);
   }
 
   // Create inline buttons for all sessions (mark active with ✓)
@@ -423,6 +445,21 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
         parse_mode: "HTML",
       });
+
+      // Update pinned status
+      const chatId = ctx.chat?.id;
+      if (chatId) {
+        getGitBranch(active.info.dir)
+          .then((branch) =>
+            updatePinnedStatus(ctx.api, chatId, {
+              sessionName: active.name,
+              isPlanMode: session.isPlanMode,
+              model: session.modelDisplayName,
+              branch,
+            }),
+          )
+          .catch(() => {});
+      }
     }
   } else {
     await ctx.reply(`❌ "${name}" not found. Use /list.`);
@@ -565,10 +602,12 @@ export async function handlePin(ctx: Context): Promise<void> {
   if (!chatId) return;
 
   const active = getActiveSession();
+  const branch = await getGitBranch(session.workingDir);
   const status = {
     sessionName: active?.name || session.sessionName || null,
     isPlanMode: session.isPlanMode,
     model: session.modelDisplayName,
+    branch,
   };
 
   await updatePinnedStatus(ctx.api, chatId, status);

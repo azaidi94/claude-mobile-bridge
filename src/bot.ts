@@ -13,6 +13,7 @@ import {
   getChatIds,
   getActiveSession,
   updatePinnedStatus,
+  getGitBranch,
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
@@ -78,11 +79,16 @@ export function createBot(options: BotOptions): Bot {
       // Create pinned status for new chats
       if (isNew) {
         const active = getActiveSession();
-        updatePinnedStatus(bot.api, ctx.chat.id, {
-          sessionName: active?.name || null,
-          isPlanMode: session.isPlanMode,
-          model: session.modelDisplayName,
-        }).catch(() => {});
+        getGitBranch(session.workingDir)
+          .then((branch) =>
+            updatePinnedStatus(bot.api, ctx.chat!.id, {
+              sessionName: active?.name || null,
+              isPlanMode: session.isPlanMode,
+              model: session.modelDisplayName,
+              branch,
+            }),
+          )
+          .catch(() => {});
       }
     }
     await next();

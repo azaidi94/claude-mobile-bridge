@@ -33,5 +33,6 @@ export {
   formatStatusMessage,
   updatePinnedStatus,
   removePinnedStatus,
+  getGitBranch,
   type StatusInfo,
 } from "./status-message";

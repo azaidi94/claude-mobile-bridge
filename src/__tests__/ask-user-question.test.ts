@@ -50,6 +50,7 @@ mock.module("../sessions", () => ({
   forceRefresh: mock(() => Promise.resolve()),
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
+  getGitBranch: mock(() => Promise.resolve("main")),
 }));
 
 // Mock session singleton

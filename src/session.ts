@@ -123,8 +123,8 @@ export type ModelId = "claude-opus-4-6" | "opus" | "sonnet" | "haiku";
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-opus-4-6": "Opus 4.6",
-  opus: "Opus 4.5",
-  sonnet: "Sonnet 4.5",
+  opus: "Opus 4.6",
+  sonnet: "Sonnet 4.6",
   haiku: "Haiku 4.5",
 };
 
@@ -685,7 +685,9 @@ class ClaudeSession {
 
     await statusCallback("done", "");
 
-    return stripFileDirectives(responseParts.join("")) || "No response from Claude.";
+    return (
+      stripFileDirectives(responseParts.join("")) || "No response from Claude."
+    );
   }
 
   /**

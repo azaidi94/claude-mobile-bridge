@@ -21,6 +21,7 @@ import {
   updatePinnedStatus,
   createNotificationHandler,
   getActiveSession,
+  getGitBranch,
 } from "./sessions";
 import { createBot } from "./bot";
 import { session } from "./session";
@@ -43,14 +44,19 @@ await loadPinnedMessageIds();
 // Wire up mode change callback to update pinned status
 session.onModeChange = (isPlanMode) => {
   const active = getActiveSession();
-  const status = {
-    sessionName: active?.name || null,
-    isPlanMode,
-    model: session.modelDisplayName,
-  };
-  for (const chatId of getChatIds()) {
-    updatePinnedStatus(bot.api, chatId, status).catch(() => {});
-  }
+  getGitBranch(session.workingDir)
+    .then((branch) => {
+      const status = {
+        sessionName: active?.name || null,
+        isPlanMode,
+        model: session.modelDisplayName,
+        branch,
+      };
+      for (const chatId of getChatIds()) {
+        updatePinnedStatus(bot.api, chatId, status).catch(() => {});
+      }
+    })
+    .catch(() => {});
 };
 
 const notifyHandler = createNotificationHandler(bot.api);

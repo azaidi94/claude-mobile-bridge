@@ -11,6 +11,24 @@ import { join } from "path";
 import type { Api } from "grammy";
 import { info, warn, debug } from "../logger";
 
+/**
+ * Get current git branch for a directory.
+ */
+export async function getGitBranch(cwd: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const text = await new Response(proc.stdout).text();
+    const branch = text.trim();
+    return branch || null;
+  } catch {
+    return null;
+  }
+}
+
 const STATUS_FILE = join(tmpdir(), "claude-telegram-pinned-messages.json");
 
 // Map of chatId -> pinnedMessageId
@@ -70,6 +88,7 @@ export interface StatusInfo {
   sessionName: string | null;
   isPlanMode: boolean;
   model: string;
+  branch?: string | null;
 }
 
 /**
@@ -78,7 +97,9 @@ export interface StatusInfo {
 export function formatStatusMessage(status: StatusInfo): string {
   const name = status.sessionName || "no session";
   const mode = status.isPlanMode ? "📋 Plan" : "⚡ Normal";
-  return `✅ ${name} | ${mode} | ${status.model}`;
+  const parts = [`✅ ${name}`, mode, status.model];
+  if (status.branch) parts.push(`🌿 ${status.branch}`);
+  return parts.join(" | ");
 }
 
 /**
