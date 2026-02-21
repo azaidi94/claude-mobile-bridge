@@ -24,6 +24,7 @@ import {
 import { getActiveSession, getSession, setActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
 import { isWatching, stopWatching } from "./watch";
+import { getActiveQueue } from "../queue";
 import { debug, info, truncate } from "../logger";
 
 /**
@@ -203,6 +204,12 @@ export async function handleText(ctx: Context): Promise<void> {
   // 2. Check for interrupt prefix
   message = await checkInterrupt(message);
   if (!message.trim()) {
+    return;
+  }
+
+  // 2.5. Block regular messages while a queue is running
+  if (getActiveQueue()) {
+    await ctx.reply("⏳ Queue is running. Use /stop to cancel or ! to interrupt.");
     return;
   }
 
