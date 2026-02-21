@@ -32,6 +32,7 @@ import {
   handleRefresh,
   handlePlan,
   handlePin,
+  handleSkip,
   handleQueue,
   handleWatch,
   handleUnwatch,
@@ -112,6 +113,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("refresh", handleRefresh);
   bot.command("plan", handlePlan);
   bot.command("queue", handleQueue);
+  bot.command("skip", handleSkip);
   bot.command("watch", handleWatch);
   bot.command("unwatch", handleUnwatch);
   bot.command("pin", handlePin);

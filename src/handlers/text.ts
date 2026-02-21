@@ -24,7 +24,7 @@ import {
 import { getActiveSession, getSession, setActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
 import { isWatching, stopWatching } from "./watch";
-import { getActiveQueue } from "../queue";
+import { getActiveQueue, parseTasks } from "../queue";
 import { debug, info, truncate } from "../logger";
 
 /**
@@ -210,10 +210,22 @@ export async function handleText(ctx: Context): Promise<void> {
   // 2.5. Append to queue if one is running
   const activeQueue = getActiveQueue();
   if (activeQueue) {
-    const idx = activeQueue.addTask(message);
-    await ctx.reply(
-      `📋 Added to queue as task ${idx + 1}: ${message.length > 60 ? message.slice(0, 60) + "..." : message}`,
-    );
+    // Parse multi-line messages into separate tasks
+    const tasks = message.includes("\n") ? parseTasks(message) : [message];
+    for (const task of tasks) {
+      activeQueue.addTask(task);
+    }
+    if (tasks.length === 1) {
+      const desc =
+        tasks[0]!.length > 60 ? tasks[0]!.slice(0, 60) + "..." : tasks[0]!;
+      await ctx.reply(
+        `📋 Added to queue as task ${activeQueue.tasks.length}: ${desc}`,
+      );
+    } else {
+      await ctx.reply(
+        `📋 Added ${tasks.length} task(s) to queue (now ${activeQueue.tasks.length} total).`,
+      );
+    }
     return;
   }
 

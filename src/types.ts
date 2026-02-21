@@ -122,7 +122,6 @@ export interface QueueTask {
   index: number;
   description: string;
   status: QueueTaskStatus;
-  response?: string;
   error?: string;
   startedAt?: number;
   completedAt?: number;

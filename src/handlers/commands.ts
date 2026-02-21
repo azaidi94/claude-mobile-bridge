@@ -76,6 +76,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `<b>Control:</b>\n` +
       `/plan &lt;msg&gt; - Start plan mode\n` +
       `/queue - Queue tasks for batch execution\n` +
+      `/skip - Skip current queue task\n` +
       `/stop - Interrupt current query\n` +
       `/kill - Terminate session\n` +
       `/retry - Retry last message\n` +
@@ -644,6 +645,29 @@ export async function handlePin(ctx: Context): Promise<void> {
 }
 
 /**
+ * /skip - Skip the current queue task, continue with the rest.
+ */
+export async function handleSkip(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const queue = getActiveQueue();
+  if (!queue) {
+    await ctx.reply("⏸️ No queue running.");
+    return;
+  }
+
+  queue.skipCurrent();
+  const current = queue.tasks[queue.currentTaskIndex];
+  const desc = current ? current.description.slice(0, 60) : "current task";
+  await ctx.reply(`⏭️ Skipping: ${desc}`);
+}
+
+/**
  * /queue - Queue multiple tasks for sequential execution.
  *
  * Usage:
@@ -693,9 +717,19 @@ export async function handleQueue(ctx: Context): Promise<void> {
     return;
   }
 
-  // Check if a queue is already running
+  // Append to running queue
   if (queue) {
-    await ctx.reply("⏳ A queue is already running. Use /stop to cancel it.");
+    const newTasks = parseTasks(body);
+    if (newTasks.length === 0) {
+      await ctx.reply("❌ No tasks found. Send a numbered or bulleted list.");
+      return;
+    }
+    for (const desc of newTasks) {
+      queue.addTask(desc);
+    }
+    await ctx.reply(
+      `📋 Added ${newTasks.length} task(s) to queue (now ${queue.tasks.length} total).`,
+    );
     return;
   }
 

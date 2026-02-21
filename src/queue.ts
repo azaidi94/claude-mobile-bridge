@@ -13,6 +13,7 @@ import { StreamingState, createStatusCallback } from "./handlers/streaming";
 import { startTypingIndicator } from "./utils";
 import { escapeHtml } from "./formatting";
 import { getActiveSession } from "./sessions";
+import { auditLog } from "./utils";
 import { info, debug, warn } from "./logger";
 
 // Global active queue (only one queue can run at a time)
@@ -65,6 +66,8 @@ export class TaskQueue {
   private userId: number;
   private username: string;
   private progressMessageId: number | null = null;
+  private lastProgressUpdate: number = 0;
+  private static readonly PROGRESS_THROTTLE_MS = 3000;
 
   constructor(
     descriptions: string[],
@@ -262,7 +265,6 @@ export class TaskQueue {
           );
 
           task.status = "completed";
-          task.response = response.slice(0, 500);
           task.completedAt = Date.now();
 
           debug(`queue task ${i + 1}: completed`);
@@ -301,6 +303,12 @@ export class TaskQueue {
             // On crash, try to recover session for remaining tasks
             if (errorStr.includes("exited with code")) {
               await session.kill();
+              // Re-sync session from registry so subsequent tasks
+              // use the correct working directory and session name
+              const active = getActiveSession();
+              if (active) {
+                session.loadFromRegistry(active.info);
+              }
               await ctx.reply(
                 `⚠️ Claude crashed on task ${i + 1}, recovering...`,
               );
@@ -311,14 +319,22 @@ export class TaskQueue {
           typing.stop();
         }
 
-        // Update progress after each task
-        await this.updateProgress(ctx);
+        // Force update progress after each task completes
+        await this.updateProgress(ctx, true);
       }
 
       // Queue finished
       this.completedAt = Date.now();
       info(
         `queue: done (${this.completedCount}/${this.tasks.length} completed)`,
+      );
+
+      await auditLog(
+        this.userId,
+        this.username,
+        "QUEUE_DONE",
+        `${this.completedCount}/${this.tasks.length} completed, ${this.failedCount} failed`,
+        this.cancelled ? "cancelled" : "finished",
       );
 
       // Send summary
@@ -329,10 +345,18 @@ export class TaskQueue {
   }
 
   /**
-   * Update the progress message in-place.
+   * Update the progress message in-place, throttled to avoid Telegram rate limits.
    */
-  private async updateProgress(ctx: Context): Promise<void> {
+  private async updateProgress(ctx: Context, force = false): Promise<void> {
     if (!this.progressMessageId) return;
+
+    const now = Date.now();
+    if (
+      !force &&
+      now - this.lastProgressUpdate < TaskQueue.PROGRESS_THROTTLE_MS
+    ) {
+      return;
+    }
 
     try {
       await ctx.api.editMessageText(
@@ -341,6 +365,7 @@ export class TaskQueue {
         this.formatProgress(),
         { parse_mode: "HTML" },
       );
+      this.lastProgressUpdate = now;
     } catch {
       // Progress message may have been deleted or is unchanged
     }
