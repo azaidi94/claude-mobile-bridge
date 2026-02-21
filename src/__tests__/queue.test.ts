@@ -465,6 +465,45 @@ describe("queue: TaskQueue", () => {
     queue.cancelled = true;
     expect(queue.isRunning).toBe(false);
   });
+
+  test("addTask appends a new pending task", async () => {
+    const { TaskQueue } = await import("../queue");
+
+    const queue = new TaskQueue(["Task 1"], 789, 123456, "testuser");
+    expect(queue.tasks).toHaveLength(1);
+
+    const idx = queue.addTask("Task 2");
+
+    expect(idx).toBe(1);
+    expect(queue.tasks).toHaveLength(2);
+    expect(queue.tasks[1]!.description).toBe("Task 2");
+    expect(queue.tasks[1]!.status).toBe("pending");
+    expect(queue.tasks[1]!.index).toBe(1);
+  });
+
+  test("addTask works on a running queue", async () => {
+    const { TaskQueue } = await import("../queue");
+
+    const queue = new TaskQueue(
+      ["Task 1", "Task 2"],
+      789,
+      123456,
+      "testuser",
+    );
+
+    queue.tasks[0]!.status = "completed";
+    queue.currentTaskIndex = 1;
+    queue.tasks[1]!.status = "running";
+
+    queue.addTask("Task 3");
+    queue.addTask("Task 4");
+
+    expect(queue.tasks).toHaveLength(4);
+    expect(queue.tasks[2]!.status).toBe("pending");
+    expect(queue.tasks[3]!.status).toBe("pending");
+    // isRunning should still be true since currentTaskIndex < tasks.length
+    expect(queue.isRunning).toBe(true);
+  });
 });
 
 // ============== /queue Command Tests ==============

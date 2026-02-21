@@ -207,9 +207,13 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2.5. Block regular messages while a queue is running
-  if (getActiveQueue()) {
-    await ctx.reply("⏳ Queue is running. Use /stop to cancel or ! to interrupt.");
+  // 2.5. Append to queue if one is running
+  const activeQueue = getActiveQueue();
+  if (activeQueue) {
+    const idx = activeQueue.addTask(message);
+    await ctx.reply(
+      `📋 Added to queue as task ${idx + 1}: ${message.length > 60 ? message.slice(0, 60) + "..." : message}`,
+    );
     return;
   }
 

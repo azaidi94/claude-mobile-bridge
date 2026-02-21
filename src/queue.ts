@@ -126,6 +126,21 @@ export class TaskQueue {
   }
 
   /**
+   * Append a new task to the end of the queue.
+   * The process() loop re-evaluates tasks.length each iteration,
+   * so dynamically added tasks are picked up automatically.
+   */
+  addTask(description: string): number {
+    const task: QueueTask = {
+      index: this.tasks.length,
+      description,
+      status: "pending",
+    };
+    this.tasks.push(task);
+    return task.index;
+  }
+
+  /**
    * Format current progress as HTML.
    */
   formatProgress(): string {
