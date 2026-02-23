@@ -10,6 +10,11 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 - **Multi-session support** - Switch between Claude Code projects on the fly
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Streaming responses** with live updates
+- **Live handoff** - Watch desktop Claude sessions in real-time on your phone, then take over with a message
+- **Task queue** - Queue multiple tasks for sequential background execution with `/queue`
+- **File download** - Claude can send files from sessions directly to your phone via Telegram
+- **Conversation history** - See recent conversation context when resuming a session
+- **Git branch display** - Current branch shown in status and session list
 - **Plan mode** - Use `/plan` to have Claude propose a plan before executing
 - **Voice messages** (transcribed via OpenAI Whisper)
 - **Photos & documents** (PDFs, images, text files)
@@ -22,6 +27,8 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 **Session Commands:** `/list`, `/switch`, `/new`
 **Control Commands:** `/start`, `/help`, `/plan`, `/stop`, `/status`, `/retry`, `/restart`
+**Live Handoff:** `/watch`, `/unwatch`
+**Task Queue:** `/queue`, `/skip`
 
 ## Quick Start
 
@@ -103,19 +110,29 @@ claude-mobile-bridge/
 │   ├── bot.ts             # Bot factory and middleware
 │   ├── config.ts          # Environment configuration
 │   ├── session.ts         # Claude Code session wrapper
+│   ├── queue.ts           # Task queue for batch execution
 │   ├── formatting.ts      # Markdown→HTML conversion
 │   ├── security.ts        # Auth and safety checks
+│   ├── logger.ts          # Logging utilities
+│   ├── utils.ts           # Shared utilities
+│   ├── types.ts           # TypeScript types
 │   ├── handlers/
 │   │   ├── commands.ts    # /start, /list, /switch, etc.
 │   │   ├── text.ts        # Text message handler
 │   │   ├── voice.ts       # Voice message handler
 │   │   ├── photo.ts       # Photo handler
 │   │   ├── document.ts    # Document handler
-│   │   ├── streaming.ts   # Response streaming
-│   │   └── callback.ts    # Button callback handler
+│   │   ├── streaming.ts   # Response streaming + file download
+│   │   ├── callback.ts    # Button callback handler
+│   │   ├── watch.ts       # Live handoff watch handler
+│   │   └── media-group.ts # Media group handler
 │   ├── sessions/
 │   │   ├── index.ts       # SessionManager
 │   │   ├── watcher.ts     # Auto-discovery watcher
+│   │   ├── tailer.ts      # JSONL session log tailer
+│   │   ├── history.ts     # Conversation history reader
+│   │   ├── status-message.ts # Pinned status message
+│   │   ├── notifications.ts  # Session notifications
 │   │   └── types.ts       # Session types
 │   └── __tests__/         # Unit tests
 ├── mcp-config.ts          # MCP server configuration
@@ -163,16 +180,24 @@ bun test --watch
 
 ```
 src/__tests__/
-├── smoke.test.ts           # Bot lifecycle smoke tests
-├── session-manager.test.ts # Session discovery and tracking
-├── message-router.test.ts  # Message routing logic
-├── commands.test.ts        # Telegram command handlers
-├── streaming.test.ts       # Response streaming
-├── plan-mode.test.ts       # Plan mode functionality
-└── setup.test.ts           # Test setup utilities
+├── smoke.test.ts              # Bot lifecycle smoke tests
+├── session-manager.test.ts    # Session discovery and tracking
+├── message-router.test.ts     # Message routing logic
+├── commands.test.ts           # Telegram command handlers
+├── streaming.test.ts          # Response streaming
+├── plan-mode.test.ts          # Plan mode functionality
+├── file-download.test.ts      # File send directive handling
+├── watch.test.ts              # Live desktop handoff
+├── queue.test.ts              # Task queue execution
+├── history.test.ts            # Conversation history on resume
+├── status-message.test.ts     # Git branch and status display
+├── ask-user-question.test.ts  # Interactive question prompts
+├── tailer.test.ts             # Session JSONL log tailing
+├── web-tools-hook.test.ts     # Web tools integration
+└── setup.test.ts              # Test setup utilities
 
 src/__mocks__/
-└── grammy.ts               # Grammy (Telegram) mocks
+└── grammy.ts                  # Grammy (Telegram) mocks
 ```
 
 ### Mocking Approach
@@ -291,6 +316,10 @@ status - Session status
 stop - Stop current query
 retry - Retry last message
 restart - Restart bot
+watch - Watch desktop session live
+unwatch - Stop watching session
+queue - Queue tasks for batch execution
+skip - Skip current queue task
 ```
 
 ## Troubleshooting
