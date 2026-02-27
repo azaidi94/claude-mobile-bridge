@@ -81,6 +81,9 @@ mock.module("../sessions", () => ({
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
   getGitBranch: mock(() => Promise.resolve("main")),
+  getSession: mock(() => null),
+  getRecentHistory: mock(() => Promise.resolve([])),
+  formatHistoryMessage: mock(() => ""),
 }));
 
 // Mock session singleton with plan mode state

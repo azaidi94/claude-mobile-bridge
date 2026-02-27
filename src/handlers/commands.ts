@@ -5,11 +5,13 @@
  * /list, /switch
  */
 
+import { readdir, stat } from "fs/promises";
+import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { formatTimeAgo } from "../formatting";
-import { isAuthorized, rateLimiter } from "../security";
+import { formatTimeAgo, escapeHtml } from "../formatting";
+import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
   getActiveSession,
@@ -83,6 +85,10 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/status - Show session details\n` +
       `/model - Switch model\n` +
       `/restart - Restart bot\n\n` +
+      `<b>Files:</b>\n` +
+      `/pwd - Show working directory\n` +
+      `/cd &lt;path&gt; - Change directory\n` +
+      `/ls [path] - List directory\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt queue\n` +
       `• Say "think" for extended reasoning\n` +
@@ -780,4 +786,162 @@ export async function handleQueue(ctx: Context): Promise<void> {
       // Can't send message, ignore
     }
   });
+}
+
+// ============== Filesystem Navigation Commands ==============
+
+/**
+ * /pwd - Show current working directory.
+ */
+export async function handlePwd(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  const dir = session.workingDir || WORKING_DIR;
+  await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
+    parse_mode: "HTML",
+  });
+}
+
+/**
+ * /cd <path> - Change working directory.
+ *
+ * Validates the path exists, is a directory, and is within allowed paths.
+ */
+export async function handleCd(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  const rawPath = ((ctx.match as string | undefined) ?? "").trim();
+
+  if (!rawPath) {
+    await ctx.reply("Usage: /cd &lt;path&gt;", { parse_mode: "HTML" });
+    return;
+  }
+
+  // resolve() normalizes ../segments and handles both absolute and relative paths
+  const targetPath = resolve(session.workingDir || WORKING_DIR, rawPath);
+
+  // Validate path is allowed
+  if (!isPathAllowed(targetPath)) {
+    await ctx.reply("❌ Path not in allowed directories.");
+    return;
+  }
+
+  // Validate path exists and is a directory
+  try {
+    const stats = await stat(targetPath);
+    if (!stats.isDirectory()) {
+      await ctx.reply("❌ Not a directory.");
+      return;
+    }
+  } catch {
+    await ctx.reply("❌ Path does not exist.");
+    return;
+  }
+
+  session.setWorkingDir(targetPath);
+  await ctx.reply(`📂 Now in: <code>${escapeHtml(targetPath)}</code>`, {
+    parse_mode: "HTML",
+  });
+}
+
+/**
+ * /ls [path] - List directory contents.
+ *
+ * Defaults to current working directory. Shows folders and files with indicators.
+ */
+export async function handleLs(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  const rawPath = ((ctx.match as string | undefined) ?? "").trim();
+
+  // resolve() normalizes ../segments and handles both absolute and relative paths
+  const targetPath = rawPath
+    ? resolve(session.workingDir || WORKING_DIR, rawPath)
+    : session.workingDir || WORKING_DIR;
+
+  // Validate path is allowed
+  if (!isPathAllowed(targetPath)) {
+    await ctx.reply("❌ Path not in allowed directories.");
+    return;
+  }
+
+  try {
+    const entries = await readdir(targetPath, { withFileTypes: true });
+
+    if (entries.length === 0) {
+      await ctx.reply(
+        `📁 <code>${escapeHtml(targetPath)}</code>\n\n<i>(empty)</i>`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    // Sort: directories first, then symlinks, then files, all alphabetical
+    const sorted = entries.sort((a, b) => {
+      const aIsDir = a.isDirectory();
+      const bIsDir = b.isDirectory();
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const lines: string[] = [
+      `📁 <code>${escapeHtml(targetPath)}</code>\n`,
+    ];
+
+    for (const entry of sorted.slice(0, 50)) {
+      let icon: string;
+      let suffix = "";
+      if (entry.isDirectory()) {
+        icon = "📂";
+        suffix = "/";
+      } else if (entry.isSymbolicLink()) {
+        icon = "🔗";
+      } else {
+        icon = "📄";
+      }
+      lines.push(`${icon} <code>${escapeHtml(entry.name)}${suffix}</code>`);
+    }
+
+    if (entries.length > 50) {
+      lines.push(`\n<i>... and ${entries.length - 50} more</i>`);
+    }
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  } catch {
+    await ctx.reply("❌ Cannot read directory.");
+  }
 }

@@ -19,6 +19,9 @@ export {
   handlePin,
   handleSkip,
   handleQueue,
+  handlePwd,
+  handleCd,
+  handleLs,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";
