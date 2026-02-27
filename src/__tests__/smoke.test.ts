@@ -44,6 +44,42 @@ mock.module("@grammyjs/runner", () => ({
   })),
 }));
 
+// Mock sessions to avoid import errors
+mock.module("../sessions", () => ({
+  registerChatId: mock(() => {}),
+  getChatIds: mock(() => new Set()),
+  getActiveSession: mock(() => null),
+  updatePinnedStatus: mock(() => Promise.resolve()),
+  getGitBranch: mock(() => Promise.resolve("main")),
+  getSessions: mock(() => []),
+  setActiveSession: mock(() => false),
+  addTelegramSession: mock(() => ({ name: "test", dir: "/tmp" })),
+  forceRefresh: mock(() => Promise.resolve()),
+  removeSession: mock(() => true),
+  getSession: mock(() => null),
+  getRecentHistory: mock(() => Promise.resolve([])),
+  formatHistoryMessage: mock(() => ""),
+}));
+
+// Mock security
+mock.module("../security", () => ({
+  isAuthorized: mock(() => true),
+}));
+
+// Mock session singleton
+mock.module("../session", () => ({
+  session: {
+    workingDir: "/tmp",
+    isPlanMode: false,
+    modelDisplayName: "Opus 4.6",
+  },
+}));
+
+// Mock config
+mock.module("../config", () => ({
+  ALLOWED_USERS: [123456],
+}));
+
 // Mock handlers to avoid complex dependencies
 mock.module("../handlers", () => ({
   handleStart: mock(() => {}),
@@ -60,6 +96,13 @@ mock.module("../handlers", () => ({
   handleRefresh: mock(() => {}),
   handlePlan: mock(() => {}),
   handlePin: mock(() => {}),
+  handleSkip: mock(() => {}),
+  handleQueue: mock(() => {}),
+  handleWatch: mock(() => {}),
+  handleUnwatch: mock(() => {}),
+  handlePwd: mock(() => {}),
+  handleCd: mock(() => {}),
+  handleLs: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),

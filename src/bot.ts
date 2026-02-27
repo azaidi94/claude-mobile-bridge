@@ -36,6 +36,9 @@ import {
   handleQueue,
   handleWatch,
   handleUnwatch,
+  handlePwd,
+  handleCd,
+  handleLs,
   handleText,
   handleVoice,
   handlePhoto,
@@ -117,6 +120,9 @@ export function createBot(options: BotOptions): Bot {
   bot.command("watch", handleWatch);
   bot.command("unwatch", handleUnwatch);
   bot.command("pin", handlePin);
+  bot.command("pwd", handlePwd);
+  bot.command("cd", handleCd);
+  bot.command("ls", handleLs);
 
   // Message handlers
   bot.on("message:text", handleText);

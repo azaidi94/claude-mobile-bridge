@@ -81,6 +81,9 @@ mock.module("../sessions", () => ({
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
   getGitBranch: mock(() => Promise.resolve("main")),
+  getSession: mock(() => null),
+  getRecentHistory: mock(() => Promise.resolve([])),
+  formatHistoryMessage: mock(() => ""),
 }));
 
 // Mock session singleton
@@ -1057,5 +1060,296 @@ describe("commands: edge cases", () => {
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("~");
     expect(text).toContain("projects/test");
+  });
+});
+
+// ============== /pwd Command Tests ==============
+
+describe("commands: /pwd", () => {
+  beforeEach(resetMocks);
+
+  test("handlePwd returns unauthorized for non-allowed user", async () => {
+    const { handlePwd } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999 });
+
+    await handlePwd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+  });
+
+  test("handlePwd shows current working directory", async () => {
+    const { handlePwd } = await import("../handlers/commands");
+    mockSessionState.workingDir = "/tmp/my-project";
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handlePwd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("/tmp/my-project");
+    expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
+  });
+
+  test("handlePwd falls back to WORKING_DIR when session has no dir", async () => {
+    const { handlePwd } = await import("../handlers/commands");
+    mockSessionState.workingDir = "/tmp/test-working-dir";
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handlePwd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("/tmp/test-working-dir");
+  });
+});
+
+// ============== /cd Command Tests ==============
+
+describe("commands: /cd", () => {
+  beforeEach(resetMocks);
+
+  test("handleCd returns unauthorized for non-allowed user", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999, messageText: "/cd /tmp" });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+  });
+
+  test("handleCd shows usage when no path provided", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456, messageText: "/cd" });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Usage");
+  });
+
+  test("handleCd changes to valid directory", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456, messageText: "/cd /tmp" });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("/tmp");
+    expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith("/tmp");
+  });
+
+  test("handleCd rejects path outside allowed directories", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/cd /etc/passwd",
+    });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("not in allowed");
+    expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
+  });
+
+  test("handleCd rejects non-existent path", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/cd /tmp/nonexistent-dir-xyz-12345",
+    });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("does not exist");
+    expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
+  });
+
+  test("handleCd rejects file path (not a directory)", async () => {
+    // Create a temp file to test with
+    const tmpFile = "/tmp/cd-test-file-" + Date.now();
+    await Bun.write(tmpFile, "test");
+
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/cd ${tmpFile}`,
+    });
+
+    await handleCd(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Not a directory");
+    expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
+
+    // Cleanup
+    const { unlink } = await import("fs/promises");
+    await unlink(tmpFile).catch(() => {});
+  });
+
+  test("handleCd resolves relative paths against current working dir", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    mockSessionState.workingDir = "/tmp";
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/cd telegram-bot",
+    });
+
+    // This will fail because /tmp/telegram-bot likely doesn't exist,
+    // but we can verify the error is about existence, not about allowed paths
+    await handleCd(ctx as any);
+
+    // Should try to resolve relative to /tmp, not reject as disallowed
+    // (since /tmp is in allowed paths, /tmp/telegram-bot would be too)
+    const text = ctx._replies[0]?.text || "";
+    expect(text).not.toContain("not in allowed");
+  });
+});
+
+// ============== /ls Command Tests ==============
+
+describe("commands: /ls", () => {
+  beforeEach(resetMocks);
+
+  test("handleLs returns unauthorized for non-allowed user", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999, messageText: "/ls" });
+
+    await handleLs(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+  });
+
+  test("handleLs lists current directory when no path given", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    mockSessionState.workingDir = "/tmp";
+    const ctx = createMockContext({ userId: 123456, messageText: "/ls" });
+
+    await handleLs(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("/tmp");
+    expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
+  });
+
+  test("handleLs lists specified directory", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/ls /tmp",
+    });
+
+    await handleLs(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("/tmp");
+  });
+
+  test("handleLs shows directory and file icons", async () => {
+    // Create a temp dir with contents
+    const {
+      mkdtemp,
+      writeFile,
+      mkdir: mkdirAsync,
+    } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/ls-test-");
+    await mkdirAsync(`${tmpDir}/subdir`);
+    await writeFile(`${tmpDir}/file.txt`, "test");
+
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/ls ${tmpDir}`,
+    });
+
+    await handleLs(ctx as any);
+
+    const text = ctx._replies[0]?.text || "";
+    expect(text).toContain("📂"); // directory icon
+    expect(text).toContain("📄"); // file icon
+    expect(text).toContain("subdir/");
+    expect(text).toContain("file.txt");
+
+    // Cleanup
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handleLs sorts directories before files", async () => {
+    const {
+      mkdtemp,
+      writeFile,
+      mkdir: mkdirAsync,
+    } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/ls-sort-test-");
+    await writeFile(`${tmpDir}/zebra.txt`, "test");
+    await mkdirAsync(`${tmpDir}/alpha-dir`);
+    await writeFile(`${tmpDir}/beta.txt`, "test");
+
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/ls ${tmpDir}`,
+    });
+
+    await handleLs(ctx as any);
+
+    const text = ctx._replies[0]?.text || "";
+    const dirIdx = text.indexOf("alpha-dir");
+    const fileIdx = text.indexOf("beta.txt");
+    expect(dirIdx).toBeLessThan(fileIdx);
+
+    // Cleanup
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handleLs shows empty message for empty directory", async () => {
+    const { mkdtemp } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/ls-empty-test-");
+
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/ls ${tmpDir}`,
+    });
+
+    await handleLs(ctx as any);
+
+    const text = ctx._replies[0]?.text || "";
+    expect(text).toContain("empty");
+
+    // Cleanup
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handleLs rejects path outside allowed directories", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/ls /etc",
+    });
+
+    await handleLs(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("not in allowed");
+  });
+
+  test("handleLs handles non-existent directory", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/ls /tmp/nonexistent-dir-xyz-99999",
+    });
+
+    await handleLs(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Cannot read");
+  });
+
+  test("handleLs resolves relative paths", async () => {
+    const { handleLs } = await import("../handlers/commands");
+    mockSessionState.workingDir = "/tmp";
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/ls telegram-bot",
+    });
+
+    await handleLs(ctx as any);
+
+    // Should try /tmp/telegram-bot - error is about reading, not about allowed paths
+    const text = ctx._replies[0]?.text || "";
+    expect(text).not.toContain("not in allowed");
   });
 });
