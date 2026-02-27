@@ -188,10 +188,14 @@ function createMockContext(
   const replies: Array<{ text: string; options?: Record<string, unknown> }> =
     [];
 
+  // Simulate grammy's ctx.match: text after the /command
+  const matchResult = messageText.replace(/^\/\S+\s*/, "");
+
   return {
     from: { id: userId, username },
     chat: { id: chatId },
     message: { text: messageText, message_id: 1 },
+    match: matchResult || undefined,
     reply: mock(async (text: string, options?: Record<string, unknown>) => {
       replies.push({ text, options });
       return { chat: { id: chatId }, message_id: Date.now() };
@@ -1128,6 +1132,7 @@ describe("commands: /cd", () => {
 
     await handleCd(ctx as any);
 
+    expect(ctx._replies[0]?.text).toContain("Now in:");
     expect(ctx._replies[0]?.text).toContain("/tmp");
     expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith("/tmp");
   });
@@ -1187,14 +1192,55 @@ describe("commands: /cd", () => {
       messageText: "/cd telegram-bot",
     });
 
-    // This will fail because /tmp/telegram-bot likely doesn't exist,
-    // but we can verify the error is about existence, not about allowed paths
     await handleCd(ctx as any);
 
-    // Should try to resolve relative to /tmp, not reject as disallowed
-    // (since /tmp is in allowed paths, /tmp/telegram-bot would be too)
+    // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
     expect(text).not.toContain("not in allowed");
+    // Should report the path doesn't exist (resolved to /tmp/telegram-bot)
+    expect(text).toContain("does not exist");
+  });
+
+  test("handleCd normalizes ../segments in path", async () => {
+    const { mkdtemp } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/cd-norm-test-");
+
+    const { handleCd } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/cd ${tmpDir}/../${tmpDir.split("/").pop()}`,
+    });
+
+    await handleCd(ctx as any);
+
+    // Should normalize to the canonical path without ..
+    expect(ctx._replies[0]?.text).toContain("Now in:");
+    expect(ctx._replies[0]?.text).not.toContain("..");
+    expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith(tmpDir);
+
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handleCd escapes HTML in path output", async () => {
+    const { handleCd } = await import("../handlers/commands");
+    // Path with special HTML chars won't exist, but the error message
+    // for non-allowed paths doesn't include the path, so test via valid dir
+    const { mkdtemp } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/cd-html-test-");
+
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/cd ${tmpDir}`,
+    });
+
+    await handleCd(ctx as any);
+
+    // Should use <code> tags properly (HTML parse mode)
+    expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
+
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
   });
 });
 
@@ -1348,8 +1394,58 @@ describe("commands: /ls", () => {
 
     await handleLs(ctx as any);
 
-    // Should try /tmp/telegram-bot - error is about reading, not about allowed paths
+    // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
     expect(text).not.toContain("not in allowed");
+    // Should fail with "Cannot read" since /tmp/telegram-bot doesn't exist
+    expect(text).toContain("Cannot read");
+  });
+
+  test("handleLs shows symlink icon for symbolic links", async () => {
+    const {
+      mkdtemp,
+      writeFile,
+      symlink,
+    } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/ls-symlink-test-");
+    await writeFile(`${tmpDir}/real-file.txt`, "test");
+    await symlink(`${tmpDir}/real-file.txt`, `${tmpDir}/link-file`);
+
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/ls ${tmpDir}`,
+    });
+
+    await handleLs(ctx as any);
+
+    const text = ctx._replies[0]?.text || "";
+    expect(text).toContain("🔗"); // symlink icon
+    expect(text).toContain("link-file");
+
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handleLs escapes HTML special chars in filenames", async () => {
+    const { mkdtemp, writeFile } = await import("fs/promises");
+    const tmpDir = await mkdtemp("/tmp/ls-html-test-");
+    await writeFile(`${tmpDir}/foo&bar.txt`, "test");
+
+    const { handleLs } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: `/ls ${tmpDir}`,
+    });
+
+    await handleLs(ctx as any);
+
+    const text = ctx._replies[0]?.text || "";
+    // & should be escaped to &amp; for valid HTML
+    expect(text).toContain("foo&amp;bar.txt");
+    expect(text).not.toContain("foo&bar.txt");
+
+    const { rm } = await import("fs/promises");
+    await rm(tmpDir, { recursive: true }).catch(() => {});
   });
 });

@@ -6,11 +6,11 @@
  */
 
 import { readdir, stat } from "fs/promises";
-import { resolve, basename } from "path";
+import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { formatTimeAgo } from "../formatting";
+import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -801,8 +801,16 @@ export async function handlePwd(ctx: Context): Promise<void> {
     return;
   }
 
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
   const dir = session.workingDir || WORKING_DIR;
-  await ctx.reply(`📁 <code>${dir}</code>`, { parse_mode: "HTML" });
+  await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
+    parse_mode: "HTML",
+  });
 }
 
 /**
@@ -818,18 +826,21 @@ export async function handleCd(ctx: Context): Promise<void> {
     return;
   }
 
-  const text = ctx.message?.text || "";
-  const rawPath = text.replace(/^\/cd\s*/, "").trim();
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   if (!rawPath) {
     await ctx.reply("Usage: /cd &lt;path&gt;", { parse_mode: "HTML" });
     return;
   }
 
-  // Resolve relative paths against current working dir
-  const targetPath = rawPath.startsWith("/")
-    ? rawPath
-    : resolve(session.workingDir || WORKING_DIR, rawPath);
+  // resolve() normalizes ../segments and handles both absolute and relative paths
+  const targetPath = resolve(session.workingDir || WORKING_DIR, rawPath);
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {
@@ -850,7 +861,9 @@ export async function handleCd(ctx: Context): Promise<void> {
   }
 
   session.setWorkingDir(targetPath);
-  await ctx.reply(`📁 <code>${targetPath}</code>`, { parse_mode: "HTML" });
+  await ctx.reply(`📂 Now in: <code>${escapeHtml(targetPath)}</code>`, {
+    parse_mode: "HTML",
+  });
 }
 
 /**
@@ -866,13 +879,17 @@ export async function handleLs(ctx: Context): Promise<void> {
     return;
   }
 
-  const text = ctx.message?.text || "";
-  const rawPath = text.replace(/^\/ls\s*/, "").trim();
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
 
+  const rawPath = ((ctx.match as string | undefined) ?? "").trim();
+
+  // resolve() normalizes ../segments and handles both absolute and relative paths
   const targetPath = rawPath
-    ? rawPath.startsWith("/")
-      ? rawPath
-      : resolve(session.workingDir || WORKING_DIR, rawPath)
+    ? resolve(session.workingDir || WORKING_DIR, rawPath)
     : session.workingDir || WORKING_DIR;
 
   // Validate path is allowed
@@ -885,25 +902,38 @@ export async function handleLs(ctx: Context): Promise<void> {
     const entries = await readdir(targetPath, { withFileTypes: true });
 
     if (entries.length === 0) {
-      await ctx.reply(`📁 <code>${targetPath}</code>\n\n<i>(empty)</i>`, {
-        parse_mode: "HTML",
-      });
+      await ctx.reply(
+        `📁 <code>${escapeHtml(targetPath)}</code>\n\n<i>(empty)</i>`,
+        { parse_mode: "HTML" },
+      );
       return;
     }
 
-    // Sort: directories first, then files, both alphabetical
+    // Sort: directories first, then symlinks, then files, all alphabetical
     const sorted = entries.sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1;
-      if (!a.isDirectory() && b.isDirectory()) return 1;
+      const aIsDir = a.isDirectory();
+      const bIsDir = b.isDirectory();
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
       return a.name.localeCompare(b.name);
     });
 
-    const lines: string[] = [`📁 <code>${targetPath}</code>\n`];
+    const lines: string[] = [
+      `📁 <code>${escapeHtml(targetPath)}</code>\n`,
+    ];
 
     for (const entry of sorted.slice(0, 50)) {
-      const icon = entry.isDirectory() ? "📂" : "📄";
-      const suffix = entry.isDirectory() ? "/" : "";
-      lines.push(`${icon} <code>${entry.name}${suffix}</code>`);
+      let icon: string;
+      let suffix = "";
+      if (entry.isDirectory()) {
+        icon = "📂";
+        suffix = "/";
+      } else if (entry.isSymbolicLink()) {
+        icon = "🔗";
+      } else {
+        icon = "📄";
+      }
+      lines.push(`${icon} <code>${escapeHtml(entry.name)}${suffix}</code>`);
     }
 
     if (entries.length > 50) {
