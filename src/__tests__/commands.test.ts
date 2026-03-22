@@ -1189,7 +1189,7 @@ describe("commands: /cd", () => {
     mockSessionState.workingDir = "/tmp";
     const ctx = createMockContext({
       userId: 123456,
-      messageText: "/cd telegram-bot",
+      messageText: "/cd nonexistent-subdir-xyz-98765",
     });
 
     await handleCd(ctx as any);
@@ -1197,7 +1197,7 @@ describe("commands: /cd", () => {
     // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
     expect(text).not.toContain("not in allowed");
-    // Should report the path doesn't exist (resolved to /tmp/telegram-bot)
+    // Should report the path doesn't exist
     expect(text).toContain("does not exist");
   });
 
@@ -1389,7 +1389,7 @@ describe("commands: /ls", () => {
     mockSessionState.workingDir = "/tmp";
     const ctx = createMockContext({
       userId: 123456,
-      messageText: "/ls telegram-bot",
+      messageText: "/ls nonexistent-subdir-xyz-98765",
     });
 
     await handleLs(ctx as any);
@@ -1397,7 +1397,7 @@ describe("commands: /ls", () => {
     // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
     expect(text).not.toContain("not in allowed");
-    // Should fail with "Cannot read" since /tmp/telegram-bot doesn't exist
+    // Should fail with "Cannot read" since the path doesn't exist
     expect(text).toContain("Cannot read");
   });
 

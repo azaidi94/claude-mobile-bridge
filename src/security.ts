@@ -78,30 +78,40 @@ export function isPathAllowed(path: string): boolean {
     const expanded = path.replace(/^~/, process.env.HOME || "");
     const normalized = normalize(expanded);
 
-    // Try to resolve symlinks (may fail if path doesn't exist yet)
-    let resolved: string;
+    // Collect all forms of the target path (handles symlinks like /tmp → /private/tmp)
+    const targetForms = new Set<string>();
+    targetForms.add(resolve(normalized));
     try {
-      resolved = realpathSync(normalized);
+      targetForms.add(realpathSync(normalized));
     } catch {
-      resolved = resolve(normalized);
+      // Path may not exist yet
     }
+
+    // Check if target matches a given base path (any form combination)
+    const matchesBase = (basePath: string): boolean => {
+      const baseForms = new Set<string>();
+      baseForms.add(resolve(basePath));
+      try {
+        baseForms.add(realpathSync(resolve(basePath)));
+      } catch {
+        // Base path may not exist
+      }
+      for (const target of targetForms) {
+        for (const base of baseForms) {
+          if (target === base || target.startsWith(base + "/")) return true;
+        }
+      }
+      return false;
+    };
 
     // Always allow temp paths (for bot's own files)
     for (const tempPath of config.TEMP_PATHS) {
-      if (resolved.startsWith(tempPath)) {
-        return true;
-      }
+      if (matchesBase(tempPath)) return true;
     }
 
     // Check against allowed paths using proper containment
     for (const allowed of config.ALLOWED_PATHS) {
-      const allowedResolved = resolve(allowed);
-      if (
-        resolved === allowedResolved ||
-        resolved.startsWith(allowedResolved + "/")
-      ) {
-        return true;
-      }
+      if (matchesBase(allowed)) return true;
     }
 
     return false;

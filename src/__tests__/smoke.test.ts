@@ -64,6 +64,9 @@ mock.module("../sessions", () => ({
 // Mock security
 mock.module("../security", () => ({
   isAuthorized: mock(() => true),
+  rateLimiter: { check: () => [true] },
+  isPathAllowed: mock(() => true),
+  checkCommandSafety: mock(() => [true, ""]),
 }));
 
 // Mock session singleton
