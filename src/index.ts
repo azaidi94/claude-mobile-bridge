@@ -111,12 +111,38 @@ if (existsSync(RESTART_FILE)) {
   }
 }
 
-// Start bot
-const runner = run(bot);
+// Start bot with auto-restart on unexpected stops (e.g. laptop sleep timeout)
+let stopping = false;
+let runner = run(bot);
+
+function monitorRunner() {
+  runner
+    .task()
+    ?.then(() => {
+      if (!stopping) {
+        warn("runner stopped unexpectedly, restarting in 3s");
+        setTimeout(() => {
+          runner = run(bot);
+          monitorRunner();
+        }, 3000);
+      }
+    })
+    .catch((err) => {
+      if (!stopping) {
+        warn(`runner error: ${err}, restarting in 3s`);
+        setTimeout(() => {
+          runner = run(bot);
+          monitorRunner();
+        }, 3000);
+      }
+    });
+}
+monitorRunner();
 
 // Graceful shutdown
 const stopRunner = () => {
   if (runner.isRunning()) {
+    stopping = true;
     info("stopping bot");
     stopWatcher();
     runner.stop();
