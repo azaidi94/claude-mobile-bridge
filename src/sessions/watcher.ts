@@ -75,8 +75,9 @@ async function getRunningClaudeDirectories(): Promise<Set<string>> {
   const dirs = new Set<string>();
   try {
     // Find claude processes with a TTY (not "??") and get their working directories
+    // comm shows full path on macOS (e.g. /Users/x/.local/bin/claude), so match the basename
     const { stdout } = await execAsync(
-      `ps -eo pid,tty,comm | awk '($3 == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`,
+      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`,
     );
     for (const line of stdout.trim().split("\n")) {
       if (line) dirs.add(line);
