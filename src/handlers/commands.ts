@@ -288,6 +288,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
+  // Resume command (tap to copy)
+  if (session.sessionId) {
+    lines.push(`\n🔗 <code>claude --resume ${session.sessionId}</code>`);
+  }
+
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
 }
 

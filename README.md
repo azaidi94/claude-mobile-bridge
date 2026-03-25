@@ -290,7 +290,7 @@ Sessions appear automatically in `/list` within seconds.
 ## Running as a Service (macOS)
 
 ```bash
-cp launchagent/com.claude-telegram-ts.plist.template ~/Library/LaunchAgents/com.claude-telegram-ts.plist
+cp scripts/launchagent/com.claude-telegram-ts.plist.template ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 # Edit plist with your paths
 launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 ```

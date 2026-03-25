@@ -23,7 +23,7 @@ export const MCP_SERVERS: Record<
   // Uncomment to enable interactive button prompts
   // "ask-user": {
   //   command: "bun",
-  //   args: ["run", `${REPO_ROOT}/ask_user_mcp/server.ts`]
+  //   args: ["run", `${REPO_ROOT}/src/mcp/ask-user/server.ts`]
   // },
   // Example: Typefully - draft and schedule social posts
   // Docs: https://support.typefully.com/en/articles/13128440-typefully-mcp-server
