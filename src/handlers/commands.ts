@@ -33,6 +33,7 @@ import {
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
 import { isRelayAvailable, getRelayDirs } from "../relay";
+import { startWatchingSession } from "./watch";
 
 /**
  * /start - Show welcome message and status.
@@ -488,35 +489,36 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     const active = getActiveSession();
     if (active) {
       session.loadFromRegistry(active.info);
-      const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
-      await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-        parse_mode: "HTML",
-      });
-
-      // Show conversation history for desktop sessions
-      if (active.info.source === "desktop" && active.info.id) {
-        getRecentHistory(active.info.id)
-          .then((turns) => {
-            if (turns.length > 0) {
-              ctx.reply(formatHistoryMessage(turns), { parse_mode: "HTML" });
-            }
-          })
-          .catch(() => {});
-      }
-
-      // Update pinned status
       const chatId = ctx.chat?.id;
-      if (chatId) {
-        getGitBranch(active.info.dir)
-          .then((branch) =>
-            updatePinnedStatus(ctx.api, chatId, {
-              sessionName: active.name,
-              isPlanMode: session.isPlanMode,
-              model: session.modelDisplayName,
-              branch,
-            }),
-          )
-          .catch(() => {});
+      const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
+
+      // Auto-watch desktop sessions
+      if (active.info.source === "desktop" && chatId) {
+        const watching = await startWatchingSession(
+          ctx.api,
+          chatId,
+          active.name,
+        );
+        if (watching) {
+          await ctx.reply(
+            `👁 Watching <b>${escapeHtml(active.name)}</b>\n` +
+              `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+              `Live events will stream here.\n` +
+              `Type a message to take over the session.\n` +
+              `Use /unwatch to stop.`,
+            { parse_mode: "HTML" },
+          );
+        } else {
+          await ctx.reply(
+            `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
+            { parse_mode: "HTML" },
+          );
+        }
+      } else {
+        await ctx.reply(
+          `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
+          { parse_mode: "HTML" },
+        );
       }
     }
   } else {

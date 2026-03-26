@@ -218,23 +218,46 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  const sessionInfo = getSession(targetName)!;
+  const started = await startWatchingSession(ctx.api, chatId, targetName);
+  if (started) {
+    const sessionInfo = getSession(targetName)!;
+    const home = homedir();
+    const dir = sessionInfo.dir.startsWith(home)
+      ? "~" + sessionInfo.dir.slice(home.length)
+      : sessionInfo.dir;
+    await ctx.reply(
+      `👁 Watching <b>${escapeHtml(targetName)}</b>\n` +
+        `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+        `Live events will stream here.\n` +
+        `Type a message to take over the session.\n` +
+        `Use /unwatch to stop.`,
+      { parse_mode: "HTML" },
+    );
+  } else {
+    await ctx.reply("Could not start watching (no session ID or log file).");
+  }
+}
 
-  if (!sessionInfo.id) {
-    await ctx.reply("Session has no ID yet. Wait for it to initialize.");
-    return;
+/**
+ * Start watching a session by name. Returns true on success.
+ * Used by /watch command and auto-watch on /switch.
+ */
+export async function startWatchingSession(
+  botApi: Api,
+  chatId: number,
+  targetName: string,
+): Promise<boolean> {
+  // Stop existing watch if any
+  if (watches.has(chatId)) {
+    stopWatching(chatId, botApi);
   }
 
-  // Find the JSONL file
+  const sessionInfo = getSession(targetName);
+  if (!sessionInfo?.id) return false;
+
   const jsonlPath = await findSessionJsonlPath(sessionInfo.id);
-  if (!jsonlPath) {
-    await ctx.reply("Could not find session log file.");
-    return;
-  }
+  if (!jsonlPath) return false;
 
-  // Create tailer first, then state. The callback captures watchState via
-  // closure and only fires asynchronously, so the reference is safe.
-  const botApi = ctx.api;
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event);
   });
@@ -252,25 +275,10 @@ export async function handleWatch(ctx: Context): Promise<void> {
     segmentDone: true,
   };
   watches.set(chatId, watchState);
-
   await tailer.start();
 
-  const home = homedir();
-  const dir = sessionInfo.dir.startsWith(home)
-    ? "~" + sessionInfo.dir.slice(home.length)
-    : sessionInfo.dir;
-  await ctx.reply(
-    `👁 Watching <b>${escapeHtml(targetName)}</b>\n` +
-      `📁 <code>${escapeHtml(dir)}</code>\n\n` +
-      `Live events will stream here.\n` +
-      `Type a message to take over the session.\n` +
-      `Use /unwatch to stop.`,
-    { parse_mode: "HTML" },
-  );
-
-  // Update pinned status to show watching
   const branch = await getGitBranch(sessionInfo.dir);
-  updatePinnedStatus(ctx.api, chatId, {
+  updatePinnedStatus(botApi, chatId, {
     sessionName: null,
     isPlanMode: false,
     model: session.modelDisplayName,
@@ -279,6 +287,7 @@ export async function handleWatch(ctx: Context): Promise<void> {
   }).catch(() => {});
 
   info(`watch: started ${targetName} for chat ${chatId}`);
+  return true;
 }
 
 /**

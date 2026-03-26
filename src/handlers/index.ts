@@ -35,6 +35,7 @@ export {
   stopWatching,
   notifySessionOffline,
   sendWatchRelay,
+  startWatchingSession,
 } from "./watch";
 export { sendViaRelay } from "./relay-bridge";
 export {

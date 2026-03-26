@@ -26,9 +26,9 @@ import {
   getSessions,
   updatePinnedStatus,
   getGitBranch,
-  getRecentHistory,
-  formatHistoryMessage,
 } from "../sessions";
+import { startWatchingSession } from "./watch";
+import { escapeHtml } from "../formatting";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -179,30 +179,37 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        // Show conversation history for desktop sessions
-        if (active.info.source === "desktop" && active.info.id) {
-          getRecentHistory(active.info.id)
-            .then((turns) => {
-              if (turns.length > 0) {
-                ctx.reply(formatHistoryMessage(turns), {
-                  parse_mode: "HTML",
-                });
-              }
-            })
+        // Auto-watch desktop sessions
+        if (active.info.source === "desktop") {
+          const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
+          const watching = await startWatchingSession(
+            ctx.api,
+            chatId,
+            active.name,
+          );
+          if (watching) {
+            await ctx.reply(
+              `👁 Watching <b>${escapeHtml(active.name)}</b>\n` +
+                `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+                `Live events will stream here.\n` +
+                `Type a message to take over the session.\n` +
+                `Use /unwatch to stop.`,
+              { parse_mode: "HTML" },
+            );
+          }
+        } else {
+          // Update pinned status for non-desktop sessions
+          getGitBranch(active.info.dir)
+            .then((branch) =>
+              updatePinnedStatus(ctx.api, chatId, {
+                sessionName: active.name,
+                isPlanMode: session.isPlanMode,
+                model: session.modelDisplayName,
+                branch,
+              }),
+            )
             .catch(() => {});
         }
-
-        // Update pinned status with new session
-        getGitBranch(active.info.dir)
-          .then((branch) =>
-            updatePinnedStatus(ctx.api, chatId, {
-              sessionName: active.name,
-              isPlanMode: session.isPlanMode,
-              model: session.modelDisplayName,
-              branch,
-            }),
-          )
-          .catch(() => {});
       }
     } else {
       await ctx.answerCallbackQuery({ text: "Session not found" });
