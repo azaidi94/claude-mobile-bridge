@@ -221,6 +221,12 @@ export const RATE_LIMIT_WINDOW = parseInt(
   10,
 );
 
+// ============== Channel Relay ==============
+
+export const RELAY_PORT_FILE_PREFIX = "/tmp/channel-relay-";
+export const RELAY_CONNECT_TIMEOUT_MS = 3_000;
+export const RELAY_RESPONSE_TIMEOUT_MS = 300_000; // 5 min — relay waits for Claude
+
 // ============== File Paths ==============
 
 export const SESSION_FILE = "/tmp/claude-telegram-session.json";

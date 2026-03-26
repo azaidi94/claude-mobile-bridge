@@ -81,6 +81,9 @@ mock.module("../session", () => ({
 // Mock config
 mock.module("../config", () => ({
   ALLOWED_USERS: [123456],
+  RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
+  RELAY_CONNECT_TIMEOUT_MS: 3000,
+  RELAY_RESPONSE_TIMEOUT_MS: 300000,
 }));
 
 // Mock handlers to avoid complex dependencies

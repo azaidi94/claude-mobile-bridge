@@ -1,224 +1,160 @@
-# Killer Features Brainstorm
+# Killer Features
 
 What would make Claude Mobile Bridge go from "useful Telegram wrapper" to "I can't code without this on my phone."
 
 ---
 
-## Tier 1 — The Big Ones
+## Implemented
 
-### 1. Proactive Watchers & Alerts
-
-Right now the bot is reactive: you send a message, Claude responds. Flip that.
-
-- **CI/CD watcher**: Monitor GitHub Actions / CI pipelines. When a build fails, Claude proactively messages you with what broke, which test failed, and a suggested fix. One tap to say "fix it."
-- **PR watcher**: Get notified when PRs are opened, reviewed, or merged. Claude summarizes the diff and flags concerns.
-- **File change watcher**: Watch specific files or directories. "Notify me if anyone touches `src/auth/`."
-- **Error log watcher**: Tail a log file or error monitoring service. When something spikes, Claude analyzes it and pings you.
-
-**Why it's killer**: You're away from your desk but still in the loop. You catch production issues in minutes, not hours.
-
-### ~~2. Background Tasks & Queued Workflows~~ ✅ IMPLEMENTED
-
-~~Send Claude a batch of work and walk away.~~
-
-Implemented as `/queue` command. Parses numbered/bulleted task lists, processes sequentially with live progress updates, per-task notifications, final summary, and `/stop` cancellation. See `src/queue.ts` and `src/handlers/commands.ts`.
-
-### ~~3. Live Desktop ↔ Mobile Handoff~~ ✅ IMPLEMENTED
-
-~~The session auto-discovery already exists. Take it further.~~
-
-Implemented as `/watch` and `/unwatch` commands. Streams desktop session activity (tool calls, text responses) to your phone in real-time via session JSONL tailing. See `src/handlers/watch.ts` and `src/sessions/tailer.ts`.
-
-### 4. GitHub-Native Workflow
-
-Deep git integration accessible from your phone:
-
-- `/pr` — Create a PR from current changes with auto-generated title/description
-- `/review <url>` — Claude reviews a PR and posts comments directly to GitHub
-- `/diff` — See the current working tree diff formatted for Telegram
-- `/commit` — Auto-generate a commit message and commit
-- `/merge <pr>` — Merge a PR after Claude validates checks pass
-- `/issues` — List open issues, pick one, Claude starts working on it
-
-**Why it's killer**: Full git workflow from your phone. Review PRs while waiting for coffee.
+- **Background task queue** — `/queue` with progress, per-task notifications, `/skip`, `/stop`
+- **Live desktop handoff** — `/watch` streams desktop session to phone, type to take over
+- **Plan mode** — `/plan` for propose-then-execute workflow with approval buttons
+- **File navigation** — `/pwd`, `/cd`, `/ls` for browsing the filesystem
+- **Screenshot analysis** — Send a photo, Claude identifies the issue and fixes it
+- **Interactive buttons** — Claude presents options as tappable inline keyboards
 
 ---
 
-## Tier 2 — Major Differentiators
+## Tier 1 — High Impact, Feasible Now
 
-### 5. Conversation Branching
+### 1. Smart Task Summaries
 
-```
-/branch "try-redis-approach"
-```
-
-Fork the current conversation. Try an approach. If it doesn't work:
+When a task or queue item finishes, show a rich summary instead of just the response:
 
 ```
-/branches          # List all branches
-/switch main       # Go back to the fork point
-```
+✅ Fix auth middleware (2m 34s)
 
-Compare outcomes side by side. Pick the winner.
-
-**Why it's killer**: Eliminates "should I try this?" anxiety. Try both approaches, compare, decide.
-
-### 6. Smart Notifications with Context
-
-When a long-running task finishes, don't just say "done." Send:
-
-```
-✅ Task complete: Fix auth middleware
-
-📝 Changes:
-  • Modified src/middleware/auth.ts (+12 -3)
-  • Added src/__tests__/auth.test.ts (+45)
-
-🧪 Tests: 42 passed, 0 failed
-💰 Cost: $0.18 (2.1k in / 890 out)
-⏱️ Duration: 2m 34s
+📝 src/middleware/auth.ts (+12 -3)
+   src/__tests__/auth.test.ts (+45 new)
+🧪 Tests: 42 passed
+💰 $0.18 (2.1k in / 890 out)
 
 [View Diff] [Create PR] [Undo All]
 ```
 
-Action buttons right on the notification.
+**Why**: At a glance you know what changed, whether tests pass, and can act immediately. No follow-up questions needed.
 
-**Why it's killer**: You get the full story at a glance. No need to ask follow-up questions.
+**Hooks into**: `session.lastUsage` already tracks tokens. Run `git diff --stat` after task completion. Action buttons use existing callback infrastructure.
 
-### 7. Voice Response (TTS)
-
-Claude doesn't just accept voice — it responds with voice.
-
-- Toggle with `/voice on` — all responses come as voice notes
-- Or use inline: "think about this and voice your response"
-- Respects language — responds in the language you spoke
-
-**Why it's killer**: True hands-free coding. Listen to Claude's explanation while driving, walking, cooking. Accessibility win too.
-
-### 8. Session Templates & Workspaces
-
-```
-/template create frontend
-  --dir ~/code/frontend
-  --model sonnet
-  --prompt "You are working on a React/Next.js app..."
-  --mcp github,linear
-
-/template use frontend   # Instant context-loaded session
-```
-
-Pre-configured environments for different projects and modes of work.
-
-**Why it's killer**: Zero warm-up time. Jump straight into productive work on any project.
-
-### 9. Cost Tracking & Budget Controls
+### 2. Cost Tracking
 
 ```
 /cost            # Today: $3.42 | This week: $18.90 | This month: $67.13
 /cost session    # This session: $0.84 (12 messages)
-/budget $100/mo  # Alert at 80%, pause at 100%
 ```
 
-Per-session, per-day, per-project cost breakdown. Budget alerts via Telegram.
+Per-session, per-day, per-project cost breakdown.
 
-**Why it's killer**: API costs are real. Knowing your spend and having guardrails prevents surprises.
+**Why**: API costs are real. Visibility prevents surprises.
 
-### 10. Interactive File Browser
+**Hooks into**: `lastUsage` already captures per-query tokens. Need a persistent store (append-only JSONL) and aggregation logic.
 
-Navigate your codebase visually:
+### 3. Voice Response (TTS)
+
+Claude responds with voice notes, not just text.
+
+- `/voice on` — toggle voice responses
+- Respects language of input
+- Falls back to text for code-heavy responses
+
+**Why**: True hands-free coding. Listen while walking/driving. Big accessibility win.
+
+**Hooks into**: OpenAI TTS API (client already initialized for STT). Pipe response text through `openai.audio.speech.create()`, send as voice note.
+
+### 4. CI/CD Watcher
+
+Monitor GitHub Actions. When a build fails, Claude messages you with what broke and a suggested fix.
 
 ```
-/browse src/
+🔴 CI failed on main (push by @ali)
+
+Failed: test-unit (Node 20)
+  ✗ auth.test.ts > should validate JWT expiry
+    Expected: 401, Received: 200
+
+[Fix It] [View Logs] [Ignore]
 ```
 
-Returns an inline keyboard tree:
+**Why**: Catch failures in minutes, not hours. One tap to fix.
+
+**Hooks into**: `gh run list --json` polling on an interval. Notification infrastructure already exists (`createNotificationHandler`). Could start as a simple `/ci watch` command.
+
+---
+
+## Tier 2 — Worth Building
+
+### 5. Scheduled Tasks
 
 ```
-📁 src/
-  📁 handlers/     →
-  📁 sessions/     →
-  📄 bot.ts        [View] [Edit]
-  📄 config.ts     [View] [Edit]
-  📄 index.ts      [View] [Edit]
+/schedule "9am daily" run tests and summarize results
+/schedule "friday 5pm" generate weekly changelog from commits
+```
+
+**Why**: Automate recurring work. Morning test reports, EOD summaries.
+
+**Hooks into**: Bun timers or node-cron. Queue infrastructure already handles sequential task execution.
+
+### 6. Conversation Branching
+
+```
+/branch "try-redis-approach"    # Fork current conversation
+/branches                       # List branches
+/switch main                    # Go back
+```
+
+**Why**: Try an approach risk-free. Compare outcomes, pick the winner.
+
+**Hooks into**: Agent SDK's `resume` with session IDs. Store a map of branch name → session ID. `/switch` already exists for sessions, extend it.
+
+### 7. Inline File Browser
+
+Upgrade `/ls` with tappable inline keyboards:
+
+```
+📁 src/handlers/
+  📂 sessions/      [Open]
+  📄 bot.ts         [View] [Edit]
+  📄 config.ts      [View] [Edit]
 ```
 
 Click to drill down, preview files, or tell Claude to edit them.
 
-**Why it's killer**: Spatial navigation of code from your phone. Way faster than describing which file you mean.
+**Why**: Spatial navigation beats describing file paths. Much faster on mobile.
+
+**Hooks into**: `/ls` already reads directories. Add callback buttons using existing `InlineKeyboard` patterns.
 
 ---
 
-## Tier 3 — Delightful Extras
+## Tier 3 — Nice to Have
 
-### 11. Webhook Receiver
+### 8. Webhook Receiver
 
-Accept incoming webhooks and have Claude react:
+Accept GitHub/external webhooks, have Claude analyze and act on events. Requires running an HTTP server alongside the bot.
 
-```
-/webhook create github --events push,pull_request
-# Returns: https://your-bot.example.com/hook/abc123
-```
+### 9. Offline Message Queue
 
-When a webhook fires, Claude analyzes the event and takes action or notifies you based on rules you set.
+Messages persist to disk when no session is available. Processed in order when a session comes online.
 
-### 12. Offline Message Queue
+### 10. Multi-User Collaboration
 
-Phone has signal but your server is down? Messages queue up. When sessions come back online, they're processed in order. You get notified of each result as it completes.
-
-### 13. Screenshot → Fix Pipeline
-
-Take a screenshot of a bug on your phone → send to Claude → Claude identifies the component, finds the code, proposes a fix → one tap to apply.
-
-This already partially works with photo support, but making it a first-class workflow with "fix this" as the default action would be powerful.
-
-### 14. Scheduled Tasks
-
-```
-/schedule "9am daily" run tests and summarize results
-/schedule "every 6h" check error logs and alert if anything new
-/schedule "friday 5pm" generate weekly changelog from commits
-```
-
-Cron-style task scheduling. Results delivered as Telegram messages.
-
-### 15. Multi-User Collaboration
-
-Multiple authorized users see the same session. User A asks Claude to fix a bug, User B sees the progress and can chime in. Threaded conversations per user to avoid confusion.
-
-### 16. Snippet Library
-
-```
-/save auth-pattern    # Saves current conversation context
-/snippets             # List saved snippets
-/load auth-pattern    # Injects saved context into current session
-```
-
-Reusable knowledge that persists across sessions. Like bookmarks for your coding conversations.
-
-### 17. Diff Preview Before Apply
-
-Before Claude writes any file, show the diff inline:
-
-```diff
- // auth.ts
--const token = req.headers.authorization;
-+const token = req.headers.authorization?.replace('Bearer ', '');
-```
-
-```
-[Apply] [Skip] [Edit] [Apply All]
-```
-
-File-by-file approval with real diffs, not just plan descriptions.
+Multiple users see the same session, threaded per-user. High effort — rethinks the session ownership model.
 
 ---
 
-## Implementation Priority
+## Dropped from Original List
 
-If I had to pick 3 to build first:
+These were in the original brainstorm but are no longer worth dedicated effort:
 
-1. **Smart Notifications** (#6) — Low effort, high impact. Already have streaming infrastructure.
-2. **GitHub Workflow** (#4) — `gh` CLI is already available. Wrap it in commands.
-3. **Background Task Queue** (#2) — Builds on existing session management. Biggest workflow unlock.
+- **GitHub commands** (`/pr`, `/diff`, `/commit`) — Claude already has `gh` CLI access through tools. Just ask it. Custom commands add minimal UX over that.
+- **Session templates** — `/new [name] [path]` + `/model` already covers most of this. System prompt is in config.
+- **Snippet library** — Claude has its own memory and context management. Solving a problem that doesn't really exist.
+- **Diff preview before apply** — Plan mode already serves this purpose. Per-file approval would require intercepting tool calls mid-execution, which the SDK doesn't support cleanly.
 
-These three together transform the bot from "chat with Claude on your phone" to "manage your entire dev workflow from anywhere."
+---
+
+## Recommended Build Order
+
+1. **Smart task summaries** — Low effort, high visibility. Git diff + cost already trackable.
+2. **Cost tracking** — Low effort. Persistent token log + `/cost` command.
+3. **Voice response** — Low effort. OpenAI TTS client already available.
+4. **CI watcher** — Medium effort. Biggest "wow" feature for mobile-first workflow.

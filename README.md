@@ -10,6 +10,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 - **Multi-session support** - Switch between Claude Code projects on the fly
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Streaming responses** with live updates
+- **Channel relay** - Inject messages into running desktop sessions without disconnecting them
 - **Live handoff** - Watch desktop Claude sessions in real-time, then take over with a message
 - **Task queue** - Queue multiple tasks for sequential background execution
 - **Plan mode** - Have Claude propose a plan before executing
@@ -49,6 +50,24 @@ TELEGRAM_ALLOWED_USERS=123456789  # Your Telegram user ID (get from @userinfobot
 ```
 
 See `.env.example` for all options (working dir, allowed paths, voice transcription, rate limits, etc).
+
+## Channel Relay
+
+The channel relay lets you message a running desktop Claude session from Telegram without disconnecting it. Claude sees your message as a channel notification and replies via the relay — both desktop and mobile stay connected.
+
+**Setup:** Add the relay as a global MCP server, then include it in `--channels`:
+
+```bash
+claude mcp add -s user channel-relay -- bun run /path/to/src/mcp/channel-relay/server.ts
+```
+
+Start sessions with the relay channel:
+
+```bash
+claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay
+```
+
+When a relay is available, the bot uses it automatically. When it's not (regular `claude` sessions), the bot falls back to the SDK path. `/status` shows relay connection state, `/list` shows a 📡 indicator on relay-enabled sessions.
 
 ## Session Auto-Discovery
 

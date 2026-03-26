@@ -12,6 +12,7 @@ import { promisify } from "util";
 import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
+import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
 
 const execAsync = promisify(exec);
 
@@ -35,6 +36,7 @@ const cache: SessionCache = {
 };
 
 let watcher: FSWatcher | null = null;
+let relayWatcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
 let debounceTimer: Timer | null = null;
@@ -71,16 +73,16 @@ async function loadActiveSession(): Promise<string | null> {
  * Get directories of running Claude Code processes.
  * Only includes processes with a TTY (filters out orphans).
  */
-async function getRunningClaudeDirectories(): Promise<Set<string>> {
-  const dirs = new Set<string>();
+async function getRunningClaudeDirectories(): Promise<Map<string, number>> {
+  const dirs = new Map<string, number>();
   try {
     // Find claude processes with a TTY (not "??") and get their working directories
-    // comm shows full path on macOS (e.g. /Users/x/.local/bin/claude), so match the basename
+    // No sort -u: we need counts per directory for multi-session support
     const { stdout } = await execAsync(
-      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`,
+      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort`,
     );
     for (const line of stdout.trim().split("\n")) {
-      if (line) dirs.add(line);
+      if (line) dirs.set(line, (dirs.get(line) || 0) + 1);
     }
   } catch {
     // No claude processes running
@@ -155,14 +157,28 @@ function generateName(dir: string): string {
 async function scanSessions(): Promise<SessionInfo[]> {
   const found: SessionInfo[] = [];
 
-  // Get directories with running Claude processes
+  // Get directories with running Claude processes (with count per dir)
   const runningDirs = await getRunningClaudeDirectories();
   if (runningDirs.size === 0) {
+    // Still check port files even with no detected processes
+    const portFiles = await scanPortFiles(true);
+    for (const pf of portFiles) {
+      found.push({
+        id: "",
+        name: "",
+        dir: pf.cwd,
+        lastActivity: Date.now(),
+        source: "desktop",
+      });
+    }
     return found;
   }
 
-  const mostRecentByDir: Map<string, { info: SessionInfo; mtime: number }> =
-    new Map();
+  // Collect all candidate JSONL sessions per directory, sorted by mtime desc
+  const candidatesByDir = new Map<
+    string,
+    { info: SessionInfo; mtime: number }[]
+  >();
 
   try {
     const projects = await readdir(PROJECTS_DIR);
@@ -186,37 +202,63 @@ async function scanSessions(): Promise<SessionInfo[]> {
         if (!fileStat) continue;
 
         const mtime = fileStat.mtime?.getTime() || 0;
-
-        // Skip sessions older than 24h
         if (Date.now() - mtime > MAX_AGE_MS) continue;
 
         const parsed = await parseSessionFile(filePath);
         if (!parsed) continue;
-
-        // Only include if Claude is running in this directory
         if (!runningDirs.has(parsed.cwd)) continue;
 
-        const existing = mostRecentByDir.get(parsed.cwd);
-        if (!existing || mtime > existing.mtime) {
-          mostRecentByDir.set(parsed.cwd, {
-            info: {
-              id: parsed.sessionId,
-              name: "", // Generated later
-              dir: parsed.cwd,
-              lastActivity: mtime,
-              source: "desktop",
-            },
-            mtime,
-          });
-        }
+        const list = candidatesByDir.get(parsed.cwd) || [];
+        list.push({
+          info: {
+            id: parsed.sessionId,
+            name: "",
+            dir: parsed.cwd,
+            lastActivity: mtime,
+            source: "desktop",
+          },
+          mtime,
+        });
+        candidatesByDir.set(parsed.cwd, list);
       }
     }
   } catch (err) {
     error(`scan: ${err}`);
   }
 
-  for (const { info } of mostRecentByDir.values()) {
-    found.push(info);
+  // Keep the N most recent JSONL sessions per dir (N = running process count)
+  const jsonlCountByDir = new Map<string, number>();
+  for (const [dir, candidates] of candidatesByDir) {
+    const processCount = runningDirs.get(dir) || 1;
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    const kept = candidates.slice(0, processCount);
+    jsonlCountByDir.set(dir, kept.length);
+    for (const { info: si } of kept) {
+      found.push(si);
+    }
+  }
+
+  // Add port-file sessions not already covered by JSONL
+  const portFiles = await scanPortFiles(true);
+  const portsByDir = new Map<string, typeof portFiles>();
+  for (const pf of portFiles) {
+    const list = portsByDir.get(pf.cwd) || [];
+    list.push(pf);
+    portsByDir.set(pf.cwd, list);
+  }
+
+  for (const [dir, pfs] of portsByDir) {
+    const jsonlCount = jsonlCountByDir.get(dir) || 0;
+    // Add port-file sessions beyond what JSONL already covers
+    for (let i = jsonlCount; i < pfs.length; i++) {
+      found.push({
+        id: "",
+        name: "",
+        dir,
+        lastActivity: Date.now(),
+        source: "desktop",
+      });
+    }
   }
 
   return found;
@@ -226,11 +268,11 @@ async function scanSessions(): Promise<SessionInfo[]> {
  * Refresh the session cache. Returns diff of desktop sessions.
  */
 async function refresh(): Promise<SessionDiff> {
-  // Snapshot current desktop sessions by dir
+  // Snapshot current desktop sessions by name (unique)
   const oldDesktop = new Map<string, { name: string; dir: string }>();
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop") {
-      oldDesktop.set(s.dir, { name: s.name, dir: s.dir });
+      oldDesktop.set(s.name, { name: s.name, dir: s.dir });
     }
   }
 
@@ -265,23 +307,25 @@ async function refresh(): Promise<SessionDiff> {
     cache.sessions.set(si.name, si);
   }
 
-  // Compute diff
-  const newDesktopDirs = new Set<string>();
+  // Compute diff by name (unique per session)
+  const newDesktopNames = new Set<string>();
   for (const s of cache.sessions.values()) {
-    if (s.source === "desktop") newDesktopDirs.add(s.dir);
+    if (s.source === "desktop") newDesktopNames.add(s.name);
   }
 
   const added: SessionInfo[] = [];
   for (const s of cache.sessions.values()) {
-    if (s.source === "desktop" && !oldDesktop.has(s.dir)) {
+    if (s.source === "desktop" && !oldDesktop.has(s.name)) {
       added.push(s);
+      info(`session found: ${s.name} (${s.dir})`);
     }
   }
 
   const removed: { name: string; dir: string }[] = [];
-  for (const [dir, old] of oldDesktop) {
-    if (!newDesktopDirs.has(dir)) {
+  for (const [name, old] of oldDesktop) {
+    if (!newDesktopNames.has(name)) {
       removed.push(old);
+      info(`session removed: ${old.name} (${old.dir})`);
     }
   }
 
@@ -347,6 +391,27 @@ export async function startWatcher(
     warn(`watcher: fs.watch failed, polling only: ${err}`);
   }
 
+  // Watch /tmp for relay port file creation/deletion
+  try {
+    relayWatcher = watch("/tmp", (event, filename) => {
+      if (
+        filename?.startsWith("channel-relay-") &&
+        filename.endsWith(".json")
+      ) {
+        invalidateScanCache();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          const diff = await refresh();
+          if (diff.added.length || diff.removed.length) {
+            onChangeCallback?.(diff);
+          }
+        }, DEBOUNCE_MS);
+      }
+    });
+  } catch {
+    // /tmp watch not critical
+  }
+
   // Backup polling
   pollInterval = setInterval(async () => {
     const diff = await refresh();
@@ -362,6 +427,8 @@ export async function startWatcher(
 export function stopWatcher(): void {
   watcher?.close();
   watcher = null;
+  relayWatcher?.close();
+  relayWatcher = null;
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;

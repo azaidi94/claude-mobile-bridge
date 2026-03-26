@@ -13,7 +13,7 @@ import { debug, warn } from "../logger";
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
 
-export type TailEventType = "text" | "tool" | "thinking" | "user";
+export type TailEventType = "text" | "tool" | "thinking" | "user" | "relay_reply";
 
 export interface TailEvent {
   type: TailEventType;
@@ -133,10 +133,10 @@ export class SessionTailer {
       // Skip sidechain messages
       if (entry.isSidechain) return [];
 
-      // User message from desktop
+      // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
-        if (text) {
+        if (text && !text.includes('<channel source="channel-relay"')) {
           return [{ type: "user", content: text }];
         }
         return [];
@@ -158,10 +158,22 @@ export class SessionTailer {
           }
 
           if (block.type === "tool_use") {
-            const toolDisplay = formatToolStatus(
-              block.name,
-              (block.input as Record<string, unknown>) || {},
-            );
+            const input = (block.input as Record<string, unknown>) || {};
+            // Detect channel-relay reply/edit/react → emit as relay_reply
+            if (
+              block.name === "mcp__channel-relay__reply" ||
+              block.name === "mcp__channel-relay__edit_message"
+            ) {
+              const text = String(input.text || "");
+              if (text) {
+                events.push({ type: "relay_reply", content: text });
+                continue;
+              }
+            }
+            // Skip relay react tool (just an emoji, not worth displaying)
+            if (block.name === "mcp__channel-relay__react") continue;
+
+            const toolDisplay = formatToolStatus(block.name, input);
             events.push({ type: "tool", content: toolDisplay });
           }
 

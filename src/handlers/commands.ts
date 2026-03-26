@@ -32,6 +32,7 @@ import {
   sendPlanContent,
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
+import { isRelayAvailable, getRelayDirs } from "../relay";
 
 /**
  * /start - Show welcome message and status.
@@ -288,6 +289,12 @@ export async function handleStatus(ctx: Context): Promise<void> {
   ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
+  // Relay status
+  const relayUp = await isRelayAvailable(
+    session.workingDir || activeSession?.info.dir,
+  );
+  lines.push(relayUp ? "📡 Relay: connected" : "📡 Relay: unavailable");
+
   // Resume command (tap to copy)
   if (session.sessionId) {
     lines.push(`\n🔗 <code>claude --resume ${session.sessionId}</code>`);
@@ -413,8 +420,12 @@ export async function handleList(ctx: Context): Promise<void> {
     return;
   }
 
-  // Resolve branches for all sessions
-  const branches = await Promise.all(sessions.map((s) => getGitBranch(s.dir)));
+  // Resolve branches and relay status for all sessions
+  const [branches, relayDirs] = await Promise.all([
+    Promise.all(sessions.map((s) => getGitBranch(s.dir))),
+    getRelayDirs(),
+  ]);
+  const relayDirSet = new Set(relayDirs);
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
@@ -425,8 +436,14 @@ export async function handleList(ctx: Context): Promise<void> {
     const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     const ago = formatTimeAgo(s.lastActivity);
     const branch = branches[i];
+    const hasRelay = relayDirSet.has(s.dir);
 
-    const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
+    const meta = [
+      dir,
+      branch ? `🌿 ${branch}` : null,
+      hasRelay ? "📡" : null,
+      ago,
+    ]
       .filter(Boolean)
       .join(" · ");
     lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");

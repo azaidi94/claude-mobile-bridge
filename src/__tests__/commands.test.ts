@@ -39,6 +39,9 @@ mock.module("../config", () => ({
   RESTART_FILE: "/tmp/test-restart.json",
   TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/"],
+  RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
+  RELAY_CONNECT_TIMEOUT_MS: 3000,
+  RELAY_RESPONSE_TIMEOUT_MS: 300000,
 }));
 
 // Mock sessions module
