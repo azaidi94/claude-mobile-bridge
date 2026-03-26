@@ -36,6 +36,9 @@ mcp-config.ts
 # Cursor
 .cursor
 
+# Claude Code user-specific settings
+.claude/settings.local.json
+
 # Finder (MacOS) folder config
 .DS_Store
 /claude-bot-standalone

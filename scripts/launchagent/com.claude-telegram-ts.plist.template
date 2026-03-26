@@ -11,12 +11,12 @@
         <string>/Users/USERNAME/.bun/bin/bun</string>
         <string>run</string>
         <!-- Update this path to your bot installation -->
-        <string>/Users/USERNAME/Dev/claude-telegram-bot-ts/src/index.ts</string>
+        <string>/Users/USERNAME/Dev/claude-mobile-bridge/src/index.ts</string>
     </array>
 
     <key>WorkingDirectory</key>
     <!-- Update this path to your bot installation -->
-    <string>/Users/USERNAME/Dev/claude-telegram-bot-ts</string>
+    <string>/Users/USERNAME/Dev/claude-mobile-bridge</string>
 
     <key>EnvironmentVariables</key>
     <dict>

@@ -179,9 +179,9 @@ export const TRANSCRIPTION_AVAILABLE = !!OPENAI_API_KEY;
 // ============== Thinking Keywords ==============
 
 const thinkingKeywordsStr =
-  process.env.THINKING_KEYWORDS || "think,pensa,ragiona";
+  process.env.THINKING_KEYWORDS || "think,think about";
 const thinkingDeepKeywordsStr =
-  process.env.THINKING_DEEP_KEYWORDS || "ultrathink,think hard,pensa bene";
+  process.env.THINKING_DEEP_KEYWORDS || "ultrathink,think hard,think deeply";
 
 export const THINKING_KEYWORDS = thinkingKeywordsStr
   .split(",")

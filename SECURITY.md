@@ -178,5 +178,5 @@ If you suspect unauthorized access:
 If you discover a security issue:
 
 1. **Don't open a public GitHub issue**
-2. Contact the maintainer privately
+2. Use [GitHub Security Advisories](https://github.com/azaidi94/claude-mobile-bridge/security/advisories/new) to report privately
 3. Allow time for a fix before disclosure
