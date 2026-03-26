@@ -133,10 +133,10 @@ export class SessionTailer {
       // Skip sidechain messages
       if (entry.isSidechain) return [];
 
-      // User message from desktop
+      // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
-        if (text) {
+        if (text && !text.includes('<channel source="channel-relay"')) {
           return [{ type: "user", content: text }];
         }
         return [];
