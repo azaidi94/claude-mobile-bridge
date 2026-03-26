@@ -192,7 +192,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
               `👁 Watching <b>${escapeHtml(active.name)}</b>\n` +
                 `📁 <code>${escapeHtml(dir)}</code>\n\n` +
                 `Live events will stream here.\n` +
-                `Type a message to take over the session.\n` +
+                `Type a message to send via relay.\n` +
                 `Use /unwatch to stop.`,
               { parse_mode: "HTML" },
             );
