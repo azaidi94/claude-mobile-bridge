@@ -73,16 +73,16 @@ async function loadActiveSession(): Promise<string | null> {
  * Get directories of running Claude Code processes.
  * Only includes processes with a TTY (filters out orphans).
  */
-async function getRunningClaudeDirectories(): Promise<Set<string>> {
-  const dirs = new Set<string>();
+async function getRunningClaudeDirectories(): Promise<Map<string, number>> {
+  const dirs = new Map<string, number>();
   try {
     // Find claude processes with a TTY (not "??") and get their working directories
-    // comm shows full path on macOS (e.g. /Users/x/.local/bin/claude), so match the basename
+    // No sort -u: we need counts per directory for multi-session support
     const { stdout } = await execAsync(
-      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort -u`,
+      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort`,
     );
     for (const line of stdout.trim().split("\n")) {
-      if (line) dirs.add(line);
+      if (line) dirs.set(line, (dirs.get(line) || 0) + 1);
     }
   } catch {
     // No claude processes running
@@ -157,13 +157,28 @@ function generateName(dir: string): string {
 async function scanSessions(): Promise<SessionInfo[]> {
   const found: SessionInfo[] = [];
 
-  // Get directories with running Claude processes
+  // Get directories with running Claude processes (with count per dir)
   const runningDirs = await getRunningClaudeDirectories();
+  if (runningDirs.size === 0) {
+    // Still check port files even with no detected processes
+    const portFiles = await scanPortFiles(true);
+    for (const pf of portFiles) {
+      found.push({
+        id: "",
+        name: "",
+        dir: pf.cwd,
+        lastActivity: Date.now(),
+        source: "desktop",
+      });
+    }
+    return found;
+  }
 
-  // Track session IDs found via JSONL (to avoid duplicating with port files)
-  const foundSessionIds = new Set<string>();
-  // Track dirs found via JSONL (for port file dedup)
-  const jsonlDirCount = new Map<string, number>();
+  // Collect all candidate JSONL sessions per directory, sorted by mtime desc
+  const candidatesByDir = new Map<
+    string,
+    { info: SessionInfo; mtime: number }[]
+  >();
 
   try {
     const projects = await readdir(PROJECTS_DIR);
@@ -187,53 +202,63 @@ async function scanSessions(): Promise<SessionInfo[]> {
         if (!fileStat) continue;
 
         const mtime = fileStat.mtime?.getTime() || 0;
-
-        // Skip sessions older than 24h
         if (Date.now() - mtime > MAX_AGE_MS) continue;
 
         const parsed = await parseSessionFile(filePath);
         if (!parsed) continue;
-
-        // Only include if Claude is running in this directory
         if (!runningDirs.has(parsed.cwd)) continue;
 
-        foundSessionIds.add(parsed.sessionId);
-        jsonlDirCount.set(
-          parsed.cwd,
-          (jsonlDirCount.get(parsed.cwd) || 0) + 1,
-        );
-
-        found.push({
-          id: parsed.sessionId,
-          name: "", // Generated later
-          dir: parsed.cwd,
-          lastActivity: mtime,
-          source: "desktop",
+        const list = candidatesByDir.get(parsed.cwd) || [];
+        list.push({
+          info: {
+            id: parsed.sessionId,
+            name: "",
+            dir: parsed.cwd,
+            lastActivity: mtime,
+            source: "desktop",
+          },
+          mtime,
         });
+        candidatesByDir.set(parsed.cwd, list);
       }
     }
   } catch (err) {
     error(`scan: ${err}`);
   }
 
-  // Also discover sessions from relay port files (available before first message)
-  // Only add port-file sessions that don't already have a JSONL match
-  const portFiles = await scanPortFiles(true);
-  for (const pf of portFiles) {
-    const jsonlCount = jsonlDirCount.get(pf.cwd) || 0;
-    // Each port file = one relay process. If we already have enough JSONL
-    // sessions for this dir, skip. Otherwise add the gap.
-    const portFilesForDir = portFiles.filter((p) => p.cwd === pf.cwd);
-    const portIndex = portFilesForDir.indexOf(pf);
-    if (portIndex < jsonlCount) continue; // already covered by JSONL
+  // Keep the N most recent JSONL sessions per dir (N = running process count)
+  const jsonlCountByDir = new Map<string, number>();
+  for (const [dir, candidates] of candidatesByDir) {
+    const processCount = runningDirs.get(dir) || 1;
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    const kept = candidates.slice(0, processCount);
+    jsonlCountByDir.set(dir, kept.length);
+    for (const { info: si } of kept) {
+      found.push(si);
+    }
+  }
 
-    found.push({
-      id: "",
-      name: "",
-      dir: pf.cwd,
-      lastActivity: Date.now(),
-      source: "desktop",
-    });
+  // Add port-file sessions not already covered by JSONL
+  const portFiles = await scanPortFiles(true);
+  const portsByDir = new Map<string, typeof portFiles>();
+  for (const pf of portFiles) {
+    const list = portsByDir.get(pf.cwd) || [];
+    list.push(pf);
+    portsByDir.set(pf.cwd, list);
+  }
+
+  for (const [dir, pfs] of portsByDir) {
+    const jsonlCount = jsonlCountByDir.get(dir) || 0;
+    // Add port-file sessions beyond what JSONL already covers
+    for (let i = jsonlCount; i < pfs.length; i++) {
+      found.push({
+        id: "",
+        name: "",
+        dir,
+        lastActivity: Date.now(),
+        source: "desktop",
+      });
+    }
   }
 
   return found;
