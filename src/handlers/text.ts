@@ -23,9 +23,10 @@ import {
 } from "./streaming";
 import { getActiveSession, getSession, setActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
-import { isWatching, stopWatching } from "./watch";
+import { isWatching, stopWatching, sendWatchRelay } from "./watch";
 import { getActiveQueue, parseTasks } from "../queue";
 import { debug, info, truncate } from "../logger";
+import { sendViaRelay } from "./relay-bridge";
 
 /**
  * Handle incoming text messages.
@@ -177,8 +178,16 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.7. Check for active watch — takeover flow
+  // 1.7. Check for active watch — relay or takeover
   if (isWatching(chatId)) {
+    // Try relay first (keeps desktop session alive)
+    const relayed = await sendWatchRelay(chatId, username, message);
+    if (relayed) {
+      await auditLog(userId, username, "WATCH_RELAY", message, "(via relay)");
+      return;
+    }
+
+    // No relay — fall back to takeover
     const watchState = stopWatching(chatId, ctx.api);
     if (watchState) {
       info(`takeover: ${watchState.sessionName} from chat ${chatId}`);
@@ -259,6 +268,13 @@ export async function handleText(ctx: Context): Promise<void> {
     if (active) {
       session.loadFromRegistry(active.info);
     }
+  }
+
+  // 7.5. Try relay path — inject into running desktop session without takeover
+  const relayResult = await sendViaRelay(ctx, message, username, chatId);
+  if (relayResult) {
+    await auditLog(userId, username, "RELAY", message, "(via relay)");
+    return;
   }
 
   // 8. Mark processing started

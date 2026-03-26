@@ -34,7 +34,9 @@ export {
   isWatching,
   stopWatching,
   notifySessionOffline,
+  sendWatchRelay,
 } from "./watch";
+export { sendViaRelay } from "./relay-bridge";
 export {
   StreamingState,
   createStatusCallback,

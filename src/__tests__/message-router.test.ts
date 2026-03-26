@@ -54,6 +54,9 @@ mock.module("../config", () => ({
   BUTTON_LABEL_MAX_LENGTH: 30,
   AUDIT_LOG_PATH: "/tmp/audit.log",
   AUDIT_LOG_JSON: false,
+  RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
+  RELAY_CONNECT_TIMEOUT_MS: 3000,
+  RELAY_RESPONSE_TIMEOUT_MS: 300000,
 }));
 
 // Test helpers

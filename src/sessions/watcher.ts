@@ -12,6 +12,7 @@ import { promisify } from "util";
 import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
+import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
 
 const execAsync = promisify(exec);
 
@@ -35,6 +36,7 @@ const cache: SessionCache = {
 };
 
 let watcher: FSWatcher | null = null;
+let relayWatcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
 let debounceTimer: Timer | null = null;
@@ -219,6 +221,19 @@ async function scanSessions(): Promise<SessionInfo[]> {
     found.push(info);
   }
 
+  // Also discover sessions from relay port files (available before first message)
+  const portFiles = await scanPortFiles(true);
+  for (const pf of portFiles) {
+    if (mostRecentByDir.has(pf.cwd)) continue;
+    found.push({
+      id: "",
+      name: "",
+      dir: pf.cwd,
+      lastActivity: Date.now(),
+      source: "desktop",
+    });
+  }
+
   return found;
 }
 
@@ -347,6 +362,27 @@ export async function startWatcher(
     warn(`watcher: fs.watch failed, polling only: ${err}`);
   }
 
+  // Watch /tmp for relay port file creation/deletion
+  try {
+    relayWatcher = watch("/tmp", (event, filename) => {
+      if (
+        filename?.startsWith("channel-relay-") &&
+        filename.endsWith(".json")
+      ) {
+        invalidateScanCache();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          const diff = await refresh();
+          if (diff.added.length || diff.removed.length) {
+            onChangeCallback?.(diff);
+          }
+        }, DEBOUNCE_MS);
+      }
+    });
+  } catch {
+    // /tmp watch not critical
+  }
+
   // Backup polling
   pollInterval = setInterval(async () => {
     const diff = await refresh();
@@ -362,6 +398,8 @@ export async function startWatcher(
 export function stopWatcher(): void {
   watcher?.close();
   watcher = null;
+  relayWatcher?.close();
+  relayWatcher = null;
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;

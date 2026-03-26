@@ -30,22 +30,32 @@ import {
 import { homedir } from "os";
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
+import { getRelayClient } from "../relay";
 
-// ============== Watch State ==============
+// ============== Shared Tail Display State ==============
 
-interface WatchState {
-  sessionName: string;
-  sessionId: string;
-  sessionDir: string;
-  tailer: SessionTailer;
+/** Common display state used by both /watch and relay display pipelines. */
+export interface TailDisplayState {
   chatId: number;
-  lastEventTime: number;
-  // Display state for streaming
   currentToolMsg: Message | null;
   currentTextMsg: Message | null;
   currentTextContent: string;
   lastTextUpdate: number;
   segmentDone: boolean;
+  /** Optional: track messages for bulk cleanup (used by relay). */
+  progressMessages?: Message[];
+  /** Optional: stop showing progress after final reply (used by relay). */
+  finalReplyReceived?: boolean;
+}
+
+// ============== Watch State ==============
+
+interface WatchState extends TailDisplayState {
+  sessionName: string;
+  sessionId: string;
+  sessionDir: string;
+  tailer: SessionTailer;
+  lastEventTime: number;
 }
 
 // Active watches: chatId -> WatchState
@@ -56,6 +66,29 @@ const watches = new Map<number, WatchState>();
  */
 export function isWatching(chatId: number): boolean {
   return watches.has(chatId);
+}
+
+/**
+ * Send a message via relay while watching (no takeover).
+ * Returns true if relay was used.
+ */
+export async function sendWatchRelay(
+  chatId: number,
+  username: string,
+  text: string,
+): Promise<boolean> {
+  const state = watches.get(chatId);
+  if (!state) return false;
+
+  const client = await getRelayClient(state.sessionDir);
+  if (!client) return false;
+
+  client.sendMessage({
+    chat_id: String(chatId),
+    user: username,
+    text,
+  });
+  return true;
 }
 
 /**
@@ -70,7 +103,7 @@ export function stopWatching(
   if (state) {
     // Flush pending text before stopping
     if (botApi && state.currentTextMsg && !state.segmentDone) {
-      finalizeTextMessage(botApi, chatId, state);
+      finalizeTextMessage(botApi, state);
     }
     state.tailer.stop();
     watches.delete(chatId);
@@ -203,7 +236,7 @@ export async function handleWatch(ctx: Context): Promise<void> {
   // closure and only fires asynchronously, so the reference is safe.
   const botApi = ctx.api;
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    handleTailEvent(botApi, chatId, watchState, event);
+    handleTailEvent(botApi, watchState, event);
   });
   const watchState: WatchState = {
     sessionName: targetName,
@@ -289,15 +322,20 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
 // ============== Tail Event Display ==============
 
 /**
- * Handle a parsed event from the tailer and display it in Telegram.
+ * Handle a parsed tail event and display it in Telegram.
+ * Shared by both /watch and relay display pipelines.
  */
-function handleTailEvent(
+export function handleTailEvent(
   botApi: Api,
-  chatId: number,
-  state: WatchState,
+  state: TailDisplayState,
   event: TailEvent,
 ): void {
-  state.lastEventTime = Date.now();
+  if (state.finalReplyReceived) return;
+
+  const { chatId } = state;
+  const trackProgress = (msg: Message) => {
+    state.progressMessages?.push(msg);
+  };
 
   switch (event.type) {
     case "thinking": {
@@ -310,38 +348,35 @@ function handleTailEvent(
           parse_mode: "HTML",
         })
         .then((msg) => {
-          // Track as tool message so it can be cleaned up
           state.currentToolMsg = msg;
+          trackProgress(msg);
         })
-        .catch((err) => debug(`watch thinking: ${err}`));
+        .catch((err) => debug(`tail thinking: ${err}`));
       break;
     }
 
     case "tool": {
-      // Delete previous tool message
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
           .catch(() => {});
         state.currentToolMsg = null;
       }
-
-      // Finalize any pending text segment
       if (state.currentTextMsg && !state.segmentDone) {
-        finalizeTextMessage(botApi, chatId, state);
+        finalizeTextMessage(botApi, state);
       }
 
       botApi
         .sendMessage(chatId, event.content, { parse_mode: "HTML" })
         .then((msg) => {
           state.currentToolMsg = msg;
+          trackProgress(msg);
         })
-        .catch((err) => debug(`watch tool: ${err}`));
+        .catch((err) => debug(`tail tool: ${err}`));
       break;
     }
 
     case "text": {
-      // Delete tool message when text starts
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
@@ -363,40 +398,61 @@ function handleTailEvent(
       const formatted = convertMarkdownToHtml(display);
 
       if (!state.currentTextMsg) {
-        // Create new text message
         botApi
           .sendMessage(chatId, formatted, { parse_mode: "HTML" })
           .then((msg) => {
             state.currentTextMsg = msg;
+            trackProgress(msg);
           })
           .catch((err) => {
-            debug(`watch text create: ${err}`);
-            // Fallback without HTML
+            debug(`tail text create: ${err}`);
             botApi
               .sendMessage(chatId, display)
               .then((msg) => {
                 state.currentTextMsg = msg;
+                trackProgress(msg);
               })
               .catch(() => {});
           });
       } else {
-        // Edit existing text message
         botApi
           .editMessageText(chatId, state.currentTextMsg.message_id, formatted, {
             parse_mode: "HTML",
           })
-          .catch((err) => debug(`watch text edit: ${err}`));
+          .catch((err) => debug(`tail text edit: ${err}`));
       }
       break;
     }
 
-    case "user": {
-      // Desktop user typed something
-      // Finalize any pending text
-      if (state.currentTextMsg && !state.segmentDone) {
-        finalizeTextMessage(botApi, chatId, state);
+    case "relay_reply": {
+      if (state.currentToolMsg) {
+        botApi
+          .deleteMessage(chatId, state.currentToolMsg.message_id)
+          .catch(() => {});
+        state.currentToolMsg = null;
       }
-      // Clean up tool message
+      if (state.currentTextMsg && !state.segmentDone) {
+        finalizeTextMessage(botApi, state);
+      }
+
+      const formatted = convertMarkdownToHtml(event.content);
+      botApi
+        .sendMessage(chatId, formatted, { parse_mode: "HTML" })
+        .catch((err) => {
+          debug(`tail relay_reply: ${err}`);
+          botApi.sendMessage(chatId, event.content).catch(() => {});
+        });
+
+      state.currentTextMsg = null;
+      state.currentTextContent = "";
+      state.segmentDone = true;
+      break;
+    }
+
+    case "user": {
+      if (state.currentTextMsg && !state.segmentDone) {
+        finalizeTextMessage(botApi, state);
+      }
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
@@ -412,9 +468,8 @@ function handleTailEvent(
         .sendMessage(chatId, `🖥 <b>Desktop:</b> ${escapeHtml(preview)}`, {
           parse_mode: "HTML",
         })
-        .catch((err) => debug(`watch user: ${err}`));
+        .catch((err) => debug(`tail user: ${err}`));
 
-      // Reset text state for next response
       state.currentTextMsg = null;
       state.currentTextContent = "";
       state.segmentDone = true;
@@ -423,24 +478,22 @@ function handleTailEvent(
   }
 }
 
-/**
- * Finalize the current text message with full content.
- */
-function finalizeTextMessage(
+export function finalizeTextMessage(
   botApi: Api,
-  chatId: number,
-  state: WatchState,
+  state: TailDisplayState,
 ): void {
   if (!state.currentTextMsg || !state.currentTextContent) return;
 
   const formatted = convertMarkdownToHtml(state.currentTextContent);
-
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
     botApi
-      .editMessageText(chatId, state.currentTextMsg.message_id, formatted, {
-        parse_mode: "HTML",
-      })
-      .catch((err) => debug(`watch finalize: ${err}`));
+      .editMessageText(
+        state.chatId,
+        state.currentTextMsg.message_id,
+        formatted,
+        { parse_mode: "HTML" },
+      )
+      .catch((err) => debug(`tail finalize: ${err}`));
   }
 
   state.currentTextMsg = null;
