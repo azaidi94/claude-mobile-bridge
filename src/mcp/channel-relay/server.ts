@@ -100,6 +100,25 @@ tcpServer.listen(0, "127.0.0.1", () => {
   }
 });
 
+// ── Request ID tracking ────────────────────────────────────────────────
+// Each channel message gets a unique request_id. The reply tool only works
+// with a valid request_id, preventing Claude from using it for terminal input.
+
+let requestCounter = 0;
+const validRequestIds = new Map<string, { chat_id: string; ts: number }>();
+const REQUEST_TTL_MS = 600_000; // 10 min
+
+function generateRequestId(): string {
+  return `r${++requestCounter}_${Date.now().toString(36)}`;
+}
+
+function pruneExpiredRequests(): void {
+  const now = Date.now();
+  for (const [id, data] of validRequestIds) {
+    if (now - data.ts > REQUEST_TTL_MS) validRequestIds.delete(id);
+  }
+}
+
 // ── Inbound: bot → relay → Claude (channel notification) ──────────────
 
 function handleBotMessage(msg: {
@@ -110,12 +129,18 @@ function handleBotMessage(msg: {
   image_path?: string;
 }): void {
   if (msg.type === "message" && msg.text) {
+    pruneExpiredRequests();
+    const requestId = generateRequestId();
+    const chatId = msg.chat_id || "";
+    validRequestIds.set(requestId, { chat_id: chatId, ts: Date.now() });
+
     mcp.notification({
       method: "notifications/claude/channel",
       params: {
         content: msg.text,
         meta: {
-          chat_id: msg.chat_id || "",
+          chat_id: chatId,
+          request_id: requestId,
           user: msg.user || "telegram",
           ts: new Date().toISOString(),
           ...(msg.image_path ? { image_path: msg.image_path } : {}),
@@ -137,12 +162,9 @@ const mcp = new Server(
       },
     },
     instructions: [
-      "CRITICAL ROUTING RULE — two kinds of input arrive in this session:",
-      "",
-      '1. TELEGRAM messages: wrapped in <channel source="channel-relay" chat_id="..." ...>. Respond to these ONLY via the reply tool, passing chat_id from the tag.',
-      "2. TERMINAL input: plain text with NO <channel> tag. Respond to these normally as text output. NEVER use the reply tool for terminal input.",
-      "",
-      "How to tell them apart: if the message is inside a <channel> XML tag, use reply tool. If not, respond in the terminal. Do NOT carry over chat_id from a previous channel message to a terminal response.",
+      'Telegram messages arrive as <channel source="channel-relay" chat_id="..." request_id="..." ...>.',
+      "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
+      "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
     ].join("\n"),
   },
 );
@@ -154,10 +176,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "reply",
       description:
-        "Reply to the Telegram user. Pass chat_id from the inbound channel message.",
+        "Reply to a Telegram message. Requires request_id and chat_id from the <channel> tag. Will reject invalid request_ids — do NOT use this for terminal input.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          request_id: {
+            type: "string",
+            description:
+              "The request_id from the <channel> tag. Required — calls without a valid request_id are rejected.",
+          },
           chat_id: { type: "string" },
           text: { type: "string" },
           files: {
@@ -166,7 +193,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: "Absolute file paths to attach.",
           },
         },
-        required: ["chat_id", "text"],
+        required: ["request_id", "chat_id", "text"],
       },
     },
     {
@@ -205,9 +232,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   switch (name) {
     case "reply": {
+      const request_id = String(args.request_id || "");
       const chat_id = String(args.chat_id || "");
       const text = String(args.text || "");
       const files = (args.files as string[] | undefined) ?? [];
+
+      // Validate request_id — prevents reply tool being used for terminal input
+      if (!validRequestIds.has(request_id)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "REJECTED: invalid request_id. This tool is only for responding to <channel> messages. For terminal input, respond normally as text output.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      validRequestIds.delete(request_id);
 
       sendToBot({ type: "reply", chat_id, text, files });
 
