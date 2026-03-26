@@ -177,6 +177,7 @@ export function formatToolStatus(
     WebSearch: "🔍",
     WebFetch: "🌐",
     Task: "🎯",
+    Agent: "🎯",
     TodoWrite: "📋",
     mcp__: "🔧",
   };
@@ -255,7 +256,7 @@ export function formatToolStatus(
     return `${emoji} Fetching ${code(truncate(url, 50))}`;
   }
 
-  if (toolName === "Task") {
+  if (toolName === "Task" || toolName === "Agent") {
     const desc = String(toolInput.description || "");
     if (desc) {
       return `${emoji} Agent: ${escapeHtml(desc)}`;
