@@ -137,9 +137,12 @@ const mcp = new Server(
       },
     },
     instructions: [
-      'Messages from Telegram arrive as <channel source="channel-relay" chat_id="..." user="..." ts="...">.',
-      "ONLY use the reply/edit_message/react tools when responding to <channel source=\"channel-relay\"> messages. Pass chat_id from the channel tag.",
-      "When the user types directly in the terminal (no <channel> tag), respond normally in the terminal — do NOT use the reply tool.",
+      "CRITICAL ROUTING RULE — two kinds of input arrive in this session:",
+      "",
+      '1. TELEGRAM messages: wrapped in <channel source="channel-relay" chat_id="..." ...>. Respond to these ONLY via the reply tool, passing chat_id from the tag.',
+      "2. TERMINAL input: plain text with NO <channel> tag. Respond to these normally as text output. NEVER use the reply tool for terminal input.",
+      "",
+      "How to tell them apart: if the message is inside a <channel> XML tag, use reply tool. If not, respond in the terminal. Do NOT carry over chat_id from a previous channel message to a terminal response.",
     ].join("\n"),
   },
 );
