@@ -105,7 +105,7 @@ tcpServer.listen(0, "127.0.0.1", () => {
 // with a valid request_id, preventing Claude from using it for terminal input.
 
 let requestCounter = 0;
-const validRequestIds = new Map<string, { chat_id: string; ts: number }>();
+const validRequestIds = new Map<string, number>(); // id → timestamp
 const REQUEST_TTL_MS = 600_000; // 10 min
 
 function generateRequestId(): string {
@@ -114,8 +114,8 @@ function generateRequestId(): string {
 
 function pruneExpiredRequests(): void {
   const now = Date.now();
-  for (const [id, data] of validRequestIds) {
-    if (now - data.ts > REQUEST_TTL_MS) validRequestIds.delete(id);
+  for (const [id, ts] of validRequestIds) {
+    if (now - ts > REQUEST_TTL_MS) validRequestIds.delete(id);
   }
 }
 
@@ -132,7 +132,7 @@ function handleBotMessage(msg: {
     pruneExpiredRequests();
     const requestId = generateRequestId();
     const chatId = msg.chat_id || "";
-    validRequestIds.set(requestId, { chat_id: chatId, ts: Date.now() });
+    validRequestIds.set(requestId, Date.now());
 
     mcp.notification({
       method: "notifications/claude/channel",
