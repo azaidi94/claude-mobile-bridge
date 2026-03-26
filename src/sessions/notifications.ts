@@ -14,7 +14,7 @@ import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
-const FLAP_BUFFER_MS = 10_000;
+const FLAP_BUFFER_MS = 2_000;
 
 // Registered chat IDs of allowed users
 const chatIds = new Set<number>();

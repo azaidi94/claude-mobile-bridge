@@ -25,7 +25,7 @@ import { homedir } from "os";
 
 const cwd = process.cwd();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
-const PORT_FILE = `/tmp/channel-relay-${dirHash}.json`;
+const PORT_FILE = `/tmp/channel-relay-${dirHash}-${process.pid}.json`;
 
 function writePortFile(port: number): void {
   const data = {

@@ -159,12 +159,11 @@ async function scanSessions(): Promise<SessionInfo[]> {
 
   // Get directories with running Claude processes
   const runningDirs = await getRunningClaudeDirectories();
-  if (runningDirs.size === 0) {
-    return found;
-  }
 
-  const mostRecentByDir: Map<string, { info: SessionInfo; mtime: number }> =
-    new Map();
+  // Track session IDs found via JSONL (to avoid duplicating with port files)
+  const foundSessionIds = new Set<string>();
+  // Track dirs found via JSONL (for port file dedup)
+  const jsonlDirCount = new Map<string, number>();
 
   try {
     const projects = await readdir(PROJECTS_DIR);
@@ -198,33 +197,36 @@ async function scanSessions(): Promise<SessionInfo[]> {
         // Only include if Claude is running in this directory
         if (!runningDirs.has(parsed.cwd)) continue;
 
-        const existing = mostRecentByDir.get(parsed.cwd);
-        if (!existing || mtime > existing.mtime) {
-          mostRecentByDir.set(parsed.cwd, {
-            info: {
-              id: parsed.sessionId,
-              name: "", // Generated later
-              dir: parsed.cwd,
-              lastActivity: mtime,
-              source: "desktop",
-            },
-            mtime,
-          });
-        }
+        foundSessionIds.add(parsed.sessionId);
+        jsonlDirCount.set(
+          parsed.cwd,
+          (jsonlDirCount.get(parsed.cwd) || 0) + 1,
+        );
+
+        found.push({
+          id: parsed.sessionId,
+          name: "", // Generated later
+          dir: parsed.cwd,
+          lastActivity: mtime,
+          source: "desktop",
+        });
       }
     }
   } catch (err) {
     error(`scan: ${err}`);
   }
 
-  for (const { info } of mostRecentByDir.values()) {
-    found.push(info);
-  }
-
   // Also discover sessions from relay port files (available before first message)
+  // Only add port-file sessions that don't already have a JSONL match
   const portFiles = await scanPortFiles(true);
   for (const pf of portFiles) {
-    if (mostRecentByDir.has(pf.cwd)) continue;
+    const jsonlCount = jsonlDirCount.get(pf.cwd) || 0;
+    // Each port file = one relay process. If we already have enough JSONL
+    // sessions for this dir, skip. Otherwise add the gap.
+    const portFilesForDir = portFiles.filter((p) => p.cwd === pf.cwd);
+    const portIndex = portFilesForDir.indexOf(pf);
+    if (portIndex < jsonlCount) continue; // already covered by JSONL
+
     found.push({
       id: "",
       name: "",
@@ -241,11 +243,11 @@ async function scanSessions(): Promise<SessionInfo[]> {
  * Refresh the session cache. Returns diff of desktop sessions.
  */
 async function refresh(): Promise<SessionDiff> {
-  // Snapshot current desktop sessions by dir
+  // Snapshot current desktop sessions by name (unique)
   const oldDesktop = new Map<string, { name: string; dir: string }>();
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop") {
-      oldDesktop.set(s.dir, { name: s.name, dir: s.dir });
+      oldDesktop.set(s.name, { name: s.name, dir: s.dir });
     }
   }
 
@@ -280,23 +282,25 @@ async function refresh(): Promise<SessionDiff> {
     cache.sessions.set(si.name, si);
   }
 
-  // Compute diff
-  const newDesktopDirs = new Set<string>();
+  // Compute diff by name (unique per session)
+  const newDesktopNames = new Set<string>();
   for (const s of cache.sessions.values()) {
-    if (s.source === "desktop") newDesktopDirs.add(s.dir);
+    if (s.source === "desktop") newDesktopNames.add(s.name);
   }
 
   const added: SessionInfo[] = [];
   for (const s of cache.sessions.values()) {
-    if (s.source === "desktop" && !oldDesktop.has(s.dir)) {
+    if (s.source === "desktop" && !oldDesktop.has(s.name)) {
       added.push(s);
+      info(`session found: ${s.name} (${s.dir})`);
     }
   }
 
   const removed: { name: string; dir: string }[] = [];
-  for (const [dir, old] of oldDesktop) {
-    if (!newDesktopDirs.has(dir)) {
+  for (const [name, old] of oldDesktop) {
+    if (!newDesktopNames.has(name)) {
       removed.push(old);
+      info(`session removed: ${old.name} (${old.dir})`);
     }
   }
 
