@@ -62,13 +62,15 @@ export async function sendViaRelay(
     ...(imagePath ? { image_path: imagePath } : {}),
   });
 
+  let relayDelivered = true;
   try {
     await waitForReply(client, displayState);
   } catch (err) {
     debug(`relay: wait error: ${err}`);
     cleanupProgressMessages(ctx.api, displayState);
     if (!displayState.finalReplyReceived) {
-      await ctx.reply("relay disconnected, switching to direct mode");
+      relayDelivered = false;
+      debug("relay: no reply received, falling back to SDK");
     }
   }
 
@@ -76,7 +78,7 @@ export async function sendViaRelay(
   cleanupCallbacks();
   typing.stop();
 
-  return true;
+  return relayDelivered;
 }
 
 /**
