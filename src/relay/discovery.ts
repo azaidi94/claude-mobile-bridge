@@ -4,6 +4,7 @@
  */
 
 import { readFile, readdir, unlink } from "fs/promises";
+import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
@@ -25,6 +26,26 @@ const SCAN_TTL_MS = 5_000;
 let lastScanResult: PortFileData[] = [];
 let lastScanTime = 0;
 
+/**
+ * Check if a PID is alive AND is actually a channel-relay process.
+ * Prevents false positives from PID reuse.
+ */
+export function isRelayProcess(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  // Verify the process is actually channel-relay, not a reused PID
+  try {
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: "utf-8" }).trim();
+    return cmd.includes("channel-relay");
+  } catch {
+    return false;
+  }
+}
+
+/** @deprecated Use isRelayProcess instead */
 export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -54,10 +75,14 @@ export async function scanPortFiles(
       if (!file.startsWith("channel-relay-") || !file.endsWith(".json"))
         continue;
       try {
-        const content = await readFile(`/tmp/${file}`, "utf-8");
+        const filePath = `/tmp/${file}`;
+        const content = await readFile(filePath, "utf-8");
         const data = JSON.parse(content) as PortFileData;
-        if (data.port && data.pid && data.cwd && isProcessAlive(data.pid)) {
+        if (data.port && data.pid && data.cwd && isRelayProcess(data.pid)) {
           results.push(data);
+        } else if (data.pid && !isRelayProcess(data.pid)) {
+          // Clean up stale port file (dead or PID-reused process)
+          unlink(filePath).catch(() => {});
         }
       } catch {
         // Skip malformed files
