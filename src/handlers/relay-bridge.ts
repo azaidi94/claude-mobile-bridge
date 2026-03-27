@@ -25,6 +25,7 @@ export async function sendViaRelay(
   message: string,
   username: string,
   chatId: number,
+  imagePath?: string,
 ): Promise<boolean> {
   const active = getActiveSession();
   const sessionDir = session.workingDir || active?.info.dir;
@@ -58,6 +59,7 @@ export async function sendViaRelay(
     chat_id: String(chatId),
     user: username,
     text: message,
+    ...(imagePath ? { image_path: imagePath } : {}),
   });
 
   try {

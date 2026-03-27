@@ -14,6 +14,7 @@ import {
   startTypingIndicator,
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
+import { sendViaRelay } from "./relay-bridge";
 
 /**
  * Handle incoming voice messages.
@@ -94,11 +95,17 @@ export async function handleVoice(ctx: Context): Promise<void> {
       `🎤 "${transcript}"`,
     );
 
-    // 9. Create streaming state and callback
+    // 9. Try relay path first
+    const relayResult = await sendViaRelay(ctx, transcript, username, chatId);
+    if (relayResult) {
+      await auditLog(userId, username, "VOICE_RELAY", transcript, "(via relay)");
+      return;
+    }
+
+    // 10. Fall back to SDK path
     const state = new StreamingState();
     const statusCallback = createStatusCallback(ctx, state);
 
-    // 10. Send to Claude
     const claudeResponse = await session.sendMessageStreaming(
       transcript,
       username,
