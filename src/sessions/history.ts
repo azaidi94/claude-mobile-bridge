@@ -2,6 +2,7 @@
  * Parse conversation history from Claude Code session JSONL files.
  */
 
+import type { Context } from "grammy";
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
@@ -43,6 +44,35 @@ async function findJsonlPath(sessionId: string): Promise<string | null> {
 }
 
 /**
+ * Find the most recent JSONL file for a directory.
+ * Project dirs are path-encoded: /Users/ali/Dev/foo → -Users-ali-Dev-foo
+ */
+async function findLatestJsonlForDir(dir: string): Promise<string | null> {
+  const encoded = dir.replace(/\/+$/, "").replace(/\//g, "-");
+
+  try {
+    const projectDir = join(PROJECTS_DIR, encoded);
+    const files = await readdir(projectDir);
+    let best: { path: string; mtime: number } | null = null;
+
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const filePath = join(projectDir, file);
+      const s = await stat(filePath).catch(() => null);
+      if (s?.isFile()) {
+        const mtime = s.mtime?.getTime() || 0;
+        if (!best || mtime > best.mtime) {
+          best = { path: filePath, mtime };
+        }
+      }
+    }
+    return best?.path || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Join all text blocks from a content array.
  */
 function extractTextBlocks(
@@ -70,11 +100,27 @@ function extractUserText(content: unknown): string | null {
 
 /**
  * Extract text from assistant message content.
- * Returns null if only tool_use/thinking blocks.
+ * Includes text blocks and channel-relay reply text (for relay sessions).
  */
 function extractAssistantText(content: unknown): string | null {
   if (!Array.isArray(content)) return null;
-  return extractTextBlocks(content);
+
+  const texts: string[] = [];
+  const textPart = extractTextBlocks(content);
+  if (textPart) texts.push(textPart);
+
+  // Relay reply text lives in tool_use input, not text blocks
+  for (const block of content) {
+    if (
+      block.type === "tool_use" &&
+      block.name === "mcp__channel-relay__reply" &&
+      block.input?.text
+    ) {
+      texts.push(String(block.input.text));
+    }
+  }
+
+  return texts.join(" ").trim() || null;
 }
 
 /**
@@ -122,7 +168,6 @@ function pairTurns(turns: ParsedTurn[]): ConversationPair[] {
       pairs.push({ user: currentUser, assistant: turn.text });
       currentUser = null;
     }
-    // Skip assistant messages that don't follow a user message
   }
 
   // Trailing user message with no response
@@ -137,12 +182,18 @@ function pairTurns(turns: ParsedTurn[]): ConversationPair[] {
  * Get recent conversation pairs from a session JSONL file.
  */
 export async function getRecentHistory(
-  sessionId: string,
+  sessionId?: string,
   maxPairs: number = 3,
+  dir?: string,
 ): Promise<ConversationPair[]> {
-  if (!sessionId) return [];
+  let filePath: string | null = null;
 
-  const filePath = await findJsonlPath(sessionId);
+  if (sessionId) {
+    filePath = await findJsonlPath(sessionId);
+  }
+  if (!filePath && dir) {
+    filePath = await findLatestJsonlForDir(dir);
+  }
   if (!filePath) return [];
 
   try {
@@ -199,6 +250,20 @@ export function formatHistoryMessage(pairs: ConversationPair[]): string {
   }
 
   return "";
+}
+
+/**
+ * Show recent history for a session in Telegram.
+ */
+export async function sendSwitchHistory(
+  ctx: Context,
+  info: { id?: string; dir: string },
+): Promise<void> {
+  const history = await getRecentHistory(info.id, 1, info.dir);
+  const msg = formatHistoryMessage(history);
+  if (msg) {
+    await ctx.reply(msg, { parse_mode: "HTML" });
+  }
 }
 
 function renderPairs(pairs: ConversationPair[]): string {

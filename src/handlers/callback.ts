@@ -26,6 +26,7 @@ import {
   getSessions,
   updatePinnedStatus,
   getGitBranch,
+  sendSwitchHistory,
 } from "../sessions";
 import { startWatchingSession } from "./watch";
 import { escapeHtml } from "../formatting";
@@ -178,6 +179,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
           reply_markup: { inline_keyboard: buttons },
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
+
+        await sendSwitchHistory(ctx, active.info);
 
         // Auto-watch desktop sessions
         if (active.info.source === "desktop") {

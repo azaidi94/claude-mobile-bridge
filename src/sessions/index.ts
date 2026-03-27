@@ -40,4 +40,4 @@ export {
   type StatusInfo,
 } from "./status-message";
 
-export { getRecentHistory, formatHistoryMessage } from "./history";
+export { getRecentHistory, formatHistoryMessage, sendSwitchHistory } from "./history";

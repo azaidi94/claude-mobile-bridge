@@ -21,8 +21,7 @@ import {
   removeSession,
   updatePinnedStatus,
   getGitBranch,
-  getRecentHistory,
-  formatHistoryMessage,
+  sendSwitchHistory,
 } from "../sessions";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import {
@@ -506,6 +505,8 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       session.loadFromRegistry(active.info);
       const chatId = ctx.chat?.id;
       const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
+
+      await sendSwitchHistory(ctx, active.info);
 
       // Auto-watch desktop sessions
       if (active.info.source === "desktop" && chatId) {
