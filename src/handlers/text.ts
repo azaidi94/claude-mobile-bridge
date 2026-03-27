@@ -183,6 +183,7 @@ export async function handleText(ctx: Context): Promise<void> {
     // Try relay first (keeps desktop session alive)
     const relayed = await sendWatchRelay(chatId, username, message);
     if (relayed) {
+      ctx.replyWithChatAction("typing").catch(() => {});
       await auditLog(userId, username, "WATCH_RELAY", message, "(via relay)");
       return;
     }
