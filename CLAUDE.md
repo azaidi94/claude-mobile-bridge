@@ -7,7 +7,7 @@ Telegram bot for controlling Claude Code sessions remotely.
 ```bash
 bun run dev          # Run bot with watch mode
 bun run typecheck    # Typecheck
-bun test             # Run tests
+bun run test         # Run tests
 ```
 
 ## Patterns
