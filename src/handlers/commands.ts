@@ -32,8 +32,8 @@ import {
   sendPlanContent,
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
-import { isRelayAvailable, getRelayDirs } from "../relay";
-import { startWatchingSession } from "./watch";
+import { isRelayAvailable, getRelayDirs, disconnectRelay } from "../relay";
+import { startWatchingSession, stopWatching } from "./watch";
 
 /**
  * /start - Show welcome message and status.
@@ -205,9 +205,24 @@ export async function handleKill(ctx: Context): Promise<void> {
     session.clearStopRequested();
   }
 
-  if (!session.isActive) {
+  const chatId = ctx.chat?.id;
+  const activeSession = getActiveSession();
+  const sessionDir = session.workingDir || activeSession?.info.dir;
+  const hasRelay = sessionDir ? await isRelayAvailable(sessionDir) : false;
+
+  if (!session.isActive && !hasRelay) {
     await ctx.reply("⏸️ No active session.");
     return;
+  }
+
+  // Disconnect relay if active
+  if (sessionDir && hasRelay) {
+    disconnectRelay(sessionDir);
+  }
+
+  // Stop watching if active
+  if (chatId) {
+    stopWatching(chatId, ctx.api);
   }
 
   // Get session name before killing (kill() clears it)
