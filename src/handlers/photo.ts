@@ -57,7 +57,27 @@ async function processPhotos(
   username: string,
   chatId: number,
 ): Promise<void> {
-  // Build prompt
+  // Mark processing started (allows /stop to work during relay and SDK paths)
+  const stopProcessing = session.startProcessing();
+
+  // Try relay path first (single photo only — relay supports one image_path)
+  if (photoPaths.length === 1) {
+    const relayText = caption || "Please analyze this image";
+    const relayResult = await sendViaRelay(
+      ctx,
+      relayText,
+      username,
+      chatId,
+      photoPaths[0],
+    );
+    if (relayResult) {
+      stopProcessing();
+      await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
+      return;
+    }
+  }
+
+  // Build prompt with file paths for SDK path
   let prompt: string;
   if (photoPaths.length === 1) {
     prompt = caption
@@ -69,24 +89,6 @@ async function processPhotos(
       ? `[Photos:\n${pathsList}]\n\n${caption}`
       : `Please analyze these ${photoPaths.length} images:\n${pathsList}`;
   }
-
-  // Try relay path first (single photo only — relay supports one image_path)
-  if (photoPaths.length === 1) {
-    const relayResult = await sendViaRelay(
-      ctx,
-      prompt,
-      username,
-      chatId,
-      photoPaths[0],
-    );
-    if (relayResult) {
-      await auditLog(userId, username, "PHOTO_RELAY", prompt, "(via relay)");
-      return;
-    }
-  }
-
-  // Fall back to SDK path
-  const stopProcessing = session.startProcessing();
 
   // Start typing
   const typing = startTypingIndicator(ctx);
