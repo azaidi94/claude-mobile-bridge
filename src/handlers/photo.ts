@@ -11,6 +11,7 @@ import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { sendViaRelay } from "./relay-bridge";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -56,9 +57,6 @@ async function processPhotos(
   username: string,
   chatId: number,
 ): Promise<void> {
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
-
   // Build prompt
   let prompt: string;
   if (photoPaths.length === 1) {
@@ -71,6 +69,24 @@ async function processPhotos(
       ? `[Photos:\n${pathsList}]\n\n${caption}`
       : `Please analyze these ${photoPaths.length} images:\n${pathsList}`;
   }
+
+  // Try relay path first (single photo only — relay supports one image_path)
+  if (photoPaths.length === 1) {
+    const relayResult = await sendViaRelay(
+      ctx,
+      prompt,
+      username,
+      chatId,
+      photoPaths[0],
+    );
+    if (relayResult) {
+      await auditLog(userId, username, "PHOTO_RELAY", prompt, "(via relay)");
+      return;
+    }
+  }
+
+  // Fall back to SDK path
+  const stopProcessing = session.startProcessing();
 
   // Start typing
   const typing = startTypingIndicator(ctx);
