@@ -31,6 +31,7 @@ function writePortFile(port: number): void {
   const data = {
     port,
     pid: process.pid,
+    ppid: process.ppid,
     cwd,
     startedAt: new Date().toISOString(),
   };

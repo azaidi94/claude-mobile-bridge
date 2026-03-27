@@ -69,25 +69,42 @@ async function loadActiveSession(): Promise<string | null> {
   }
 }
 
+interface ClaudeProcess {
+  pid: number;
+  dir: string;
+}
+
 /**
- * Get directories of running Claude Code processes.
+ * Get running Claude Code processes with their PIDs and working directories.
  * Only includes processes with a TTY (filters out orphans).
  */
-async function getRunningClaudeDirectories(): Promise<Map<string, number>> {
-  const dirs = new Map<string, number>();
+async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
+  const processes: ClaudeProcess[] = [];
   try {
-    // Find claude processes with a TTY (not "??") and get their working directories
-    // No sort -u: we need counts per directory for multi-session support
-    const { stdout } = await execAsync(
-      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}' | xargs -I{} lsof -p {} -a -d cwd -Fn 2>/dev/null | grep "^n" | cut -c2- | sort`,
+    // Get PIDs of Claude processes with a TTY
+    const { stdout: pidOutput } = await execAsync(
+      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}'`,
     );
-    for (const line of stdout.trim().split("\n")) {
-      if (line) dirs.set(line, (dirs.get(line) || 0) + 1);
+    const pids = pidOutput.trim().split("\n").filter(Boolean);
+    if (pids.length === 0) return [];
+
+    // Get working directory for each PID via lsof (single call)
+    const { stdout: lsofOutput } = await execAsync(
+      `lsof -p ${pids.join(",")} -a -d cwd -Fpn 2>/dev/null`,
+    );
+
+    let currentPid = 0;
+    for (const line of lsofOutput.trim().split("\n")) {
+      if (line.startsWith("p")) {
+        currentPid = parseInt(line.slice(1));
+      } else if (line.startsWith("n") && currentPid) {
+        processes.push({ pid: currentPid, dir: line.slice(1) });
+      }
     }
   } catch {
     // No claude processes running
   }
-  return dirs;
+  return processes;
 }
 
 /**
@@ -157,8 +174,15 @@ function generateName(dir: string): string {
 async function scanSessions(): Promise<SessionInfo[]> {
   const found: SessionInfo[] = [];
 
-  // Get directories with running Claude processes (with count per dir)
-  const runningDirs = await getRunningClaudeDirectories();
+  // Get running Claude processes with individual PIDs
+  const runningProcesses = await getRunningClaudeProcesses();
+
+  // Build dir count map for existing logic
+  const runningDirs = new Map<string, number>();
+  for (const p of runningProcesses) {
+    runningDirs.set(p.dir, (runningDirs.get(p.dir) || 0) + 1);
+  }
+
   if (runningDirs.size === 0) {
     // Still check port files even with no detected processes
     const portFiles = await scanPortFiles(true);
@@ -261,7 +285,49 @@ async function scanSessions(): Promise<SessionInfo[]> {
     }
   }
 
+  assignPidsToSessions(found, runningProcesses);
+
   return found;
+}
+
+/**
+ * Assign Claude process PIDs to discovered sessions.
+ * Uses birth-order heuristic: ascending PID → ascending mtime.
+ */
+function assignPidsToSessions(
+  sessions: SessionInfo[],
+  processes: ClaudeProcess[],
+): void {
+  const sessionsByDir = new Map<string, SessionInfo[]>();
+  for (const s of sessions) {
+    const list = sessionsByDir.get(s.dir) || [];
+    list.push(s);
+    sessionsByDir.set(s.dir, list);
+  }
+
+  const processesByDir = new Map<string, number[]>();
+  for (const p of processes) {
+    const list = processesByDir.get(p.dir) || [];
+    list.push(p.pid);
+    processesByDir.set(p.dir, list);
+  }
+
+  for (const [dir, dirSessions] of sessionsByDir) {
+    const pids = processesByDir.get(dir);
+    if (!pids || pids.length === 0) continue;
+
+    if (pids.length === 1) {
+      for (const s of dirSessions) s.pid = pids[0];
+    } else {
+      const sortedPids = [...pids].sort((a, b) => a - b);
+      const sortedSessions = [...dirSessions].sort(
+        (a, b) => a.lastActivity - b.lastActivity,
+      );
+      for (let i = 0; i < Math.min(sortedSessions.length, sortedPids.length); i++) {
+        sortedSessions[i]!.pid = sortedPids[i]!;
+      }
+    }
+  }
 }
 
 /**

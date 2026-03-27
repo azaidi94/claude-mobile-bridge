@@ -12,6 +12,7 @@ import { debug, info } from "../logger";
 export interface PortFileData {
   port: number;
   pid: number;
+  ppid?: number;
   cwd: string;
   startedAt: string;
 }
@@ -85,47 +86,61 @@ export async function isRelayAvailable(
 
 export async function getRelayClient(
   sessionDir?: string,
+  claudePid?: number,
 ): Promise<RelayClient | null> {
-  // Check cache first — fast path, no I/O
+  // Fast path: check cache before I/O
   if (sessionDir) {
-    const cached = clientCache.get(sessionDir);
+    const key = cacheKey(sessionDir, claudePid);
+    const cached = clientCache.get(key);
     if (cached?.client.isConnected) return cached.client;
     if (cached) {
       cached.client.disconnect();
-      clientCache.delete(sessionDir);
+      clientCache.delete(key);
     }
   }
 
   const alive = await scanPortFiles();
   if (alive.length === 0) return null;
 
-  // Find matching relay
-  const target = sessionDir
-    ? alive.find((pf) => pf.cwd === sessionDir)
-    : alive[0];
+  // Find matching relay — prefer ppid match when claudePid provided
+  let target: PortFileData | undefined;
+  if (sessionDir) {
+    if (claudePid) {
+      target = alive.find((pf) => pf.cwd === sessionDir && pf.ppid === claudePid);
+    }
+    if (!target) target = alive.find((pf) => pf.cwd === sessionDir);
+  } else {
+    target = alive[0];
+  }
   if (!target) return null;
 
-  // Check if already connected at same port
-  const cached = clientCache.get(target.cwd);
+  const key = cacheKey(target.cwd, claudePid);
+
+  // Return cached client if connected at same port (covers no-sessionDir path)
+  const cached = clientCache.get(key);
   if (cached?.client.isConnected && cached.port === target.port) {
     return cached.client;
   }
   if (cached) {
     cached.client.disconnect();
-    clientCache.delete(target.cwd);
+    clientCache.delete(key);
   }
 
   // Connect
   const client = new RelayClient();
   try {
     await client.connect(target.port);
-    clientCache.set(target.cwd, { client, port: target.port });
-    info(`relay: connected to ${target.cwd} on port ${target.port}`);
+    clientCache.set(key, { client, port: target.port });
+    info(`relay: connected to ${target.cwd} on port ${target.port} (ppid=${target.ppid || "?"})`);
     return client;
   } catch (err) {
     debug(`relay: connect failed for ${target.cwd}: ${err}`);
     return null;
   }
+}
+
+function cacheKey(dir: string, pid?: number): string {
+  return pid ? `${dir}\0${pid}` : dir;
 }
 
 export async function getRelayDirs(): Promise<string[]> {
@@ -134,10 +149,11 @@ export async function getRelayDirs(): Promise<string[]> {
 }
 
 export function disconnectRelay(sessionDir: string): void {
-  const cached = clientCache.get(sessionDir);
-  if (cached) {
-    cached.client.disconnect();
-    clientCache.delete(sessionDir);
+  for (const [key, { client }] of clientCache) {
+    if (key === sessionDir || key.startsWith(`${sessionDir}\0`)) {
+      client.disconnect();
+      clientCache.delete(key);
+    }
   }
 }
 

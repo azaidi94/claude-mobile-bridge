@@ -54,6 +54,7 @@ interface WatchState extends TailDisplayState {
   sessionName: string;
   sessionId: string;
   sessionDir: string;
+  sessionPid?: number;
   tailer: SessionTailer;
   lastEventTime: number;
 }
@@ -80,7 +81,7 @@ export async function sendWatchRelay(
   const state = watches.get(chatId);
   if (!state) return false;
 
-  const client = await getRelayClient(state.sessionDir);
+  const client = await getRelayClient(state.sessionDir, state.sessionPid);
   if (!client) return false;
 
   client.sendMessage({
@@ -265,6 +266,7 @@ export async function startWatchingSession(
     sessionName: targetName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
+    sessionPid: sessionInfo.pid,
     tailer,
     chatId,
     lastEventTime: Date.now(),

@@ -9,4 +9,6 @@ export interface SessionInfo {
   dir: string; // Working directory
   lastActivity: number; // Unix timestamp
   source: "telegram" | "desktop";
+  /** Claude Code process PID (desktop sessions only, used for relay disambiguation). */
+  pid?: number;
 }

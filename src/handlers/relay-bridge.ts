@@ -30,7 +30,8 @@ export async function sendViaRelay(
   const sessionDir = session.workingDir || active?.info.dir;
   if (!sessionDir) return false;
 
-  const client = await getRelayClient(sessionDir);
+  const claudePid = active?.info.pid;
+  const client = await getRelayClient(sessionDir, claudePid);
   if (!client) return false;
 
   const sessionId = active?.info.id || session.sessionId;
