@@ -10,7 +10,7 @@ import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { formatTimeAgo, escapeHtml } from "../formatting";
+import { formatTimeAgo, escapeHtml, tildePath } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -31,7 +31,7 @@ import {
   sendPlanContent,
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
-import { isRelayAvailable, getRelayDirs, disconnectRelay } from "../relay";
+import { isRelayAvailable, getRelayDirs, disconnectRelay, scanPortFiles } from "../relay";
 import { startWatchingSession, stopWatching } from "./watch";
 
 /**
@@ -72,7 +72,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `<b>Sessions:</b>\n` +
       `/list - Show all sessions\n` +
       `/switch &lt;name&gt; - Switch to session\n` +
-      `/new [name] [path] - Create new session\n\n` +
+      `/new [name] [path] - Create new session\n` +
+      `/spawn [path] - Spawn desktop session (cmux)\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +
       `/unwatch - Stop watching\n\n` +
@@ -297,11 +298,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Working directory
-  const dir = (
+  const dir = tildePath(
     session.workingDir ||
     activeSession?.info.dir ||
     WORKING_DIR
-  ).replace(/^\/Users\/[^/]+/, "~");
+  );
   lines.push(`📁 <code>${dir}</code>`);
 
   // Relay status
@@ -448,7 +449,7 @@ export async function handleList(ctx: Context): Promise<void> {
     const s = sessions[i]!;
     const isActive = active?.name === s.name;
     const marker = isActive ? "✅ " : "• ";
-    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const dir = tildePath(s.dir);
     const ago = formatTimeAgo(s.lastActivity);
     const branch = branches[i];
     const hasRelay = relayDirSet.has(s.dir);
@@ -504,7 +505,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     if (active) {
       session.loadFromRegistry(active.info);
       const chatId = ctx.chat?.id;
-      const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
+      const dir = tildePath(active.info.dir);
 
       await sendSwitchHistory(ctx, active.info);
 
@@ -983,5 +984,110 @@ export async function handleLs(ctx: Context): Promise<void> {
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
   } catch {
     await ctx.reply("❌ Cannot read directory.");
+  }
+}
+
+/**
+ * /spawn [path] - Spawn a desktop Claude session in cmux.
+ */
+export async function handleSpawn(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (!chatId) return;
+
+  if (!Bun.which("cmux")) {
+    await ctx.reply(
+      "❌ <b>cmux required</b>\n\n" +
+        "<code>/spawn</code> opens a desktop Claude terminal via cmux.\n" +
+        "Install from: <a href=\"https://cmux.dev\">cmux.dev</a>\n\n" +
+        "Use <code>/new</code> for SDK-based sessions instead.",
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  const text = ctx.message?.text || "";
+  const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
+  const explicitPath = rawPath ? resolve(WORKING_DIR, rawPath) : WORKING_DIR;
+
+  try {
+    const s = await stat(explicitPath);
+    if (!s.isDirectory()) {
+      await ctx.reply("❌ Not a directory.");
+      return;
+    }
+  } catch {
+    await ctx.reply("❌ Path does not exist.");
+    return;
+  }
+
+  const dir = tildePath(explicitPath);
+  await ctx.reply(`🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`, {
+    parse_mode: "HTML",
+  });
+
+  try {
+    const wsResult = Bun.spawnSync(["cmux", "new-workspace", "--cwd", explicitPath]);
+    const wsOutput = wsResult.stdout.toString().trim();
+    const wsMatch = wsOutput.match(/workspace:(\d+)/);
+    if (!wsMatch) {
+      await ctx.reply("❌ Failed to create cmux workspace.");
+      return;
+    }
+    const workspaceId = `workspace:${wsMatch[1]}`;
+
+    await Bun.sleep(1000);
+    Bun.spawnSync(["cmux", "send", "--workspace", workspaceId, "cc\n"]);
+
+    // Accept dev channels prompt
+    await Bun.sleep(5000);
+    Bun.spawnSync(["cmux", "send-key", "--workspace", workspaceId, "Enter"]);
+
+    await ctx.reply("⏳ Waiting for Claude to start...");
+
+    const deadline = Date.now() + 20_000;
+    let found = false;
+    while (Date.now() < deadline) {
+      await Bun.sleep(2000);
+      const portFiles = await scanPortFiles(true);
+      if (portFiles.some((pf) => pf.cwd === explicitPath)) {
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      await ctx.reply("⚠️ Session spawned but relay not detected yet. Check cmux and try /list.");
+      return;
+    }
+
+    await forceRefresh();
+    const sessions = getSessions();
+    const spawned = sessions.find((s) => s.dir === explicitPath);
+
+    if (spawned) {
+      setActiveSession(spawned.name);
+      const watching = await startWatchingSession(ctx.api, chatId, spawned.name);
+      if (watching) {
+        await ctx.reply(
+          `✅ <b>${escapeHtml(spawned.name)}</b> ready\n` +
+            `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+            `Watching live. Type a message to send via relay.`,
+          { parse_mode: "HTML" },
+        );
+      } else {
+        await ctx.reply(`✅ <b>${escapeHtml(spawned.name)}</b> ready`, { parse_mode: "HTML" });
+      }
+    } else {
+      await ctx.reply("✅ Session spawned. Use /list to find it.");
+    }
+  } catch (err) {
+    await ctx.reply(`❌ Spawn failed: ${String(err).slice(0, 200)}`);
   }
 }
