@@ -62,6 +62,29 @@ interface WatchState extends TailDisplayState {
 // Active watches: chatId -> WatchState
 const watches = new Map<number, WatchState>();
 
+// Typing indicators: chatId -> stop function
+const typingIndicators = new Map<number, () => void>();
+
+function startWatchTyping(botApi: Api, chatId: number): void {
+  stopWatchTyping(chatId);
+  let running = true;
+  const loop = async () => {
+    while (running) {
+      try {
+        await botApi.sendChatAction(chatId, "typing");
+      } catch {}
+      await Bun.sleep(4000);
+    }
+  };
+  loop();
+  typingIndicators.set(chatId, () => { running = false; });
+}
+
+function stopWatchTyping(chatId: number): void {
+  typingIndicators.get(chatId)?.();
+  typingIndicators.delete(chatId);
+}
+
 /**
  * Check if a chat is currently watching a session.
  */
@@ -107,6 +130,7 @@ export function stopWatching(
       finalizeTextMessage(botApi, state);
     }
     state.tailer.stop();
+    stopWatchTyping(chatId);
     watches.delete(chatId);
     info(`watch: stopped for chat ${chatId}`);
   }
@@ -121,6 +145,7 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
   for (const [chatId, state] of watches) {
     if (state.sessionDir === sessionDir) {
       state.tailer.stop();
+      stopWatchTyping(chatId);
       watches.delete(chatId);
 
       // Load session for resume
@@ -277,6 +302,7 @@ export async function startWatchingSession(
     segmentDone: true,
   };
   watches.set(chatId, watchState);
+  startWatchTyping(botApi, chatId);
   await tailer.start();
 
   const branch = await getGitBranch(sessionInfo.dir);
