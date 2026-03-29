@@ -132,14 +132,20 @@ function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
-function sendFile(botApi: Api, chatId: number, filePath: string): void {
+async function sendFile(botApi: Api, chatId: number, filePath: string): Promise<void> {
   const ext = "." + (filePath.toLowerCase().split(".").pop() || "");
-  const name = filePath.split("/").pop();
-  const file = Bun.file(filePath);
+  const name = filePath.split("/").pop() || "file";
 
-  if (PHOTO_EXTS.has(ext)) {
-    botApi.sendPhoto(chatId, new InputFile(file.stream(), name)).catch((err) => warn(`relay file: ${err}`));
-  } else {
-    botApi.sendDocument(chatId, new InputFile(file.stream(), name)).catch((err) => warn(`relay file: ${err}`));
+  try {
+    const buf = Buffer.from(await Bun.file(filePath).arrayBuffer());
+    const input = new InputFile(buf, name);
+
+    if (PHOTO_EXTS.has(ext)) {
+      await botApi.sendPhoto(chatId, input);
+    } else {
+      await botApi.sendDocument(chatId, input);
+    }
+  } catch (err) {
+    warn(`relay file ${name}: ${err}`);
   }
 }
