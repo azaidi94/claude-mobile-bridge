@@ -63,7 +63,7 @@ interface WatchState extends TailDisplayState {
 const watches = new Map<number, WatchState>();
 
 // Activity-based typing: starts on events, auto-stops after idle
-const TYPING_IDLE_MS = 10_000;
+const TYPING_IDLE_MS = 5_000;
 const typingState = new Map<number, { running: boolean; timeout: Timer | null }>();
 
 /** Signal activity — starts or extends the typing indicator. */
@@ -385,7 +385,14 @@ export function handleTailEvent(
   if (state.finalReplyReceived) return;
 
   const { chatId } = state;
-  touchWatchTyping(botApi, chatId);
+
+  // Typing only during "working" phases — stop when user-visible output arrives
+  if (event.type === "thinking" || event.type === "tool" || event.type === "user") {
+    touchWatchTyping(botApi, chatId);
+  } else {
+    stopWatchTyping(chatId);
+  }
+
   const trackProgress = (msg: Message) => {
     state.progressMessages?.push(msg);
   };
