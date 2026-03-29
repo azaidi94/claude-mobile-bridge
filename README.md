@@ -24,7 +24,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 | Category | Commands |
 | --- | --- |
-| Sessions | `/list`, `/switch`, `/new`, `/kill` |
+| Sessions | `/list`, `/switch`, `/new`, `/spawn`, `/kill` |
 | Control | `/plan`, `/stop`, `/retry`, `/status`, `/model`, `/restart` |
 | Live handoff | `/watch`, `/unwatch` |
 | Task queue | `/queue`, `/skip` |
@@ -76,6 +76,13 @@ Start Claude Code normally and sessions appear in `/list` automatically:
 ```bash
 claude                    # Current directory
 claude --cwd ~/code/foo   # Specific directory
+```
+
+Or spawn a desktop session directly from Telegram (requires [cmux](https://cmux.dev)):
+
+```
+/spawn myproject          # Relative to CLAUDE_WORKING_DIR
+/spawn /absolute/path     # Absolute path
 ```
 
 ## Development

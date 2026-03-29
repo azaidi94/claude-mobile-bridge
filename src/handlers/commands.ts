@@ -10,7 +10,7 @@ import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { formatTimeAgo, escapeHtml, tildePath } from "../formatting";
+import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -298,11 +298,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Working directory
-  const dir = tildePath(
+  const dir = (
     session.workingDir ||
     activeSession?.info.dir ||
     WORKING_DIR
-  );
+  ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
   // Relay status
@@ -449,7 +449,7 @@ export async function handleList(ctx: Context): Promise<void> {
     const s = sessions[i]!;
     const isActive = active?.name === s.name;
     const marker = isActive ? "✅ " : "• ";
-    const dir = tildePath(s.dir);
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     const ago = formatTimeAgo(s.lastActivity);
     const branch = branches[i];
     const hasRelay = relayDirSet.has(s.dir);
@@ -505,7 +505,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     if (active) {
       session.loadFromRegistry(active.info);
       const chatId = ctx.chat?.id;
-      const dir = tildePath(active.info.dir);
+      const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
 
       await sendSwitchHistory(ctx, active.info);
 
@@ -1027,7 +1027,7 @@ export async function handleSpawn(ctx: Context): Promise<void> {
     return;
   }
 
-  const dir = tildePath(explicitPath);
+  const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
   await ctx.reply(`🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`, {
     parse_mode: "HTML",
   });
