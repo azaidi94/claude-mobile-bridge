@@ -62,14 +62,27 @@ interface WatchState extends TailDisplayState {
 // Active watches: chatId -> WatchState
 const watches = new Map<number, WatchState>();
 
-// Typing indicators: chatId -> stop function
-const typingIndicators = new Map<number, () => void>();
+// Activity-based typing: starts on events, auto-stops after idle
+const TYPING_IDLE_MS = 10_000;
+const typingState = new Map<number, { running: boolean; timeout: Timer | null }>();
 
-function startWatchTyping(botApi: Api, chatId: number): void {
-  stopWatchTyping(chatId);
-  let running = true;
+/** Signal activity — starts or extends the typing indicator. */
+function touchWatchTyping(botApi: Api, chatId: number): void {
+  let entry = typingState.get(chatId);
+  if (!entry) {
+    entry = { running: false, timeout: null };
+    typingState.set(chatId, entry);
+  }
+
+  // Reset idle timeout
+  if (entry.timeout) clearTimeout(entry.timeout);
+  entry.timeout = setTimeout(() => stopWatchTyping(chatId), TYPING_IDLE_MS);
+
+  // Start loop if not already running
+  if (entry.running) return;
+  entry.running = true;
   const loop = async () => {
-    while (running) {
+    while (entry!.running) {
       try {
         await botApi.sendChatAction(chatId, "typing");
       } catch {}
@@ -77,12 +90,15 @@ function startWatchTyping(botApi: Api, chatId: number): void {
     }
   };
   loop();
-  typingIndicators.set(chatId, () => { running = false; });
 }
 
 function stopWatchTyping(chatId: number): void {
-  typingIndicators.get(chatId)?.();
-  typingIndicators.delete(chatId);
+  const entry = typingState.get(chatId);
+  if (entry) {
+    entry.running = false;
+    if (entry.timeout) clearTimeout(entry.timeout);
+    typingState.delete(chatId);
+  }
 }
 
 /**
@@ -302,7 +318,6 @@ export async function startWatchingSession(
     segmentDone: true,
   };
   watches.set(chatId, watchState);
-  startWatchTyping(botApi, chatId);
   await tailer.start();
 
   const branch = await getGitBranch(sessionInfo.dir);
@@ -370,6 +385,7 @@ export function handleTailEvent(
   if (state.finalReplyReceived) return;
 
   const { chatId } = state;
+  touchWatchTyping(botApi, chatId);
   const trackProgress = (msg: Message) => {
     state.progressMessages?.push(msg);
   };
