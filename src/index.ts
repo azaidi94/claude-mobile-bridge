@@ -28,7 +28,6 @@ import { notifySessionOffline } from "./handlers";
 import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn } from "./logger";
-import { cleanupPermissions } from "./permissions";
 import pkg from "../package.json";
 
 // Create bot instance using factory
@@ -147,7 +146,6 @@ const stopRunner = () => {
     stopping = true;
     info("stopping bot");
     stopWatcher();
-    cleanupPermissions();
     runner.stop();
   }
 };

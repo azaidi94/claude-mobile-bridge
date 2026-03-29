@@ -29,7 +29,6 @@ import {
   sendSwitchHistory,
 } from "../sessions";
 import { startWatchingSession } from "./watch";
-import { resolvePermission } from "../permissions";
 import { escapeHtml } from "../formatting";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -55,29 +54,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2. Handle permission callbacks: perm:{allow|deny}:{id}
-  if (callbackData.startsWith("perm:")) {
-    const parts = callbackData.split(":");
-    const decision = parts[1] as "allow" | "deny";
-    const requestId = parts.slice(2).join(":"); // ID may contain colons
-
-    if (decision !== "allow" && decision !== "deny") {
-      await ctx.answerCallbackQuery({ text: "Invalid" });
-      return;
-    }
-
-    const resolved = resolvePermission(requestId, decision, ctx.api);
-    await ctx.answerCallbackQuery({
-      text: resolved
-        ? decision === "allow"
-          ? "✅ Allowed"
-          : "❌ Denied"
-        : "Expired",
-    });
-    return;
-  }
-
-  // 3. Handle model switch callbacks: model:{model_id}
+  // 2. Handle model switch callbacks: model:{model_id}
   if (callbackData.startsWith("model:")) {
     const modelId = callbackData.slice(6) as ModelId; // Remove "model:" prefix
 
@@ -150,7 +127,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Handle switch callbacks: switch:{session_name}
+  // 3. Handle switch callbacks: switch:{session_name}
   if (callbackData.startsWith("switch:")) {
     const name = callbackData.slice(7); // Remove "switch:" prefix
     const currentActive = getActiveSession();
@@ -243,7 +220,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 5. Handle plan approval callbacks: plan:{action}:{request_id}
+  // 4. Handle plan approval callbacks: plan:{action}:{request_id}
   if (callbackData.startsWith("plan:")) {
     const parts = callbackData.split(":");
     if (parts.length !== 3) {
@@ -318,7 +295,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 6. Handle AskUserQuestion callbacks: auq:{requestId}:{action}:{optionIdx?}
+  // 5. Handle AskUserQuestion callbacks: auq:{requestId}:{action}:{optionIdx?}
   if (callbackData.startsWith("auq:")) {
     const parts = callbackData.split(":");
     if (parts.length < 3) {

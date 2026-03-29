@@ -31,7 +31,6 @@ import { homedir } from "os";
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
-import { addPermissionWatch, removePermissionWatch } from "../permissions";
 
 // ============== Shared Tail Display State ==============
 
@@ -108,7 +107,6 @@ export function stopWatching(
       finalizeTextMessage(botApi, state);
     }
     state.tailer.stop();
-    removePermissionWatch(state.sessionDir);
     watches.delete(chatId);
     info(`watch: stopped for chat ${chatId}`);
   }
@@ -123,7 +121,6 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
   for (const [chatId, state] of watches) {
     if (state.sessionDir === sessionDir) {
       state.tailer.stop();
-      removePermissionWatch(state.sessionDir);
       watches.delete(chatId);
 
       // Load session for resume
@@ -281,7 +278,6 @@ export async function startWatchingSession(
   };
   watches.set(chatId, watchState);
   await tailer.start();
-  addPermissionWatch(sessionInfo.dir, chatId, botApi);
 
   const branch = await getGitBranch(sessionInfo.dir);
   updatePinnedStatus(botApi, chatId, {
