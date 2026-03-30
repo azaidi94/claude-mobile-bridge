@@ -38,7 +38,8 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 git clone https://github.com/azaidi94/claude-mobile-bridge.git
 cd claude-mobile-bridge
 bun install
-cp .env.example .env   # Edit with your credentials
+cp .env.example .env              # Edit with your credentials
+cp mcp-config.example.ts mcp-config.ts  # Optional: configure MCP tools for SDK sessions
 bun run start
 ```
 
@@ -55,19 +56,28 @@ See `.env.example` for all options (working dir, allowed paths, voice transcript
 
 The channel relay lets you message a running desktop Claude session from Telegram without disconnecting it. Claude sees your message as a channel notification and replies via the relay — both desktop and mobile stay connected.
 
-**Setup:** Add the relay as a global MCP server, then include it in `--channels`:
+**Setup:**
+
+1. Register the relay as a global MCP server (replace the path with your clone location):
 
 ```bash
-claude mcp add -s user channel-relay -- bun run /path/to/src/mcp/channel-relay/server.ts
+claude mcp add -s user channel-relay -- bun run ~/Dev/claude-mobile-bridge/src/mcp/channel-relay/server.ts
 ```
 
-Start sessions with the relay channel:
+2. Start Claude with the relay channel. You need these flags **every time** you launch a session:
 
 ```bash
 claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay
 ```
 
-When a relay is available, the bot uses it automatically. When it's not (regular `claude` sessions), the bot falls back to the SDK path. `/status` shows relay connection state, `/list` shows a 📡 indicator on relay-enabled sessions.
+> **Tip:** Add a shell alias to avoid typing this each time:
+> ```bash
+> alias cc='claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay'
+> ```
+
+**How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. When it's not (regular `claude` sessions), the bot falls back to the SDK path.
+
+`/status` shows relay connection state. `/list` shows a 📡 indicator on relay-enabled sessions.
 
 ## Session Auto-Discovery
 
@@ -84,6 +94,8 @@ Or spawn a desktop session directly from Telegram (requires [cmux](https://cmux.
 /spawn myproject          # Relative to CLAUDE_WORKING_DIR
 /spawn /absolute/path     # Absolute path
 ```
+
+> Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/spawn`.
 
 ## Development
 
