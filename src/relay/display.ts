@@ -80,7 +80,9 @@ export function wireRelayDisplay(
 
     if (msg.files?.length) {
       for (const filePath of msg.files) {
-        sendFile(botApi, chatId, filePath);
+        sendFile(botApi, chatId, filePath).catch((err) =>
+          warn(`relay sendFile dispatch: ${err}`),
+        );
       }
     }
   };
@@ -132,7 +134,7 @@ function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
-async function sendFile(botApi: Api, chatId: number, filePath: string): Promise<void> {
+export async function sendFile(botApi: Api, chatId: number, filePath: string): Promise<void> {
   const ext = "." + (filePath.toLowerCase().split(".").pop() || "");
   const name = filePath.split("/").pop() || "file";
 

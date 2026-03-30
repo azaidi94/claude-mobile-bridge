@@ -31,6 +31,7 @@ import { homedir } from "os";
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
+import { sendFile } from "../relay/display";
 
 // ============== Shared Tail Display State ==============
 
@@ -319,6 +320,20 @@ export async function startWatchingSession(
   };
   watches.set(chatId, watchState);
   await tailer.start();
+
+  // Wire relay client for file attachments (tailer only captures text)
+  const relayClient = await getRelayClient(sessionInfo.dir, sessionInfo.pid);
+  if (relayClient) {
+    relayClient.onReply((msg) => {
+      if (msg.files?.length) {
+        for (const filePath of msg.files) {
+          sendFile(botApi, chatId, filePath).catch((err) =>
+            warn(`watch file: ${err}`),
+          );
+        }
+      }
+    });
+  }
 
   const branch = await getGitBranch(sessionInfo.dir);
   updatePinnedStatus(botApi, chatId, {
