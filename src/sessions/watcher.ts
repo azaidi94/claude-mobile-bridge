@@ -72,6 +72,7 @@ async function loadActiveSession(): Promise<string | null> {
 interface ClaudeProcess {
   pid: number;
   dir: string;
+  sessionId?: string;
 }
 
 /**
@@ -98,8 +99,28 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
       if (line.startsWith("p")) {
         currentPid = parseInt(line.slice(1));
       } else if (line.startsWith("n") && currentPid) {
-        processes.push({ pid: currentPid, dir: line.slice(1) });
+        // Normalize worktree paths back to repo root
+        let dir = line.slice(1);
+        const wtMatch = dir.match(/^(.+)\/\.claude\/worktrees\/.+$/);
+        if (wtMatch) dir = wtMatch[1]!;
+        processes.push({ pid: currentPid, dir });
       }
+    }
+
+    // Extract session IDs from process args for precise matching
+    if (pids.length > 0) {
+      try {
+        const { stdout: argsOutput } = await execAsync(
+          `ps -p ${pids.join(",")} -o pid=,args= 2>/dev/null`,
+        );
+        for (const line of argsOutput.trim().split("\n")) {
+          const match = line.match(/^\s*(\d+)\s.*--session-id\s+(\S+)/);
+          if (match) {
+            const proc = processes.find((p) => p.pid === parseInt(match[1]!));
+            if (proc) proc.sessionId = match[2];
+          }
+        }
+      } catch {}
     }
   } catch {
     // No claude processes running
@@ -292,14 +313,29 @@ async function scanSessions(): Promise<SessionInfo[]> {
 
 /**
  * Assign Claude process PIDs to discovered sessions.
- * Uses birth-order heuristic: ascending PID → ascending mtime.
+ * Matches by session ID when available, falls back to dir-based heuristic.
  */
 function assignPidsToSessions(
   sessions: SessionInfo[],
   processes: ClaudeProcess[],
 ): void {
-  const sessionsByDir = new Map<string, SessionInfo[]>();
+  // First pass: match by session ID (authoritative)
+  const matched = new Set<number>();
   for (const s of sessions) {
+    if (!s.id) continue;
+    const proc = processes.find((p) => p.sessionId === s.id);
+    if (proc) {
+      s.pid = proc.pid;
+      matched.add(proc.pid);
+    }
+  }
+
+  // Second pass: dir-based fallback for sessions without ID match
+  const unmatched = sessions.filter((s) => !s.pid);
+  if (unmatched.length === 0) return;
+
+  const sessionsByDir = new Map<string, SessionInfo[]>();
+  for (const s of unmatched) {
     const list = sessionsByDir.get(s.dir) || [];
     list.push(s);
     sessionsByDir.set(s.dir, list);
@@ -307,6 +343,7 @@ function assignPidsToSessions(
 
   const processesByDir = new Map<string, number[]>();
   for (const p of processes) {
+    if (matched.has(p.pid)) continue;
     const list = processesByDir.get(p.dir) || [];
     list.push(p.pid);
     processesByDir.set(p.dir, list);

@@ -27,7 +27,6 @@ import {
   updatePinnedStatus,
   getGitBranch,
 } from "../sessions";
-import { homedir } from "os";
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
@@ -261,22 +260,8 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  const started = await startWatchingSession(ctx.api, chatId, targetName);
-  if (started) {
-    const sessionInfo = getSession(targetName)!;
-    const home = homedir();
-    const dir = sessionInfo.dir.startsWith(home)
-      ? "~" + sessionInfo.dir.slice(home.length)
-      : sessionInfo.dir;
-    await ctx.reply(
-      `👁 Watching <b>${escapeHtml(targetName)}</b>\n` +
-        `📁 <code>${escapeHtml(dir)}</code>\n\n` +
-        `Live events will stream here.\n` +
-        `Type a message to send via relay.\n` +
-        `Use /unwatch to stop.`,
-      { parse_mode: "HTML" },
-    );
-  } else {
+  const started = await startWatchingAndNotify(ctx, chatId, targetName);
+  if (!started) {
     await ctx.reply("Could not start watching (no session ID or log file).");
   }
 }
@@ -345,6 +330,31 @@ export async function startWatchingSession(
   }).catch(() => {});
 
   info(`watch: started ${targetName} for chat ${chatId}`);
+  return true;
+}
+
+/**
+ * Start watching + send the standard notification reply.
+ * Returns true if watch started successfully.
+ */
+export async function startWatchingAndNotify(
+  ctx: Context,
+  chatId: number,
+  sessionName: string,
+): Promise<boolean> {
+  const watching = await startWatchingSession(ctx.api, chatId, sessionName);
+  if (!watching) return false;
+
+  const sessionInfo = getSession(sessionName);
+  const dir = (sessionInfo?.dir || "").replace(/^\/Users\/[^/]+/, "~");
+  await ctx.reply(
+    `👁 Watching <b>${escapeHtml(sessionName)}</b>\n` +
+      `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+      `Live events will stream here.\n` +
+      `Type a message to send via relay.\n` +
+      `Use /unwatch to stop.`,
+    { parse_mode: "HTML" },
+  );
   return true;
 }
 

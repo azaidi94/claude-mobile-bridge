@@ -28,7 +28,7 @@ import {
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
-import { startWatchingSession } from "./watch";
+import { startWatchingAndNotify, isWatching } from "./watch";
 import { escapeHtml } from "../formatting";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -132,8 +132,17 @@ export async function handleCallback(ctx: Context): Promise<void> {
     const name = callbackData.slice(7); // Remove "switch:" prefix
     const currentActive = getActiveSession();
 
-    // Already on this session
+    // Already on this session — start watching if not already
     if (currentActive?.name === name) {
+      if (
+        currentActive.info.source === "desktop" &&
+        !isWatching(chatId)
+      ) {
+        if (await startWatchingAndNotify(ctx, chatId, name)) {
+          await ctx.answerCallbackQuery({ text: `Watching ${name}` });
+          return;
+        }
+      }
       await ctx.answerCallbackQuery({ text: `Already on ${name}` });
       return;
     }
@@ -184,22 +193,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         // Auto-watch desktop sessions
         if (active.info.source === "desktop") {
-          const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
-          const watching = await startWatchingSession(
-            ctx.api,
-            chatId,
-            active.name,
-          );
-          if (watching) {
-            await ctx.reply(
-              `👁 Watching <b>${escapeHtml(active.name)}</b>\n` +
-                `📁 <code>${escapeHtml(dir)}</code>\n\n` +
-                `Live events will stream here.\n` +
-                `Type a message to send via relay.\n` +
-                `Use /unwatch to stop.`,
-              { parse_mode: "HTML" },
-            );
-          }
+          await startWatchingAndNotify(ctx, chatId, active.name);
         } else {
           // Update pinned status for non-desktop sessions
           getGitBranch(active.info.dir)

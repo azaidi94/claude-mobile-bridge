@@ -32,7 +32,7 @@ import {
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
 import { isRelayAvailable, getRelayDirs, disconnectRelay, scanPortFiles } from "../relay";
-import { startWatchingSession, stopWatching } from "./watch";
+import { startWatchingSession, startWatchingAndNotify, stopWatching, isWatching } from "./watch";
 
 /**
  * /start - Show welcome message and status.
@@ -477,6 +477,12 @@ export async function handleList(ctx: Context): Promise<void> {
     parse_mode: "HTML",
     reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
   });
+
+  // Auto-watch active desktop session if not already watching
+  const chatId = ctx.chat?.id;
+  if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
+    await startWatchingAndNotify(ctx, chatId, active.name);
+  }
 }
 
 /**
@@ -511,21 +517,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
 
       // Auto-watch desktop sessions
       if (active.info.source === "desktop" && chatId) {
-        const watching = await startWatchingSession(
-          ctx.api,
-          chatId,
-          active.name,
-        );
-        if (watching) {
-          await ctx.reply(
-            `👁 Watching <b>${escapeHtml(active.name)}</b>\n` +
-              `📁 <code>${escapeHtml(dir)}</code>\n\n` +
-              `Live events will stream here.\n` +
-              `Type a message to send via relay.\n` +
-              `Use /unwatch to stop.`,
-            { parse_mode: "HTML" },
-          );
-        } else {
+        if (!(await startWatchingAndNotify(ctx, chatId, active.name))) {
           await ctx.reply(
             `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
             { parse_mode: "HTML" },

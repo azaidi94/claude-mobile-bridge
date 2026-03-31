@@ -127,14 +127,15 @@ export async function getRelayClient(
   const alive = await scanPortFiles();
   if (alive.length === 0) return null;
 
-  // Find matching relay — prefer ppid match when claudePid provided
+  // Find matching relay — ppid is authoritative, cwd may differ (e.g. worktrees)
   let target: PortFileData | undefined;
-  if (sessionDir) {
-    if (claudePid) {
-      target = alive.find((pf) => pf.cwd === sessionDir && pf.ppid === claudePid);
-    }
-    if (!target) target = alive.find((pf) => pf.cwd === sessionDir);
-  } else {
+  if (claudePid) {
+    target = alive.find((pf) => pf.ppid === claudePid);
+  }
+  if (!target && sessionDir) {
+    target = alive.find((pf) => pf.cwd === sessionDir);
+  }
+  if (!target && !sessionDir && !claudePid) {
     target = alive[0];
   }
   if (!target) return null;
