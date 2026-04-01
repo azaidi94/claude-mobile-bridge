@@ -30,7 +30,7 @@ import {
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
-import { sendFile } from "../relay/display";
+import { sendFile, sendPdfReply } from "../relay/display";
 
 // ============== Shared Tail Display State ==============
 
@@ -57,6 +57,8 @@ interface WatchState extends TailDisplayState {
   sessionPid?: number;
   tailer: SessionTailer;
   lastEventTime: number;
+  /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
+  suppressRelayReplyText?: boolean;
 }
 
 // Active watches: chatId -> WatchState
@@ -64,7 +66,10 @@ const watches = new Map<number, WatchState>();
 
 // Activity-based typing: starts on events, auto-stops after idle
 const TYPING_IDLE_MS = 5_000;
-const typingState = new Map<number, { running: boolean; timeout: Timer | null }>();
+const typingState = new Map<
+  number,
+  { running: boolean; timeout: Timer | null }
+>();
 
 /** Signal activity — starts or extends the typing indicator. */
 function touchWatchTyping(botApi: Api, chatId: number): void {
@@ -310,6 +315,10 @@ export async function startWatchingSession(
   const relayClient = await getRelayClient(sessionInfo.dir, sessionInfo.pid);
   if (relayClient) {
     relayClient.onReply((msg) => {
+      if (msg.send_as_pdf && msg.text) {
+        watchState.suppressRelayReplyText = true;
+        sendPdfReply(botApi, chatId, msg.text);
+      }
       if (msg.files?.length) {
         for (const filePath of msg.files) {
           sendFile(botApi, chatId, filePath).catch((err) =>
@@ -412,7 +421,11 @@ export function handleTailEvent(
   const { chatId } = state;
 
   // Typing only during "working" phases — stop when user-visible output arrives
-  if (event.type === "thinking" || event.type === "tool" || event.type === "user") {
+  if (
+    event.type === "thinking" ||
+    event.type === "tool" ||
+    event.type === "user"
+  ) {
     touchWatchTyping(botApi, chatId);
   } else {
     stopWatchTyping(chatId);
@@ -520,13 +533,19 @@ export function handleTailEvent(
         finalizeTextMessage(botApi, state);
       }
 
-      const formatted = convertMarkdownToHtml(event.content);
-      botApi
-        .sendMessage(chatId, formatted, { parse_mode: "HTML" })
-        .catch((err) => {
-          debug(`tail relay_reply: ${err}`);
-          botApi.sendMessage(chatId, event.content).catch(() => {});
-        });
+      // Skip sending text if PDF is replacing it
+      const ws = state as WatchState;
+      if (ws.suppressRelayReplyText) {
+        ws.suppressRelayReplyText = false;
+      } else {
+        const formatted = convertMarkdownToHtml(event.content);
+        botApi
+          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
+          .catch((err) => {
+            debug(`tail relay_reply: ${err}`);
+            botApi.sendMessage(chatId, event.content).catch(() => {});
+          });
+      }
 
       state.currentTextMsg = null;
       state.currentTextContent = "";

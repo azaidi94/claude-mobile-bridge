@@ -11,6 +11,7 @@ export interface RelayReply {
   chat_id: string;
   text: string;
   files?: string[];
+  send_as_pdf?: boolean;
 }
 
 export interface RelayEditMessage {
@@ -152,6 +153,7 @@ export class RelayClient {
             chat_id: String(msg.chat_id || ""),
             text: String(msg.text || ""),
             files: (msg.files as string[]) ?? [],
+            send_as_pdf: Boolean(msg.send_as_pdf),
           });
         }
         break;

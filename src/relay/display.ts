@@ -6,9 +6,15 @@
 
 import { InputFile } from "grammy";
 import type { Api } from "grammy";
-import type { RelayClient, RelayReply, RelayEditMessage, RelayReact } from "./client";
+import type {
+  RelayClient,
+  RelayReply,
+  RelayEditMessage,
+  RelayReact,
+} from "./client";
 import type { TailDisplayState } from "../handlers/watch";
 import { convertMarkdownToHtml } from "../formatting";
+import { convertMarkdownToPdf } from "../lib/convert-pdf";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { debug, warn } from "../logger";
 
@@ -59,23 +65,10 @@ export function wireRelayDisplay(
 
     cleanupProgressMessages(botApi, state);
 
-    const formatted = convertMarkdownToHtml(msg.text);
-    if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-      botApi
-        .sendMessage(chatId, formatted, { parse_mode: "HTML" })
-        .catch(() => {
-          botApi.sendMessage(chatId, msg.text).catch(() => {});
-        });
+    if (msg.send_as_pdf) {
+      sendPdfReply(botApi, chatId, msg.text);
     } else {
-      const chunks = splitMessage(msg.text);
-      for (const chunk of chunks) {
-        const chunkHtml = convertMarkdownToHtml(chunk);
-        botApi
-          .sendMessage(chatId, chunkHtml, { parse_mode: "HTML" })
-          .catch(() => {
-            botApi.sendMessage(chatId, chunk).catch(() => {});
-          });
-      }
+      sendTextReply(botApi, chatId, msg.text);
     }
 
     if (msg.files?.length) {
@@ -117,6 +110,40 @@ export function wireRelayDisplay(
   return () => client.clearCallbacks();
 }
 
+/** Convert markdown to PDF and send as document; falls back to text on failure. */
+export function sendPdfReply(botApi: Api, chatId: number, text: string): void {
+  convertMarkdownToPdf(text)
+    .then((buf) => {
+      const input = new InputFile(buf, "response.pdf");
+      botApi
+        .sendDocument(chatId, input)
+        .catch((err) => warn(`pdf send: ${err}`));
+    })
+    .catch((err) => {
+      warn(`pdf convert: ${err}`);
+      sendTextReply(botApi, chatId, text);
+    });
+}
+
+function sendTextReply(botApi: Api, chatId: number, text: string): void {
+  const formatted = convertMarkdownToHtml(text);
+  if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
+    botApi.sendMessage(chatId, formatted, { parse_mode: "HTML" }).catch(() => {
+      botApi.sendMessage(chatId, text).catch(() => {});
+    });
+  } else {
+    const chunks = splitMessage(text);
+    for (const chunk of chunks) {
+      const chunkHtml = convertMarkdownToHtml(chunk);
+      botApi
+        .sendMessage(chatId, chunkHtml, { parse_mode: "HTML" })
+        .catch(() => {
+          botApi.sendMessage(chatId, chunk).catch(() => {});
+        });
+    }
+  }
+}
+
 function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
   if (text.length <= limit) return [text];
   const chunks: string[] = [];
@@ -134,7 +161,11 @@ function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
-export async function sendFile(botApi: Api, chatId: number, filePath: string): Promise<void> {
+export async function sendFile(
+  botApi: Api,
+  chatId: number,
+  filePath: string,
+): Promise<void> {
   const ext = "." + (filePath.toLowerCase().split(".").pop() || "");
   const name = filePath.split("/").pop() || "file";
 
