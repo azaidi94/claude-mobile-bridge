@@ -110,6 +110,7 @@ mock.module("../handlers", () => ({
   handlePwd: mock(() => {}),
   handleCd: mock(() => {}),
   handleLs: mock(() => {}),
+  handleSpawn: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),
