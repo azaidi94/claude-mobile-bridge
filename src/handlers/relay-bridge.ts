@@ -28,14 +28,16 @@ export async function sendViaRelay(
   imagePath?: string,
 ): Promise<boolean> {
   const active = getActiveSession();
+  const sessionId = active?.info.id || session.sessionId;
   const sessionDir = session.workingDir || active?.info.dir;
   if (!sessionDir) return false;
 
-  const claudePid = active?.info.pid;
-  const client = await getRelayClient(sessionDir, claudePid);
+  const client = await getRelayClient({
+    sessionId: sessionId || undefined,
+    sessionDir,
+    claudePid: active?.info.pid,
+  });
   if (!client) return false;
-
-  const sessionId = active?.info.id || session.sessionId;
 
   info(`relay: sending via relay for ${sessionDir}`);
 

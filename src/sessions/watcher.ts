@@ -69,7 +69,7 @@ async function loadActiveSession(): Promise<string | null> {
   }
 }
 
-interface ClaudeProcess {
+export interface ClaudeProcess {
   pid: number;
   dir: string;
   sessionId?: string;
@@ -293,16 +293,26 @@ async function scanSessions(): Promise<SessionInfo[]> {
   }
 
   for (const [dir, pfs] of portsByDir) {
-    const jsonlCount = jsonlCountByDir.get(dir) || 0;
-    // Add port-file sessions beyond what JSONL already covers
-    for (let i = jsonlCount; i < pfs.length; i++) {
+    const knownIds = new Set(
+      found.filter((s) => s.dir === dir && s.id).map((s) => s.id),
+    );
+    let remainingUnnamed = jsonlCountByDir.get(dir) || 0;
+
+    for (const pf of pfs) {
+      if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
+      if (!pf.sessionId && remainingUnnamed > 0) {
+        remainingUnnamed--;
+        continue;
+      }
       found.push({
-        id: "",
+        id: pf.sessionId || "",
         name: "",
         dir,
         lastActivity: Date.now(),
         source: "desktop",
+        pid: pf.ppid,
       });
+      if (pf.sessionId) knownIds.add(pf.sessionId);
     }
   }
 
@@ -315,7 +325,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
  * Assign Claude process PIDs to discovered sessions.
  * Matches by session ID when available, falls back to dir-based heuristic.
  */
-function assignPidsToSessions(
+export function assignPidsToSessions(
   sessions: SessionInfo[],
   processes: ClaudeProcess[],
 ): void {
@@ -330,7 +340,8 @@ function assignPidsToSessions(
     }
   }
 
-  // Second pass: dir-based fallback for sessions without ID match
+  // Second pass: dir-based fallback only when there is exactly one live
+  // unmatched process for the directory. Multiple matches are ambiguous.
   const unmatched = sessions.filter((s) => !s.pid);
   if (unmatched.length === 0) return;
 
@@ -353,16 +364,12 @@ function assignPidsToSessions(
     const pids = processesByDir.get(dir);
     if (!pids || pids.length === 0) continue;
 
-    if (pids.length === 1) {
+    if (pids.length === 1 && dirSessions.length === 1) {
       for (const s of dirSessions) s.pid = pids[0];
-    } else {
-      const sortedPids = [...pids].sort((a, b) => a - b);
-      const sortedSessions = [...dirSessions].sort(
-        (a, b) => a.lastActivity - b.lastActivity,
+    } else if (pids.length > 1 || dirSessions.length > 1) {
+      warn(
+        `watcher: ambiguous pid assignment for ${dir} (${dirSessions.length} sessions, ${pids.length} processes)`,
       );
-      for (let i = 0; i < Math.min(sortedSessions.length, sortedPids.length); i++) {
-        sortedSessions[i]!.pid = sortedPids[i]!;
-      }
     }
   }
 }

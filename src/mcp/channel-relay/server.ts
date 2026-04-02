@@ -18,20 +18,22 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { createServer, type Socket } from "net";
 import { createHash } from "crypto";
-import { writeFileSync, unlinkSync, realpathSync } from "fs";
-import { homedir } from "os";
+import { execSync } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
 const cwd = process.cwd();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 const PORT_FILE = `/tmp/channel-relay-${dirHash}-${process.pid}.json`;
+const parentSessionId = getParentClaudeSessionId();
 
 function writePortFile(port: number): void {
   const data = {
     port,
     pid: process.pid,
     ppid: process.ppid,
+    sessionId: parentSessionId,
     cwd,
     startedAt: new Date().toISOString(),
   };
@@ -42,6 +44,22 @@ function removePortFile(): void {
   try {
     unlinkSync(PORT_FILE);
   } catch {}
+}
+
+function extractSessionIdFromArgs(args: string): string | undefined {
+  const match = args.match(/(?:^|\s)--session-id\s+(\S+)/);
+  return match?.[1];
+}
+
+function getParentClaudeSessionId(ppid = process.ppid): string | undefined {
+  try {
+    const args = execSync(`ps -p ${ppid} -o args=`, {
+      encoding: "utf-8",
+    }).trim();
+    return extractSessionIdFromArgs(args);
+  } catch {
+    return undefined;
+  }
 }
 
 // ── TCP server ─────────────────────────────────────────────────────────

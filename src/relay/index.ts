@@ -4,6 +4,7 @@
 
 export { RelayClient } from "./client";
 export type { RelayReply, RelayEditMessage, RelayReact } from "./client";
+export type { RelaySelector } from "./discovery";
 
 export {
   isRelayAvailable,
@@ -13,6 +14,7 @@ export {
   disconnectAllRelays,
   scanPortFiles,
   invalidateScanCache,
+  selectRelayTarget,
 } from "./discovery";
 
 export {

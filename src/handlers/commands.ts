@@ -218,7 +218,13 @@ export async function handleKill(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   const activeSession = getActiveSession();
   const sessionDir = session.workingDir || activeSession?.info.dir;
-  const hasRelay = sessionDir ? await isRelayAvailable(sessionDir) : false;
+  const hasRelay = sessionDir
+    ? await isRelayAvailable({
+        sessionId: activeSession?.info.id || session.sessionId || undefined,
+        sessionDir,
+        claudePid: activeSession?.info.pid,
+      })
+    : false;
 
   if (!session.isActive && !hasRelay) {
     await ctx.reply("⏸️ No active session.");
@@ -323,9 +329,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Relay status
-  const relayUp = await isRelayAvailable(
-    session.workingDir || activeSession?.info.dir,
-  );
+  const relayUp = await isRelayAvailable({
+    sessionId: activeSession?.info.id || session.sessionId || undefined,
+    sessionDir: session.workingDir || activeSession?.info.dir,
+    claudePid: activeSession?.info.pid,
+  });
   lines.push(relayUp ? "📡 Relay: connected" : "📡 Relay: unavailable");
 
   // Resume command (tap to copy)

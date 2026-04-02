@@ -128,7 +128,11 @@ export async function sendWatchRelay(
   const state = watches.get(chatId);
   if (!state) return false;
 
-  const client = await getRelayClient(state.sessionDir, state.sessionPid);
+  const client = await getRelayClient({
+    sessionId: state.sessionId,
+    sessionDir: state.sessionDir,
+    claudePid: state.sessionPid,
+  });
   if (!client) return false;
 
   client.sendMessage({
@@ -316,7 +320,11 @@ export async function startWatchingSession(
   await tailer.start();
 
   // Wire relay client for file attachments (tailer only captures text)
-  const relayClient = await getRelayClient(sessionInfo.dir, sessionInfo.pid);
+  const relayClient = await getRelayClient({
+    sessionId: sessionInfo.id,
+    sessionDir: sessionInfo.dir,
+    claudePid: sessionInfo.pid,
+  });
   if (relayClient) {
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {

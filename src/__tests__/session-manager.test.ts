@@ -19,6 +19,7 @@ import {
   updateSessionId,
   updateSessionActivity,
 } from "../sessions";
+import type { SessionInfo } from "../sessions";
 
 // Generate unique test names to avoid conflicts with persistent state
 const uniqueId = () =>
@@ -291,6 +292,55 @@ describe("session-manager: concurrent operations", () => {
     expect(ourSessions[0]!.name).toBe(`newest-${prefix}`);
     expect(ourSessions[1]!.name).toBe(`middle-${prefix}`);
     expect(ourSessions[2]!.name).toBe(`oldest-${prefix}`);
+  });
+});
+
+describe("session-manager: pid assignment", () => {
+  test("assigns pid when exactly one unmatched process exists for a directory", async () => {
+    const { assignPidsToSessions } = await import("../sessions/watcher");
+
+    const sessions: SessionInfo[] = [
+      {
+        id: "",
+        name: "repo",
+        dir: "/repo",
+        lastActivity: 1,
+        source: "desktop",
+      },
+    ];
+
+    assignPidsToSessions(sessions, [{ pid: 101, dir: "/repo" }]);
+
+    expect(sessions[0]!.pid).toBe(101);
+  });
+
+  test("does not guess pid when multiple processes share a directory", async () => {
+    const { assignPidsToSessions } = await import("../sessions/watcher");
+
+    const sessions: SessionInfo[] = [
+      {
+        id: "",
+        name: "repo-a",
+        dir: "/repo",
+        lastActivity: 1,
+        source: "desktop",
+      },
+      {
+        id: "",
+        name: "repo-b",
+        dir: "/repo",
+        lastActivity: 2,
+        source: "desktop",
+      },
+    ];
+
+    assignPidsToSessions(sessions, [
+      { pid: 101, dir: "/repo" },
+      { pid: 102, dir: "/repo" },
+    ]);
+
+    expect(sessions[0]!.pid).toBeUndefined();
+    expect(sessions[1]!.pid).toBeUndefined();
   });
 });
 
