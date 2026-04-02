@@ -59,6 +59,8 @@ export function wireRelayDisplay(
   client: RelayClient,
   state: RelayDisplayState,
 ): () => void {
+  const scopeChatId = String(state.chatId);
+
   const onReply = (msg: RelayReply) => {
     state.finalReplyReceived = true;
     const chatId = Number(msg.chat_id) || state.chatId;
@@ -103,11 +105,15 @@ export function wireRelayDisplay(
       .catch((err) => debug(`relay react: ${err}`));
   };
 
-  client.onReply(onReply);
-  client.onEditMessage(onEdit);
-  client.onReact(onReact);
+  client.onReply(onReply, scopeChatId);
+  client.onEditMessage(onEdit, scopeChatId);
+  client.onReact(onReact, scopeChatId);
 
-  return () => client.clearCallbacks();
+  return () => {
+    client.offReply(onReply);
+    client.offEditMessage(onEdit);
+    client.offReact(onReact);
+  };
 }
 
 /** Convert markdown to PDF and send as document; falls back to text on failure. */
