@@ -11,7 +11,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Streaming responses** with live updates
 - **Channel relay** - Inject messages into running desktop sessions without disconnecting them
-- **Live handoff** - Watch desktop Claude sessions in real-time, then take over with a message
+- **Live handoff** - Watch desktop Claude sessions in real-time from Telegram
 - **Task queue** - Queue multiple tasks for sequential background execution
 - **Plan mode** - Have Claude propose a plan before executing
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
@@ -22,13 +22,13 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 ## Commands
 
-| Category | Commands |
-| --- | --- |
-| Sessions | `/list`, `/switch`, `/new`, `/spawn`, `/kill` |
-| Control | `/plan`, `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Live handoff | `/watch`, `/unwatch` |
-| Task queue | `/queue`, `/skip` |
-| Files | `/pwd`, `/cd`, `/ls` |
+| Category     | Commands                                                    |
+| ------------ | ----------------------------------------------------------- |
+| Sessions     | `/list`, `/switch`, `/new`, `/kill`                         |
+| Control      | `/plan`, `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Live handoff | `/watch`, `/unwatch`                                        |
+| Task queue   | `/queue`, `/skip`                                           |
+| Files        | `/pwd`, `/cd`, `/ls`                                        |
 
 ## Quick Start
 
@@ -39,7 +39,7 @@ git clone https://github.com/azaidi94/claude-mobile-bridge.git
 cd claude-mobile-bridge
 bun install
 cp .env.example .env              # Edit with your credentials
-cp mcp-config.example.ts mcp-config.ts  # Optional: configure MCP tools for SDK sessions
+cp mcp-config.example.ts mcp-config.ts  # Optional: configure MCP tools
 bun run start
 ```
 
@@ -71,11 +71,14 @@ claude --channels server:channel-relay --dangerously-load-development-channels s
 ```
 
 > **Tip:** Add a shell alias to avoid typing this each time:
+>
 > ```bash
 > alias cc='claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay'
 > ```
+>
+> `/new` uses this `cc` command inside `cmux`, so make sure the alias or an equivalent wrapper is available in the shell `cmux` starts.
 
-**How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. When it's not (regular `claude` sessions), the bot falls back to the SDK path.
+**How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. If no relay-enabled desktop session is found, use `/new` to spawn one or `/list` to pick an existing session.
 
 `/status` shows relay connection state. `/list` shows a 📡 indicator on relay-enabled sessions.
 
@@ -88,14 +91,15 @@ claude                    # Current directory
 claude --cwd ~/code/foo   # Specific directory
 ```
 
-Or spawn a desktop session directly from Telegram (requires [cmux](https://cmux.dev)):
+Or spawn a relay-enabled desktop session directly from Telegram with `/new` (requires [cmux](https://cmux.dev)):
 
 ```
-/spawn myproject          # Relative to CLAUDE_WORKING_DIR
-/spawn /absolute/path     # Absolute path
+/new                      # CLAUDE_WORKING_DIR
+/new myproject            # Relative to CLAUDE_WORKING_DIR
+/new /absolute/path       # Absolute path
 ```
 
-> Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/spawn`.
+> Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/new`.
 
 ## Development
 
