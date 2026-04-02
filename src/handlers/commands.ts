@@ -31,8 +31,18 @@ import {
   sendPlanContent,
 } from "./streaming";
 import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
-import { isRelayAvailable, getRelayDirs, disconnectRelay, scanPortFiles } from "../relay";
-import { startWatchingSession, startWatchingAndNotify, stopWatching, isWatching } from "./watch";
+import {
+  isRelayAvailable,
+  getRelayDirs,
+  disconnectRelay,
+  scanPortFiles,
+} from "../relay";
+import {
+  startWatchingSession,
+  startWatchingAndNotify,
+  stopWatching,
+  isWatching,
+} from "./watch";
 
 /**
  * /start - Show welcome message and status.
@@ -305,6 +315,13 @@ export async function handleStatus(ctx: Context): Promise<void> {
   ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
+  // Git branch
+  const branchDir = session.workingDir || activeSession?.info.dir;
+  const branch = branchDir ? await getGitBranch(branchDir) : null;
+  if (branch) {
+    lines.push(`🌿 <code>${branch}</code>`);
+  }
+
   // Relay status
   const relayUp = await isRelayAvailable(
     session.workingDir || activeSession?.info.dir,
@@ -518,16 +535,14 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       // Auto-watch desktop sessions
       if (active.info.source === "desktop" && chatId) {
         if (!(await startWatchingAndNotify(ctx, chatId, active.name))) {
-          await ctx.reply(
-            `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
-            { parse_mode: "HTML" },
-          );
+          await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
+            parse_mode: "HTML",
+          });
         }
       } else {
-        await ctx.reply(
-          `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
-          { parse_mode: "HTML" },
-        );
+        await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
+          parse_mode: "HTML",
+        });
       }
     }
   } else {
@@ -951,9 +966,7 @@ export async function handleLs(ctx: Context): Promise<void> {
       return a.name.localeCompare(b.name);
     });
 
-    const lines: string[] = [
-      `📁 <code>${escapeHtml(targetPath)}</code>\n`,
-    ];
+    const lines: string[] = [`📁 <code>${escapeHtml(targetPath)}</code>\n`];
 
     for (const entry of sorted.slice(0, 50)) {
       let icon: string;
@@ -997,7 +1010,7 @@ export async function handleSpawn(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ <b>cmux required</b>\n\n" +
         "<code>/spawn</code> opens a desktop Claude terminal via cmux.\n" +
-        "Install from: <a href=\"https://cmux.dev\">cmux.dev</a>\n\n" +
+        'Install from: <a href="https://cmux.dev">cmux.dev</a>\n\n' +
         "Use <code>/new</code> for SDK-based sessions instead.",
       { parse_mode: "HTML" },
     );
@@ -1020,12 +1033,20 @@ export async function handleSpawn(ctx: Context): Promise<void> {
   }
 
   const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
-  await ctx.reply(`🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`, {
-    parse_mode: "HTML",
-  });
+  await ctx.reply(
+    `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
+    {
+      parse_mode: "HTML",
+    },
+  );
 
   try {
-    const wsResult = Bun.spawnSync(["cmux", "new-workspace", "--cwd", explicitPath]);
+    const wsResult = Bun.spawnSync([
+      "cmux",
+      "new-workspace",
+      "--cwd",
+      explicitPath,
+    ]);
     const wsOutput = wsResult.stdout.toString().trim();
     const wsMatch = wsOutput.match(/workspace:(\d+)/);
     if (!wsMatch) {
@@ -1055,7 +1076,9 @@ export async function handleSpawn(ctx: Context): Promise<void> {
     }
 
     if (!found) {
-      await ctx.reply("⚠️ Session spawned but relay not detected yet. Check cmux and try /list.");
+      await ctx.reply(
+        "⚠️ Session spawned but relay not detected yet. Check cmux and try /list.",
+      );
       return;
     }
 
@@ -1065,7 +1088,11 @@ export async function handleSpawn(ctx: Context): Promise<void> {
 
     if (spawned) {
       setActiveSession(spawned.name);
-      const watching = await startWatchingSession(ctx.api, chatId, spawned.name);
+      const watching = await startWatchingSession(
+        ctx.api,
+        chatId,
+        spawned.name,
+      );
       if (watching) {
         await ctx.reply(
           `✅ <b>${escapeHtml(spawned.name)}</b> ready\n` +
@@ -1074,7 +1101,9 @@ export async function handleSpawn(ctx: Context): Promise<void> {
           { parse_mode: "HTML" },
         );
       } else {
-        await ctx.reply(`✅ <b>${escapeHtml(spawned.name)}</b> ready`, { parse_mode: "HTML" });
+        await ctx.reply(`✅ <b>${escapeHtml(spawned.name)}</b> ready`, {
+          parse_mode: "HTML",
+        });
       }
     } else {
       await ctx.reply("✅ Session spawned. Use /list to find it.");
