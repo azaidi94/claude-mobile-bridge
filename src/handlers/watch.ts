@@ -30,6 +30,7 @@ import {
 import { info, debug, warn } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
+import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply } from "../relay/display";
 
 // ============== Shared Tail Display State ==============
@@ -59,6 +60,8 @@ interface WatchState extends TailDisplayState {
   lastEventTime: number;
   /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
   suppressRelayReplyText?: boolean;
+  /** Cleanup function to remove relay callbacks when watch stops. */
+  relayCleanup?: () => void;
 }
 
 // Active watches: chatId -> WatchState
@@ -151,6 +154,7 @@ export function stopWatching(
       finalizeTextMessage(botApi, state);
     }
     state.tailer.stop();
+    state.relayCleanup?.();
     stopWatchTyping(chatId);
     watches.delete(chatId);
     info(`watch: stopped for chat ${chatId}`);
@@ -314,10 +318,10 @@ export async function startWatchingSession(
   // Wire relay client for file attachments (tailer only captures text)
   const relayClient = await getRelayClient(sessionInfo.dir, sessionInfo.pid);
   if (relayClient) {
-    relayClient.onReply((msg) => {
+    const onReply = (msg: RelayReply) => {
       if (msg.send_as_pdf && msg.text) {
         watchState.suppressRelayReplyText = true;
-        sendPdfReply(botApi, chatId, msg.text);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
       }
       if (msg.files?.length) {
         for (const filePath of msg.files) {
@@ -326,7 +330,9 @@ export async function startWatchingSession(
           );
         }
       }
-    });
+    };
+    relayClient.onReply(onReply);
+    watchState.relayCleanup = () => relayClient.offReply(onReply);
   }
 
   const branch = await getGitBranch(sessionInfo.dir);

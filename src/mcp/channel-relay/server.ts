@@ -198,6 +198,11 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             description:
               "Convert the text (markdown) to a styled PDF and send as a document attachment.",
           },
+          pdf_filename: {
+            type: "string",
+            description:
+              "Filename for the PDF (e.g. 'quarterly-report'). '.pdf' is appended if missing. Defaults to the first markdown heading.",
+          },
         },
         required: ["request_id", "chat_id", "text"],
       },
@@ -243,6 +248,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const text = String(args.text || "");
       const files = (args.files as string[] | undefined) ?? [];
       const send_as_pdf = Boolean(args.send_as_pdf);
+      const pdf_filename = args.pdf_filename
+        ? String(args.pdf_filename)
+        : undefined;
 
       // Validate request_id — prevents reply tool being used for terminal input
       if (!validRequestIds.has(request_id)) {
@@ -258,7 +266,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       validRequestIds.delete(request_id);
 
-      sendToBot({ type: "reply", chat_id, text, files, send_as_pdf });
+      sendToBot({
+        type: "reply",
+        chat_id,
+        text,
+        files,
+        send_as_pdf,
+        pdf_filename,
+      });
 
       return {
         content: [{ type: "text" as const, text: `Sent reply to ${chat_id}` }],

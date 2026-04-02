@@ -12,6 +12,7 @@ export interface RelayReply {
   text: string;
   files?: string[];
   send_as_pdf?: boolean;
+  pdf_filename?: string;
 }
 
 export interface RelayEditMessage {
@@ -118,6 +119,10 @@ export class RelayClient {
     this.replyCallbacks.push(cb);
   }
 
+  offReply(cb: ReplyCallback): void {
+    this.replyCallbacks = this.replyCallbacks.filter((c) => c !== cb);
+  }
+
   onEditMessage(cb: EditCallback): void {
     this.editCallbacks.push(cb);
   }
@@ -154,6 +159,9 @@ export class RelayClient {
             text: String(msg.text || ""),
             files: (msg.files as string[]) ?? [],
             send_as_pdf: Boolean(msg.send_as_pdf),
+            pdf_filename: msg.pdf_filename
+              ? String(msg.pdf_filename)
+              : undefined,
           });
         }
         break;

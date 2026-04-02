@@ -66,7 +66,7 @@ export function wireRelayDisplay(
     cleanupProgressMessages(botApi, state);
 
     if (msg.send_as_pdf) {
-      sendPdfReply(botApi, chatId, msg.text);
+      sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
     } else {
       sendTextReply(botApi, chatId, msg.text);
     }
@@ -111,10 +111,18 @@ export function wireRelayDisplay(
 }
 
 /** Convert markdown to PDF and send as document; falls back to text on failure. */
-export function sendPdfReply(botApi: Api, chatId: number, text: string): void {
+export function sendPdfReply(
+  botApi: Api,
+  chatId: number,
+  text: string,
+  filename?: string,
+): void {
+  const pdfName =
+    sanitizePdfFilename(filename) || deriveFilenameFromMarkdown(text);
+
   convertMarkdownToPdf(text)
     .then((buf) => {
-      const input = new InputFile(buf, "response.pdf");
+      const input = new InputFile(buf, pdfName);
       botApi
         .sendDocument(chatId, input)
         .catch((err) => warn(`pdf send: ${err}`));
@@ -123,6 +131,26 @@ export function sendPdfReply(botApi: Api, chatId: number, text: string): void {
       warn(`pdf convert: ${err}`);
       sendTextReply(botApi, chatId, text);
     });
+}
+
+function sanitizePdfFilename(name?: string): string | null {
+  if (!name) return null;
+  let clean = name.replace(/[/\\<>:"|?*]/g, "_").trim();
+  if (!clean) return null;
+  if (!clean.endsWith(".pdf")) clean += ".pdf";
+  return clean;
+}
+
+function deriveFilenameFromMarkdown(text: string): string {
+  const match = text.match(/^#{1,3}\s+(.+)/m);
+  if (match) {
+    const slug = match[1]!
+      .trim()
+      .replace(/[/\\<>:"|?*]/g, "_")
+      .slice(0, 60);
+    if (slug) return `${slug}.pdf`;
+  }
+  return "response.pdf";
 }
 
 function sendTextReply(botApi: Api, chatId: number, text: string): void {
