@@ -8,9 +8,8 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
-import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { auditLog, auditLogRateLimit } from "../utils";
+import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import {
   createOpId,
@@ -18,6 +17,7 @@ import {
   elapsedMs,
   error as logError,
   info,
+  warn,
 } from "../logger";
 
 // Create photo-specific media group buffer
@@ -54,7 +54,7 @@ async function downloadPhoto(ctx: Context): Promise<string> {
 }
 
 /**
- * Process photos with Claude.
+ * Process photos via relay.
  */
 async function processPhotos(
   ctx: Context,
@@ -65,13 +65,16 @@ async function processPhotos(
   chatId: number,
   opId: string,
 ): Promise<void> {
-  // Mark processing started (allows /stop to work during relay and SDK paths)
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
 
-  // Try relay path first (single photo only — relay supports one image_path)
-  if (photoPaths.length === 1) {
-    const relayText = caption || "Please analyze this image";
+  try {
+    // Relay supports one image_path — send first photo, mention others in text
+    const relayText =
+      photoPaths.length === 1
+        ? caption || "Please analyze this image"
+        : `${caption || "Please analyze these images"}\n\nAdditional photos: ${photoPaths.slice(1).join(", ")}`;
+
     const relayResult = await sendViaRelay(
       ctx,
       relayText,
@@ -81,11 +84,10 @@ async function processPhotos(
       opId,
     );
     if (relayResult) {
-      stopProcessing();
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
       info("request: completed", {
         opId,
-        requestKind: "photo",
+        requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
         chatId,
         userId,
         durationMs: elapsedMs(requestStartedAt),
@@ -94,58 +96,21 @@ async function processPhotos(
       });
       return;
     }
-  }
 
-  // Build prompt with file paths for SDK path
-  let prompt: string;
-  if (photoPaths.length === 1) {
-    prompt = caption
-      ? `[Photo: ${photoPaths[0]}]\n\n${caption}`
-      : `Please analyze this image: ${photoPaths[0]}`;
-  } else {
-    const pathsList = photoPaths.map((p, i) => `${i + 1}. ${p}`).join("\n");
-    prompt = caption
-      ? `[Photos:\n${pathsList}]\n\n${caption}`
-      : `Please analyze these ${photoPaths.length} images:\n${pathsList}`;
-  }
-
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
-  try {
-    const response = await session.sendMessageStreaming(
-      prompt,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx,
-      "bypassPermissions",
-      {
-        opId,
-        requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
-      },
-    );
-
-    await auditLog(userId, username, "PHOTO", prompt, response);
-    info("request: completed", {
+    // No relay available
+    warn("request: no desktop session available", {
       opId,
-      requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
+      requestKind: "photo",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
-      path: "sdk",
-      itemCount: photoPaths.length,
     });
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
   } finally {
     stopProcessing();
-    typing.stop();
   }
 }
 

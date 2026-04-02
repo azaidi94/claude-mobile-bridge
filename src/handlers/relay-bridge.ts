@@ -1,7 +1,7 @@
 /**
  * Relay bridge — sends a message through the channel relay to a running
- * desktop Claude session. Returns true if relay was used, false to fall
- * back to the SDK path.
+ * desktop Claude session. Returns true if relay delivered, false if no
+ * relay-enabled session was found.
  */
 
 import type { Context } from "grammy";

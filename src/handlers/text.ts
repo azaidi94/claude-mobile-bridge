@@ -24,7 +24,6 @@ import {
 import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
 import { isWatching, sendWatchRelay } from "./watch";
-import { getActiveQueue, parseTasks } from "../queue";
 import {
   createOpId,
   debug,
@@ -270,37 +269,6 @@ export async function handleText(ctx: Context): Promise<void> {
   // 2. Check for interrupt prefix
   message = await checkInterrupt(message);
   if (!message.trim()) {
-    return;
-  }
-
-  // 2.5. Append to queue if one is running
-  const activeQueue = getActiveQueue();
-  if (activeQueue) {
-    // Parse multi-line messages into separate tasks
-    const tasks = message.includes("\n") ? parseTasks(message) : [message];
-    for (const task of tasks) {
-      activeQueue.addTask(task);
-    }
-    if (tasks.length === 1) {
-      const desc =
-        tasks[0]!.length > 60 ? tasks[0]!.slice(0, 60) + "..." : tasks[0]!;
-      await ctx.reply(
-        `📋 Added to queue as task ${activeQueue.tasks.length}: ${desc}`,
-      );
-    } else {
-      await ctx.reply(
-        `📋 Added ${tasks.length} task(s) to queue (now ${activeQueue.tasks.length} total).`,
-      );
-    }
-    info("request: completed", {
-      opId,
-      requestKind: "text",
-      chatId,
-      userId,
-      durationMs: elapsedMs(requestStartedAt),
-      path: "queue_append",
-      taskCount: tasks.length,
-    });
     return;
   }
 

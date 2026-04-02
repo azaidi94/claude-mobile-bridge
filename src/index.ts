@@ -84,8 +84,6 @@ await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
   { command: "switch", description: "Switch to session" },
   { command: "new", description: "Spawn desktop session (cmux)" },
-  { command: "plan", description: "Start plan mode" },
-  { command: "queue", description: "Queue tasks for batch execution" },
   { command: "watch", description: "Watch a desktop session live" },
   { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },

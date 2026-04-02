@@ -1,8 +1,8 @@
 /**
  * Command handlers for Claude Telegram Bot.
  *
- * /start, /help, /new, /stop, /status, /restart, /retry
- * /list, /switch
+ * /start, /help, /new, /stop, /kill, /status, /model, /restart, /retry
+ * /list, /switch, /refresh, /pin, /watch, /unwatch, /pwd, /cd, /ls
  */
 
 import { readdir, stat } from "fs/promises";
@@ -22,14 +22,7 @@ import {
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
-import {
-  StreamingState,
-  createStatusCallback,
-  createPlanApprovalKeyboard,
-  sendPlanContent,
-} from "./streaming";
-import { TaskQueue, parseTasks, getActiveQueue } from "../queue";
+import { auditLog } from "../utils";
 import {
   isRelayAvailable,
   getRelayDirs,
@@ -103,9 +96,6 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/watch [name] - Watch desktop session live\n` +
       `/unwatch - Stop watching\n\n` +
       `<b>Control:</b>\n` +
-      `/plan &lt;msg&gt; - Start plan mode\n` +
-      `/queue - Queue tasks for batch execution\n` +
-      `/skip - Skip current queue task\n` +
       `/stop - Interrupt current query\n` +
       `/kill - Terminate session\n` +
       `/retry - Retry last message\n` +
@@ -117,7 +107,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/cd &lt;path&gt; - Change directory\n` +
       `/ls [path] - List directory\n\n` +
       `<b>Tips:</b>\n` +
-      `• Prefix with <code>!</code> to interrupt queue\n` +
+      `• Prefix with <code>!</code> to interrupt active query\n` +
       `• Say "think" for extended reasoning\n` +
       `• Send voice/photo/files directly\n` +
       `• Use /new to reset conversation`,
@@ -374,16 +364,6 @@ export async function handleStop(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  // Check for active queue
-  const queue = getActiveQueue();
-  if (queue) {
-    queue.cancel();
-    await ctx.reply("🛑 Queue cancelled.");
-    await Bun.sleep(100);
-    session.clearStopRequested();
     return;
   }
 
@@ -781,141 +761,6 @@ export async function handleRefresh(ctx: Context): Promise<void> {
 }
 
 /**
- * /plan <message> - Start Claude in plan mode.
- */
-export async function handlePlan(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-  const username = ctx.from?.username || "unknown";
-  const chatId = ctx.chat?.id;
-  const text = ctx.message?.text || "";
-  const opId = createOpId("plan");
-  const requestStartedAt = Date.now();
-
-  if (!userId || !chatId) {
-    return;
-  }
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  // Parse message after /plan
-  const message = text.replace(/^\/plan\s*/, "").trim();
-  if (!message) {
-    await ctx.reply("Usage: /plan &lt;your planning request&gt;", {
-      parse_mode: "HTML",
-    });
-    return;
-  }
-
-  info("request: started", {
-    opId,
-    requestKind: "plan",
-    chatId,
-    userId,
-    username,
-    messagePreview: message.slice(0, 120),
-  });
-
-  // Rate limit
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
-    return;
-  }
-
-  // Sync with registry if no session loaded
-  if (!session.sessionName) {
-    const active = await getActiveSession();
-    if (active) {
-      session.loadFromRegistry(active.info);
-    }
-  }
-
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
-  try {
-    await ctx.reply("📋 Starting plan mode...");
-
-    const response = await session.sendMessageStreaming(
-      message,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx,
-      "plan",
-      {
-        opId,
-        requestKind: "plan",
-      },
-    );
-
-    // Check if plan is ready for approval
-    if (session.pendingPlanApproval) {
-      const displayContent =
-        session.pendingPlanApproval.planContent ||
-        session.pendingPlanApproval.planSummary;
-      if (displayContent && displayContent.length > 50) {
-        await sendPlanContent(ctx, displayContent);
-      }
-
-      const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-      await ctx.reply("Review and approve?", { reply_markup: keyboard });
-    }
-
-    await auditLog(userId, username, "PLAN", message, response);
-    info("request: completed", {
-      opId,
-      requestKind: "plan",
-      chatId,
-      userId,
-      durationMs: elapsedMs(requestStartedAt),
-      path: "sdk",
-      pendingPlanApproval: Boolean(session.pendingPlanApproval),
-    });
-  } catch (error) {
-    logError("plan: failed", error, {
-      opId,
-      chatId,
-      userId,
-      username,
-      durationMs: elapsedMs(requestStartedAt),
-    });
-
-    // Cleanup tool messages
-    for (const toolMsg of state.toolMessages) {
-      try {
-        await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-
-    const errorStr = String(error);
-    if (errorStr.includes("abort") || errorStr.includes("cancel")) {
-      const wasInterrupt = session.consumeInterruptFlag();
-      if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
-      }
-    } else {
-      await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
-    }
-  } finally {
-    stopProcessing();
-    typing.stop();
-  }
-}
-
-/**
  * /pin - Update/create pinned status message.
  */
 export async function handlePin(ctx: Context): Promise<void> {
@@ -940,148 +785,6 @@ export async function handlePin(ctx: Context): Promise<void> {
 
   await updatePinnedStatus(ctx.api, chatId, status);
   await ctx.reply("📌 Status pinned.");
-}
-
-/**
- * /skip - Skip the current queue task, continue with the rest.
- */
-export async function handleSkip(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  const queue = getActiveQueue();
-  if (!queue) {
-    await ctx.reply("⏸️ No queue running.");
-    return;
-  }
-
-  queue.skipCurrent();
-  const current = queue.tasks[queue.currentTaskIndex];
-  const desc = current ? current.description.slice(0, 60) : "current task";
-  await ctx.reply(`⏭️ Skipping: ${desc}`);
-}
-
-/**
- * /queue - Queue multiple tasks for sequential execution.
- *
- * Usage:
- *   /queue
- *   1. Fix the failing test
- *   2. Add input validation
- *   3. Write tests
- *   4. Create a PR
- *
- * With no tasks: show current queue status.
- */
-export async function handleQueue(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-  const username = ctx.from?.username || "unknown";
-  const chatId = ctx.chat?.id;
-  const text = ctx.message?.text || "";
-
-  if (!userId || !chatId) return;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
-    return;
-  }
-
-  // Check for active queue status request
-  const queue = getActiveQueue();
-
-  // Parse tasks from message (everything after /queue)
-  const body = text.replace(/^\/queue\s*/, "").trim();
-
-  if (!body) {
-    // No tasks provided - show status or usage
-    if (queue) {
-      await ctx.reply(queue.formatProgress(), { parse_mode: "HTML" });
-    } else {
-      await ctx.reply(
-        `📋 <b>Task Queue</b>\n\n` +
-          `Send a list of tasks:\n\n` +
-          `<code>/queue\n` +
-          `1. Fix the failing test\n` +
-          `2. Add input validation\n` +
-          `3. Write tests\n` +
-          `4. Create a PR</code>`,
-        { parse_mode: "HTML" },
-      );
-    }
-    return;
-  }
-
-  // Append to running queue
-  if (queue) {
-    const newTasks = parseTasks(body);
-    if (newTasks.length === 0) {
-      await ctx.reply("❌ No tasks found. Send a numbered or bulleted list.");
-      return;
-    }
-    for (const desc of newTasks) {
-      queue.addTask(desc);
-    }
-    await ctx.reply(
-      `📋 Added ${newTasks.length} task(s) to queue (now ${queue.tasks.length} total).`,
-    );
-    return;
-  }
-
-  // Check if session is busy
-  if (session.isRunning) {
-    await ctx.reply("⏳ Session is busy. Use /stop first.");
-    return;
-  }
-
-  // Rate limit
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
-    return;
-  }
-
-  // Parse the task list
-  const taskDescriptions = parseTasks(body);
-
-  if (taskDescriptions.length === 0) {
-    await ctx.reply("❌ No tasks found. Send a numbered or bulleted list.");
-    return;
-  }
-
-  if (taskDescriptions.length > 20) {
-    await ctx.reply("❌ Too many tasks (max 20).");
-    return;
-  }
-
-  // Create and start the queue
-  const taskQueue = new TaskQueue(taskDescriptions, chatId, userId, username);
-
-  await auditLog(
-    userId,
-    username,
-    "QUEUE_START",
-    `${taskDescriptions.length} tasks`,
-    taskDescriptions.join(" | "),
-  );
-
-  // Process queue (runs in background, doesn't block the command)
-  taskQueue.process(ctx).catch(async (error) => {
-    logError("queue: processing failed", error, {
-      chatId,
-      userId,
-      username,
-    });
-    try {
-      await ctx.reply(`❌ Queue error: ${String(error).slice(0, 200)}`);
-    } catch {
-      // Can't send message, ignore
-    }
-  });
 }
 
 // ============== Filesystem Navigation Commands ==============

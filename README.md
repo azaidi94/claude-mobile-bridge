@@ -12,8 +12,6 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 - **Streaming responses** with live updates
 - **Channel relay** - Inject messages into running desktop sessions without disconnecting them
 - **Live handoff** - Watch desktop Claude sessions in real-time from Telegram
-- **Task queue** - Queue multiple tasks for sequential background execution
-- **Plan mode** - Have Claude propose a plan before executing
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
 - **Extended thinking** - "think" keyword for deeper reasoning, "ultrathink" for 50k tokens
 - **Interrupt with `!`** - Prefix message to interrupt current query
@@ -22,13 +20,12 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 ## Commands
 
-| Category     | Commands                                                    |
-| ------------ | ----------------------------------------------------------- |
-| Sessions     | `/list`, `/switch`, `/new`, `/kill`                         |
-| Control      | `/plan`, `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Live handoff | `/watch`, `/unwatch`                                        |
-| Task queue   | `/queue`, `/skip`                                           |
-| Files        | `/pwd`, `/cd`, `/ls`                                        |
+| Category     | Commands                                           |
+| ------------ | -------------------------------------------------- |
+| Sessions     | `/list`, `/switch`, `/new`, `/kill`                |
+| Control      | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Live handoff | `/watch`, `/unwatch`                               |
+| Files        | `/pwd`, `/cd`, `/ls`                               |
 
 ## Quick Start
 

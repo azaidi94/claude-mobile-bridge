@@ -9,15 +9,15 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
-import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { auditLog, auditLogRateLimit } from "../utils";
+import { createMediaGroupBuffer } from "./media-group";
+import { sendViaRelay } from "./relay-bridge";
 import {
   createOpId,
-  debug,
   elapsedMs,
   error as logError,
   info,
+  warn,
 } from "../logger";
 
 // Supported text file extensions
@@ -210,7 +210,10 @@ async function extractArchiveContent(extractDir: string): Promise<{
 }
 
 /**
- * Process an archive file.
+ * Process an archive file via relay.
+ *
+ * Extracts the archive, builds a text summary (file tree + readable contents),
+ * and sends it through the relay as a message.
  */
 async function processArchive(
   ctx: Context,
@@ -223,16 +226,13 @@ async function processArchive(
   opId: string,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
-  const typing = startTypingIndicator(ctx);
   const requestStartedAt = Date.now();
 
-  // Show extraction progress
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
     parse_mode: "HTML",
   });
 
   try {
-    // Extract archive
     info("document: extracting archive", {
       opId,
       fileName,
@@ -254,13 +254,15 @@ async function processArchive(
       durationMs: elapsedMs(extractStartedAt),
     });
 
-    // Update status
-    await ctx.api.editMessageText(
-      statusMsg.chat.id,
-      statusMsg.message_id,
-      `📦 Extracted <b>${fileName}</b>: ${tree.length} files, ${contents.length} readable`,
-      { parse_mode: "HTML" },
-    );
+    // Cleanup extracted files
+    await Bun.$`rm -rf ${extractDir}`.quiet();
+
+    // Delete status message
+    try {
+      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
+    } catch {
+      // Ignore
+    }
 
     // Build prompt
     const treeStr = tree.length > 0 ? tree.join("\n") : "(empty)";
@@ -273,50 +275,45 @@ async function processArchive(
       ? `Archive: ${fileName}\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}\n\n---\n\n${caption}`
       : `Please analyze this archive (${fileName}):\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}`;
 
-    // Create streaming state
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
-
-    const response = await session.sendMessageStreaming(
+    const relayResult = await sendViaRelay(
+      ctx,
       prompt,
       username,
-      userId,
-      statusCallback,
       chatId,
-      ctx,
-      "bypassPermissions",
-      {
+      undefined,
+      opId,
+    );
+    if (relayResult) {
+      await auditLog(
+        userId,
+        username,
+        "ARCHIVE",
+        `[${fileName}] ${caption || ""}`,
+        "(via relay)",
+      );
+      info("request: completed", {
         opId,
         requestKind: "archive",
-      },
-    );
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "relay",
+        fileName,
+      });
+      return;
+    }
 
-    await auditLog(
-      userId,
-      username,
-      "ARCHIVE",
-      `[${fileName}] ${caption || ""}`,
-      response,
-    );
-    info("request: completed", {
+    warn("request: no desktop session available", {
       opId,
       requestKind: "archive",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
-      path: "sdk",
-      fileName,
     });
-
-    // Cleanup
-    await Bun.$`rm -rf ${extractDir}`.quiet();
-
-    // Delete status message
-    try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch {
-      // Ignore deletion errors
-    }
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
   } catch (error) {
     logError("document: archive processing failed", error, {
       opId,
@@ -327,7 +324,6 @@ async function processArchive(
       username,
       durationMs: elapsedMs(requestStartedAt),
     });
-    // Delete status message on error
     try {
       await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
     } catch {
@@ -338,12 +334,11 @@ async function processArchive(
     );
   } finally {
     stopProcessing();
-    typing.stop();
   }
 }
 
 /**
- * Process documents with Claude.
+ * Process documents via relay.
  */
 async function processDocuments(
   ctx: Context,
@@ -354,7 +349,6 @@ async function processDocuments(
   chatId: number,
   opId: string,
 ): Promise<void> {
-  // Mark processing started
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
 
@@ -374,49 +368,48 @@ async function processDocuments(
       : `Please analyze these ${documents.length} documents:\n\n${docList}`;
   }
 
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
-
   try {
-    const response = await session.sendMessageStreaming(
+    const relayResult = await sendViaRelay(
+      ctx,
       prompt,
       username,
-      userId,
-      statusCallback,
       chatId,
-      ctx,
-      "bypassPermissions",
-      {
+      undefined,
+      opId,
+    );
+    if (relayResult) {
+      await auditLog(
+        userId,
+        username,
+        "DOCUMENT",
+        `[${documents.length} docs] ${caption || ""}`,
+        "(via relay)",
+      );
+      info("request: completed", {
         opId,
         requestKind: documents.length === 1 ? "document" : "document_batch",
-      },
-    );
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "relay",
+        documentCount: documents.length,
+      });
+      return;
+    }
 
-    await auditLog(
-      userId,
-      username,
-      "DOCUMENT",
-      `[${documents.length} docs] ${caption || ""}`,
-      response,
-    );
-    info("request: completed", {
+    warn("request: no desktop session available", {
       opId,
-      requestKind: documents.length === 1 ? "document" : "document_batch",
+      requestKind: "document",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
-      path: "sdk",
-      documentCount: documents.length,
     });
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
   } finally {
     stopProcessing();
-    typing.stop();
   }
 }
 

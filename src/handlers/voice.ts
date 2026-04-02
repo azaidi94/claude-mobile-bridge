@@ -13,16 +13,8 @@ import {
   transcribeVoice,
   startTypingIndicator,
 } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
 import { sendViaRelay } from "./relay-bridge";
-import {
-  createOpId,
-  debug,
-  elapsedMs,
-  error as logError,
-  info,
-  warn,
-} from "../logger";
+import { createOpId, debug, elapsedMs, info, warn } from "../logger";
 
 /**
  * Handle incoming voice messages.
@@ -127,7 +119,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       `🎤 "${transcript}"`,
     );
 
-    // 9. Try relay path first
+    // 9. Send via relay
     const relayResult = await sendViaRelay(
       ctx,
       transcript,
@@ -155,52 +147,28 @@ export async function handleVoice(ctx: Context): Promise<void> {
       return;
     }
 
-    // 10. Fall back to SDK path
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
-
-    const claudeResponse = await session.sendMessageStreaming(
-      transcript,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx,
-      "bypassPermissions",
-      {
-        opId,
-        requestKind: "voice",
-      },
-    );
-
-    // 11. Audit log
-    await auditLog(userId, username, "VOICE", transcript, claudeResponse);
-    info("request: completed", {
+    // No relay available
+    warn("request: no desktop session available", {
       opId,
       requestKind: "voice",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
-      path: "sdk",
     });
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
   } catch (error) {
-    logError("voice: processing failed", error, {
+    warn("voice: processing failed", {
       opId,
       chatId,
       userId,
       username,
       durationMs: elapsedMs(requestStartedAt),
+      err: String(error).slice(0, 200),
     });
-
-    if (String(error).includes("abort") || String(error).includes("cancel")) {
-      // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-      const wasInterrupt = session.consumeInterruptFlag();
-      if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
-      }
-    } else {
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
-    }
+    await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
   } finally {
     stopProcessing();
     typing.stop();

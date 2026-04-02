@@ -374,105 +374,6 @@ describe("plan-mode: createPlanApprovalKeyboard", () => {
   });
 });
 
-// ============== handlePlan Command Tests ==============
-
-describe("plan-mode: handlePlan command", () => {
-  beforeEach(resetMocks);
-
-  test("rejects unauthorized users", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({
-      userId: 999999,
-      messageText: "/plan test",
-    });
-
-    await handlePlan(ctx as any);
-
-    expect(ctx._replies.length).toBe(1);
-    expect(ctx._replies[0]?.text).toBe("Unauthorized.");
-  });
-
-  test("shows usage when no message provided", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan" });
-
-    await handlePlan(ctx as any);
-
-    expect(ctx._replies.length).toBe(1);
-    expect(ctx._replies[0]?.text).toContain("Usage:");
-  });
-
-  test("shows usage for /plan with only whitespace", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan   " });
-
-    await handlePlan(ctx as any);
-
-    expect(ctx._replies.length).toBe(1);
-    expect(ctx._replies[0]?.text).toContain("Usage:");
-  });
-
-  test("starts plan mode with valid message", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({
-      messageText: "/plan add a hello world endpoint",
-    });
-
-    await handlePlan(ctx as any);
-
-    // Should show "Starting plan mode..." message
-    const startMsg = ctx._replies.find((r) => r.text.includes("plan mode"));
-    expect(startMsg).toBeDefined();
-  });
-
-  test("calls sendMessageStreaming with plan permission mode", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan implement feature X" });
-
-    await handlePlan(ctx as any);
-
-    expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
-    // Verify the mock was called (implementation details may vary)
-    expect(
-      mockSessionMethods.sendMessageStreaming.mock.calls.length,
-    ).toBeGreaterThan(0);
-  });
-
-  test("shows approval buttons when plan is ready", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary: "Test plan summary",
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Should show approval message with keyboard
-    const approvalMsg = ctx._replies.find((r) =>
-      r.text.includes("Review and approve"),
-    );
-    expect(approvalMsg).toBeDefined();
-    expect(approvalMsg?.options?.reply_markup).toBeDefined();
-  });
-
-  test("handles missing context gracefully", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = {
-      from: undefined,
-      chat: undefined,
-      message: undefined,
-      reply: mock(async () => ({})),
-    };
-
-    // Should not throw
-    await handlePlan(ctx as any);
-  });
-});
-
 // ============== Plan Callback Tests ==============
 
 describe("plan-mode: plan callbacks", () => {
@@ -724,119 +625,6 @@ describe("plan-mode: PlanApprovalState type", () => {
   });
 });
 
-// ============== Plan Content Display Tests ==============
-
-describe("plan-mode: plan content display", () => {
-  beforeEach(resetMocks);
-
-  test("shows plan content before approval buttons when available", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval with content (must be > 50 chars)
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary: "Short summary",
-      planContent:
-        "# Full Plan Implementation\n\n1. Step one: Create the feature module\n2. Step two: Add unit tests\n3. Step three: Update documentation",
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Should show plan content
-    const contentMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
-    expect(contentMsg).toBeDefined();
-
-    // Should show approval buttons after content
-    const approvalMsg = ctx._replies.find((r) =>
-      r.text.includes("Review and approve"),
-    );
-    expect(approvalMsg).toBeDefined();
-  });
-
-  test("falls back to planSummary when no planContent", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval without content (summary must be > 50 chars)
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary:
-        "This is the plan summary fallback that is long enough to display in the response message",
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Should show summary as fallback (in Plan: message)
-    const summaryMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
-    expect(summaryMsg).toBeDefined();
-  });
-
-  test("sends very long plan content as file", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval with very long content
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary: "Summary",
-      planContent: "X".repeat(5000), // Exceeds 4000 limit
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Should send as document file
-    expect(ctx._documents.length).toBe(1);
-    expect(ctx._documents[0]!.options?.caption).toBe(
-      "📋 Plan ready for review",
-    );
-  });
-
-  test("does not show plan content if too short", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval with very short content
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary: "Short",
-      planContent: "X", // Only 1 character
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Should only show approval buttons, no separate content message
-    const planMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
-    expect(planMsg).toBeUndefined();
-  });
-
-  test("escapes HTML in plan content", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan add feature" });
-
-    // Simulate pending plan approval with HTML-like content
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "tool-123",
-      planSummary: "Summary",
-      planContent:
-        "This plan has <script>alert('xss')</script> and & characters that need escaping for proper display",
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(ctx as any);
-
-    // Content should be escaped (check that raw script tag is not present)
-    const contentMsg = ctx._replies.find((r) => r.text.includes("Plan:"));
-    expect(contentMsg).toBeDefined();
-    // The HTML should be escaped, so <script> should appear as &lt;script&gt;
-    expect(contentMsg?.text).not.toContain("<script>");
-  });
-});
-
 // ============== Session Plan Mode State Tests ==============
 
 describe("plan-mode: session state", () => {
@@ -887,42 +675,7 @@ describe("plan-mode: session state", () => {
 describe("plan-mode: integration scenarios", () => {
   beforeEach(resetMocks);
 
-  test("full flow: /plan -> ExitPlanMode -> Accept", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const { handleCallback } = await import("../handlers/callback");
-
-    // Step 1: User sends /plan command
-    const planCtx = createMockContext({
-      messageText: "/plan add hello endpoint",
-    });
-
-    // Simulate ExitPlanMode detection
-    mockSessionState.pendingPlanApproval = {
-      toolUseId: "exit-plan-tool",
-      planSummary: "Plan to add hello endpoint",
-      timestamp: Date.now(),
-    };
-
-    await handlePlan(planCtx as any);
-
-    // Should show approval buttons
-    const approvalMsg = planCtx._replies.find((r) =>
-      r.text.includes("Review and approve"),
-    );
-    expect(approvalMsg).toBeDefined();
-
-    // Step 2: User clicks Accept
-    const acceptCtx = createMockContext({
-      callbackData: "plan:accept:123",
-    });
-
-    await handleCallback(acceptCtx as any);
-
-    expect(acceptCtx.editMessageText).toHaveBeenCalledWith("✅ Plan accepted");
-    expect(mockSessionMethods.respondToPlanApproval).toHaveBeenCalled();
-  });
-
-  test("full flow: /plan -> ExitPlanMode -> Edit -> feedback", async () => {
+  test("full flow: ExitPlanMode -> Edit -> feedback", async () => {
     const { handleCallback, pendingPlanFeedback } =
       await import("../handlers/callback");
 
@@ -950,54 +703,12 @@ describe("plan-mode: integration scenarios", () => {
     // Cleanup
     pendingPlanFeedback.delete(789);
   });
-
-  test("rate limiting applies to /plan command", async () => {
-    const { rateLimiter } = await import("../security");
-
-    // Override rateLimiter to return rate limited
-    (rateLimiter.check as any).mockReturnValueOnce([false, 5.5]);
-
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({ messageText: "/plan test" });
-
-    await handlePlan(ctx as any);
-
-    // Should show rate limit message
-    const rateLimitMsg = ctx._replies.find((r) =>
-      r.text.includes("Rate limited"),
-    );
-    expect(rateLimitMsg).toBeDefined();
-  });
 });
-
-// Text handler plan display tests removed — SDK streaming path was replaced
-// with relay-only path. Plan display via relay is tested through the
-// relay/display pipeline.
 
 // ============== Edge Cases ==============
 
 describe("plan-mode: edge cases", () => {
   beforeEach(resetMocks);
-
-  test("handles plan message with special characters", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const ctx = createMockContext({
-      messageText: "/plan add <div> & 'quotes' \"double\"",
-    });
-
-    // Should not throw
-    await handlePlan(ctx as any);
-    expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
-  });
-
-  test("handles very long plan message", async () => {
-    const { handlePlan } = await import("../handlers/commands");
-    const longMessage = "/plan " + "x".repeat(5000);
-    const ctx = createMockContext({ messageText: longMessage });
-
-    await handlePlan(ctx as any);
-    expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
-  });
 
   test("handles callback with missing chat ID", async () => {
     const { handleCallback } = await import("../handlers/callback");

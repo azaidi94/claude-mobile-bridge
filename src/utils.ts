@@ -215,10 +215,6 @@ let sessionModule: {
   };
 } | null = null;
 
-let queueModule: {
-  getActiveQueue: () => { cancel: () => void } | null;
-} | null = null;
-
 export async function checkInterrupt(text: string): Promise<string> {
   if (!text || !text.startsWith("!")) {
     return text;
@@ -228,21 +224,8 @@ export async function checkInterrupt(text: string): Promise<string> {
   if (!sessionModule) {
     sessionModule = await import("./session");
   }
-  if (!queueModule) {
-    queueModule = await import("./queue");
-  }
 
   const strippedText = text.slice(1).trimStart();
-
-  // Cancel active queue entirely — interrupt takes over
-  const activeQueue = queueModule.getActiveQueue();
-  if (activeQueue) {
-    info("interrupt: cancelling active queue");
-    activeQueue.cancel();
-    await Bun.sleep(100);
-    sessionModule.session.clearStopRequested();
-    return strippedText;
-  }
 
   if (sessionModule.session.isRunning) {
     info("interrupt: stopping active query");
