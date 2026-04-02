@@ -32,13 +32,18 @@ type EditCallback = (msg: RelayEditMessage) => void;
 type ReactCallback = (msg: RelayReact) => void;
 type DisconnectCallback = () => void;
 
+interface ScopedCallback<T> {
+  cb: T;
+  chatId?: string; // when set, only fires for messages matching this chat_id
+}
+
 export class RelayClient {
   private socket: Socket | null = null;
   private buffer = "";
   private _isConnected = false;
-  private replyCallbacks: ReplyCallback[] = [];
-  private editCallbacks: EditCallback[] = [];
-  private reactCallbacks: ReactCallback[] = [];
+  private replyCallbacks: ScopedCallback<ReplyCallback>[] = [];
+  private editCallbacks: ScopedCallback<EditCallback>[] = [];
+  private reactCallbacks: ScopedCallback<ReactCallback>[] = [];
   private disconnectCallbacks: DisconnectCallback[] = [];
 
   get isConnected(): boolean {
@@ -115,31 +120,36 @@ export class RelayClient {
     this.send({ type: "message", ...params });
   }
 
-  onReply(cb: ReplyCallback): void {
-    this.replyCallbacks.push(cb);
+  onReply(cb: ReplyCallback, chatId?: string): void {
+    this.replyCallbacks.push({ cb, chatId });
   }
 
   offReply(cb: ReplyCallback): void {
-    this.replyCallbacks = this.replyCallbacks.filter((c) => c !== cb);
+    this.replyCallbacks = this.replyCallbacks.filter((s) => s.cb !== cb);
   }
 
-  onEditMessage(cb: EditCallback): void {
-    this.editCallbacks.push(cb);
+  onEditMessage(cb: EditCallback, chatId?: string): void {
+    this.editCallbacks.push({ cb, chatId });
   }
 
-  onReact(cb: ReactCallback): void {
-    this.reactCallbacks.push(cb);
+  offEditMessage(cb: EditCallback): void {
+    this.editCallbacks = this.editCallbacks.filter((s) => s.cb !== cb);
+  }
+
+  onReact(cb: ReactCallback, chatId?: string): void {
+    this.reactCallbacks.push({ cb, chatId });
+  }
+
+  offReact(cb: ReactCallback): void {
+    this.reactCallbacks = this.reactCallbacks.filter((s) => s.cb !== cb);
   }
 
   onDisconnect(cb: DisconnectCallback): void {
     this.disconnectCallbacks.push(cb);
   }
 
-  clearCallbacks(): void {
-    this.replyCallbacks = [];
-    this.editCallbacks = [];
-    this.reactCallbacks = [];
-    this.disconnectCallbacks = [];
+  offDisconnect(cb: DisconnectCallback): void {
+    this.disconnectCallbacks = this.disconnectCallbacks.filter((c) => c !== cb);
   }
 
   private send(msg: Record<string, unknown>): void {
@@ -151,40 +161,46 @@ export class RelayClient {
   }
 
   private handleMessage(msg: { type: string; [key: string]: unknown }): void {
+    const msgChatId = String(msg.chat_id || "");
+
     switch (msg.type) {
-      case "reply":
-        for (const cb of this.replyCallbacks) {
-          cb({
-            chat_id: String(msg.chat_id || ""),
-            text: String(msg.text || ""),
-            files: (msg.files as string[]) ?? [],
-            send_as_pdf: Boolean(msg.send_as_pdf),
-            pdf_filename: msg.pdf_filename
-              ? String(msg.pdf_filename)
-              : undefined,
-          });
+      case "reply": {
+        const reply: RelayReply = {
+          chat_id: msgChatId,
+          text: String(msg.text || ""),
+          files: (msg.files as string[]) ?? [],
+          send_as_pdf: Boolean(msg.send_as_pdf),
+          pdf_filename: msg.pdf_filename ? String(msg.pdf_filename) : undefined,
+        };
+        for (const { cb, chatId } of this.replyCallbacks) {
+          if (!chatId || chatId === msgChatId) cb(reply);
         }
         break;
+      }
 
-      case "edit_message":
-        for (const cb of this.editCallbacks) {
-          cb({
-            chat_id: String(msg.chat_id || ""),
-            message_id: String(msg.message_id || ""),
-            text: String(msg.text || ""),
-          });
+      case "edit_message": {
+        const edit: RelayEditMessage = {
+          chat_id: msgChatId,
+          message_id: String(msg.message_id || ""),
+          text: String(msg.text || ""),
+        };
+        for (const { cb, chatId } of this.editCallbacks) {
+          if (!chatId || chatId === msgChatId) cb(edit);
         }
         break;
+      }
 
-      case "react":
-        for (const cb of this.reactCallbacks) {
-          cb({
-            chat_id: String(msg.chat_id || ""),
-            message_id: String(msg.message_id || ""),
-            emoji: String(msg.emoji || ""),
-          });
+      case "react": {
+        const react: RelayReact = {
+          chat_id: msgChatId,
+          message_id: String(msg.message_id || ""),
+          emoji: String(msg.emoji || ""),
+        };
+        for (const { cb, chatId } of this.reactCallbacks) {
+          if (!chatId || chatId === msgChatId) cb(react);
         }
         break;
+      }
     }
   }
 }

@@ -64,7 +64,7 @@ export async function sendViaRelay(
 
   let relayDelivered = true;
   try {
-    await waitForReply(client, displayState);
+    await waitForReply(client, displayState, String(chatId));
   } catch (err) {
     debug(`relay: wait error: ${err}`);
     cleanupProgressMessages(ctx.api, displayState);
@@ -87,29 +87,36 @@ export async function sendViaRelay(
 function waitForReply(
   client: RelayClient,
   state: RelayDisplayState,
+  chatId: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timeout);
+      client.offReply(onReply);
+      client.offDisconnect(onDisconnect);
     };
 
-    // Resolve directly when reply callback fires
-    client.onReply(() => {
+    const onReply = () => {
       cleanup();
       // Small delay to let the reply message send
       setTimeout(resolve, 500);
-    });
+    };
 
-    client.onDisconnect(() => {
+    // Scope to this chat so other chats' replies don't resolve us
+    client.onReply(onReply, chatId);
+
+    const onDisconnect = () => {
       cleanup();
       if (!state.finalReplyReceived) {
         reject(new Error("relay disconnected"));
       } else {
         resolve();
       }
-    });
+    };
+    client.onDisconnect(onDisconnect);
 
     const timeout = setTimeout(() => {
+      cleanup();
       if (!state.finalReplyReceived) {
         reject(new Error("relay response timeout"));
       } else {

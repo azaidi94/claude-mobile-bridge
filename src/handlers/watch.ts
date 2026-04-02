@@ -318,6 +318,7 @@ export async function startWatchingSession(
   // Wire relay client for file attachments (tailer only captures text)
   const relayClient = await getRelayClient(sessionInfo.dir, sessionInfo.pid);
   if (relayClient) {
+    const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
       if (msg.send_as_pdf && msg.text) {
         watchState.suppressRelayReplyText = true;
@@ -331,7 +332,7 @@ export async function startWatchingSession(
         }
       }
     };
-    relayClient.onReply(onReply);
+    relayClient.onReply(onReply, scopeChatId);
     watchState.relayCleanup = () => relayClient.offReply(onReply);
   }
 
