@@ -22,7 +22,6 @@ export {
   handlePwd,
   handleCd,
   handleLs,
-  handleSpawn,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";

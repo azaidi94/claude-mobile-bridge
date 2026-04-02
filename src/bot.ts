@@ -39,7 +39,6 @@ import {
   handlePwd,
   handleCd,
   handleLs,
-  handleSpawn,
   handleText,
   handleVoice,
   handlePhoto,
@@ -124,7 +123,6 @@ export function createBot(options: BotOptions): Bot {
   bot.command("pwd", handlePwd);
   bot.command("cd", handleCd);
   bot.command("ls", handleLs);
-  bot.command("spawn", handleSpawn);
 
   // Message handlers
   bot.on("message:text", handleText);

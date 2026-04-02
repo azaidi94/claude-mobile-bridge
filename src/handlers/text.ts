@@ -21,11 +21,11 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { getActiveSession, getSession, setActiveSession } from "../sessions";
+import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
-import { isWatching, stopWatching, sendWatchRelay } from "./watch";
+import { isWatching, sendWatchRelay } from "./watch";
 import { getActiveQueue, parseTasks } from "../queue";
-import { debug, info, truncate } from "../logger";
+import { debug, truncate } from "../logger";
 import { sendViaRelay } from "./relay-bridge";
 
 /**
@@ -178,9 +178,8 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.7. Check for active watch — relay or takeover
+  // 1.7. Check for active watch — relay message to desktop session
   if (isWatching(chatId)) {
-    // Try relay first (keeps desktop session alive)
     const relayed = await sendWatchRelay(chatId, username, message);
     if (relayed) {
       ctx.replyWithChatAction("typing").catch(() => {});
@@ -188,27 +187,12 @@ export async function handleText(ctx: Context): Promise<void> {
       return;
     }
 
-    // No relay — fall back to takeover
-    const watchState = stopWatching(chatId, ctx.api);
-    if (watchState) {
-      info(`takeover: ${watchState.sessionName} from chat ${chatId}`);
-      await ctx.reply(`🔄 Taking over <b>${watchState.sessionName}</b>...`, {
-        parse_mode: "HTML",
-      });
-
-      // Load the desktop session for mobile use
-      const sessionInfo = getSession(watchState.sessionName);
-      if (!sessionInfo) {
-        await ctx.reply(
-          `❌ Session <b>${watchState.sessionName}</b> is no longer available.`,
-          { parse_mode: "HTML" },
-        );
-        return;
-      }
-      session.loadFromRegistry(sessionInfo);
-      setActiveSession(watchState.sessionName);
-      // Fall through to send the message normally via sendMessageStreaming
-    }
+    // Relay failed — session may be offline
+    await ctx.reply(
+      "❌ Relay failed. Session may be offline.\n" +
+        "Use /unwatch and check /list.",
+    );
+    return;
   }
 
   // 2. Check for interrupt prefix
@@ -271,101 +255,16 @@ export async function handleText(ctx: Context): Promise<void> {
     }
   }
 
-  // 7.5. Try relay path — inject into running desktop session without takeover
+  // 7.5. Try relay path — inject into running desktop session
   const relayResult = await sendViaRelay(ctx, message, username, chatId);
   if (relayResult) {
     await auditLog(userId, username, "RELAY", message, "(via relay)");
     return;
   }
 
-  // 8. Mark processing started
-  const stopProcessing = session.startProcessing();
-
-  // 9. Start typing indicator
-  const typing = startTypingIndicator(ctx);
-
-  // 10. Create streaming state and callback
-  let state = new StreamingState();
-  let statusCallback = createStatusCallback(ctx, state);
-
-  // 11. Send to Claude with retry logic for crashes
-  const MAX_RETRIES = 1;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const response = await session.sendMessageStreaming(
-        message,
-        username,
-        userId,
-        statusCallback,
-        chatId,
-        ctx,
-      );
-
-      // Debug log response
-      debug(`res: "${truncate(response)}"`);
-
-      // 12. Audit log
-      await auditLog(userId, username, "TEXT", message, response);
-
-      // 13. Check if plan approval is pending (ExitPlanMode was called)
-      if (session.pendingPlanApproval) {
-        const approval = session.pendingPlanApproval;
-        const requestId = `${Date.now()}`;
-
-        // Send plan content
-        if (approval.planContent) {
-          await sendPlanContent(ctx, approval.planContent);
-        }
-
-        // Show approval buttons
-        const keyboard = createPlanApprovalKeyboard(requestId);
-        await ctx.reply("Review and approve?", { reply_markup: keyboard });
-      }
-
-      break; // Success - exit retry loop
-    } catch (error) {
-      const errorStr = String(error);
-      const isClaudeCodeCrash = errorStr.includes("exited with code");
-
-      // Clean up any partial messages from this attempt
-      for (const toolMsg of state.toolMessages) {
-        try {
-          await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-
-      // Retry on Claude Code crash (not user cancellation)
-      if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
-        debug(`crash, retry ${attempt + 2}/${MAX_RETRIES + 1}`);
-        await session.kill(); // Clear corrupted session
-        await ctx.reply(`⚠️ Claude crashed, retrying...`);
-        // Reset state for retry
-        state = new StreamingState();
-        statusCallback = createStatusCallback(ctx, state);
-        continue;
-      }
-
-      // Final attempt failed or non-retryable error
-      debug(`msg error: ${error}`);
-
-      // Check if it was a cancellation
-      if (errorStr.includes("abort") || errorStr.includes("cancel")) {
-        // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-        const wasInterrupt = session.consumeInterruptFlag();
-        if (!wasInterrupt) {
-          await ctx.reply("🛑 Query stopped.");
-        }
-      } else {
-        await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
-      }
-      break; // Exit loop after handling error
-    }
-  }
-
-  // 14. Cleanup
-  stopProcessing();
-  typing.stop();
+  // No relay available — tell the user
+  await ctx.reply(
+    "❌ No desktop session found.\n\n" +
+      "Use /new to spawn one, or /list to find existing sessions.",
+  );
 }

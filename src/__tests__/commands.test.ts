@@ -5,7 +5,16 @@
  * Each handler follows the pattern: auth check -> logic -> ctx.reply()
  */
 
-import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
+import {
+  describe,
+  expect,
+  test,
+  beforeEach,
+  afterEach,
+  mock,
+  spyOn,
+} from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
 
 // Mock config before importing handlers
 const MOCK_ALLOWED_USERS = [123456, 789012];
@@ -45,12 +54,34 @@ mock.module("../config", () => ({
 }));
 
 // Mock sessions module
-const mockSessions: Array<{ name: string; dir: string; lastActivity: number }> =
-  [];
+const mockSessions: Array<{
+  name: string;
+  dir: string;
+  lastActivity: number;
+  id?: string;
+  pid?: number;
+  source?: "telegram" | "desktop";
+}> = [];
 let mockActiveSession: {
   name: string;
-  info: { dir: string; id?: string; name: string; lastActivity?: number };
+  info: {
+    dir: string;
+    id?: string;
+    pid?: number;
+    source?: "telegram" | "desktop";
+    name: string;
+    lastActivity?: number;
+  };
 } | null = null;
+const mockForceRefresh = mock(() => Promise.resolve());
+type MockPortFile = {
+  port: number;
+  pid: number;
+  ppid?: number;
+  sessionId?: string;
+  cwd: string;
+  startedAt: string;
+};
 
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
@@ -60,7 +91,13 @@ mock.module("../sessions", () => ({
     if (found) {
       mockActiveSession = {
         name: found.name,
-        info: { dir: found.dir, name: found.name },
+        info: {
+          dir: found.dir,
+          id: found.id,
+          pid: found.pid,
+          source: found.source,
+          name: found.name,
+        },
       };
       return true;
     }
@@ -76,11 +113,11 @@ mock.module("../sessions", () => ({
     mockSessions.push(newSession);
     mockActiveSession = {
       name: sessionName,
-      info: { dir: path, name: sessionName },
+      info: { dir: path, name: sessionName, source: "telegram" },
     };
     return newSession;
   }),
-  forceRefresh: mock(() => Promise.resolve()),
+  forceRefresh: mockForceRefresh,
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
   getGitBranch: mock(() => Promise.resolve("main")),
@@ -88,6 +125,30 @@ mock.module("../sessions", () => ({
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
+}));
+
+const mockScanPortFiles = mock(async (): Promise<MockPortFile[]> => []);
+const mockIsRelayAvailable = mock(async () => false);
+const mockGetRelayDirs = mock(async () => []);
+const mockDisconnectRelay = mock(() => {});
+
+mock.module("../relay", () => ({
+  isRelayAvailable: mockIsRelayAvailable,
+  getRelayDirs: mockGetRelayDirs,
+  disconnectRelay: mockDisconnectRelay,
+  scanPortFiles: mockScanPortFiles,
+}));
+
+const mockStartWatchingSession = mock(async () => true);
+const mockStartWatchingAndNotify = mock(async () => true);
+const mockStopWatching = mock(() => undefined);
+const mockIsWatching = mock(() => false);
+
+mock.module("../handlers/watch", () => ({
+  startWatchingSession: mockStartWatchingSession,
+  startWatchingAndNotify: mockStartWatchingAndNotify,
+  stopWatching: mockStopWatching,
+  isWatching: mockIsWatching,
 }));
 
 // Mock session singleton
@@ -233,6 +294,22 @@ function resetMocks() {
   mockSessionMethods.kill.mockClear();
   mockSessionMethods.setWorkingDir.mockClear();
   mockSessionMethods.loadFromRegistry.mockClear();
+  mockForceRefresh.mockClear();
+  mockForceRefresh.mockImplementation(() => Promise.resolve());
+  mockScanPortFiles.mockClear();
+  mockScanPortFiles.mockImplementation(async () => []);
+  mockIsRelayAvailable.mockClear();
+  mockIsRelayAvailable.mockImplementation(async () => false);
+  mockGetRelayDirs.mockClear();
+  mockGetRelayDirs.mockImplementation(async () => []);
+  mockDisconnectRelay.mockClear();
+  mockStartWatchingSession.mockClear();
+  mockStartWatchingSession.mockImplementation(async () => true);
+  mockStartWatchingAndNotify.mockClear();
+  mockStartWatchingAndNotify.mockImplementation(async () => true);
+  mockStopWatching.mockClear();
+  mockIsWatching.mockClear();
+  mockIsWatching.mockImplementation(() => false);
 }
 
 // ============== /start Command Tests ==============
@@ -676,6 +753,32 @@ describe("commands: /status", () => {
 
 describe("commands: /new", () => {
   beforeEach(resetMocks);
+  let bunWhichSpy: ReturnType<typeof spyOn> | null = null;
+  let bunSpawnSyncSpy: ReturnType<typeof spyOn> | null = null;
+  let bunSleepSpy: ReturnType<typeof spyOn> | null = null;
+
+  beforeEach(() => {
+    bunWhichSpy = spyOn(Bun, "which").mockReturnValue("/usr/local/bin/cmux");
+    bunSpawnSyncSpy = spyOn(Bun, "spawnSync").mockImplementation(
+      (cmdOrOptions: any) => {
+        const cmd = Array.isArray(cmdOrOptions)
+          ? cmdOrOptions
+          : cmdOrOptions?.cmd || [];
+        return {
+          stdout: Buffer.from(cmd[1] === "new-workspace" ? "workspace:42" : ""),
+          success: true,
+          exitCode: 0,
+        } as any;
+      },
+    );
+    bunSleepSpy = spyOn(Bun, "sleep").mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    bunWhichSpy?.mockRestore();
+    bunSpawnSyncSpy?.mockRestore();
+    bunSleepSpy?.mockRestore();
+  });
 
   test("handleNew returns unauthorized for non-allowed user", async () => {
     const { handleNew } = await import("../handlers/commands");
@@ -686,62 +789,143 @@ describe("commands: /new", () => {
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
-  test("handleNew creates session with default path", async () => {
+  test("handleNew auto-watches the newly spawned session in the same directory", async () => {
     const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({ userId: 123456, messageText: "/new" });
+    const tmpDir = await mkdtemp("/tmp/new-command-");
 
-    await handleNew(ctx as any);
+    try {
+      mockSessions.push({
+        name: "existing-session",
+        dir: tmpDir,
+        id: "old-session",
+        pid: 111,
+        source: "desktop",
+        lastActivity: Date.now() - 1000,
+      });
+      mockScanPortFiles.mockImplementation(async () => {
+        if (mockScanPortFiles.mock.calls.length === 1) {
+          return [
+            {
+              port: 4001,
+              pid: 201,
+              ppid: 111,
+              sessionId: "old-session",
+              cwd: tmpDir,
+              startedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ];
+        }
+        return [
+          {
+            port: 4001,
+            pid: 201,
+            ppid: 111,
+            sessionId: "old-session",
+            cwd: tmpDir,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            port: 4002,
+            pid: 202,
+            ppid: 222,
+            sessionId: "new-session-id",
+            cwd: tmpDir,
+            startedAt: "2026-01-01T00:00:01.000Z",
+          },
+        ];
+      });
+      mockForceRefresh.mockImplementation(async () => {
+        mockSessions.push({
+          name: "spawned-session",
+          dir: tmpDir,
+          id: "new-session-id",
+          pid: 222,
+          source: "desktop",
+          lastActivity: Date.now(),
+        });
+      });
 
-    expect(mockSessionMethods.kill).toHaveBeenCalled();
-    expect(ctx._replies[0]?.text).not.toContain("Unauthorized");
+      const ctx = createMockContext({
+        userId: 123456,
+        messageText: `/new ${tmpDir}`,
+      });
+
+      await handleNew(ctx as any);
+
+      expect(mockStartWatchingSession).toHaveBeenCalledWith(
+        ctx.api,
+        789,
+        "spawned-session",
+      );
+      expect(mockActiveSession?.name).toBe("spawned-session");
+      expect(ctx._replies.at(-1)?.text).toContain("spawned-session");
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
-  test("handleNew creates session with custom name", async () => {
+  test("handleNew does not attach to an older same-directory session when the new one is unresolved", async () => {
     const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({
-      userId: 123456,
-      messageText: "/new myproject",
-    });
+    const tmpDir = await mkdtemp("/tmp/new-command-");
 
-    await handleNew(ctx as any);
+    try {
+      mockSessions.push({
+        name: "existing-session",
+        dir: tmpDir,
+        id: "old-session",
+        pid: 111,
+        source: "desktop",
+        lastActivity: Date.now() - 1000,
+      });
+      mockScanPortFiles.mockImplementation(async () => {
+        if (mockScanPortFiles.mock.calls.length === 1) {
+          return [
+            {
+              port: 4001,
+              pid: 201,
+              ppid: 111,
+              sessionId: "old-session",
+              cwd: tmpDir,
+              startedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ];
+        }
+        return [
+          {
+            port: 4001,
+            pid: 201,
+            ppid: 111,
+            sessionId: "old-session",
+            cwd: tmpDir,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            port: 4002,
+            pid: 202,
+            ppid: 222,
+            sessionId: "new-session-id",
+            cwd: tmpDir,
+            startedAt: "2026-01-01T00:00:01.000Z",
+          },
+        ];
+      });
+      mockForceRefresh.mockImplementation(async () => {});
 
-    expect(ctx._replies[0]?.text).toContain("myproject");
-  });
+      const ctx = createMockContext({
+        userId: 123456,
+        messageText: `/new ${tmpDir}`,
+      });
 
-  test("handleNew creates session with custom path", async () => {
-    const { handleNew } = await import("../handlers/commands");
-    const ctx = createMockContext({
-      userId: 123456,
-      messageText: "/new myproject /custom/path",
-    });
+      await handleNew(ctx as any);
 
-    await handleNew(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("/custom/path");
-    expect(mockSessionMethods.setWorkingDir).toHaveBeenCalledWith(
-      "/custom/path",
-    );
-  });
-
-  test("handleNew stops running query before creating new session", async () => {
-    const { handleNew } = await import("../handlers/commands");
-    mockSessionState.isRunning = true;
-    const ctx = createMockContext({ userId: 123456, messageText: "/new" });
-
-    await handleNew(ctx as any);
-
-    expect(mockSessionMethods.stop).toHaveBeenCalled();
-    expect(mockSessionMethods.clearStopRequested).toHaveBeenCalled();
-  });
-
-  test("handleNew kills existing session", async () => {
-    const { handleNew } = await import("../handlers/commands");
-    mockSessionState.isActive = true;
-    const ctx = createMockContext({ userId: 123456, messageText: "/new" });
-
-    await handleNew(ctx as any);
-
-    expect(mockSessionMethods.kill).toHaveBeenCalled();
+      expect(mockStartWatchingSession).not.toHaveBeenCalled();
+      expect(mockActiveSession).toBeNull();
+      expect(ctx._replies.at(-1)?.text).toContain(
+        "could not uniquely identify the new session",
+      );
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -883,17 +1067,20 @@ describe("commands: parsing", () => {
     expect(ctx._replies[0]?.text).toContain("project");
   });
 
-  test("new command parses name and path", async () => {
+  test("new command rejects non-existent path", async () => {
     const { handleNew } = await import("../handlers/commands");
+    const whichSpy = spyOn(Bun, "which").mockReturnValue("/usr/local/bin/cmux");
     const ctx = createMockContext({
       userId: 123456,
-      messageText: "/new myname /my/path",
+      messageText: "/new /nonexistent/path",
     });
 
-    await handleNew(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("myname");
-    expect(ctx._replies[0]?.text).toContain("/my/path");
+    try {
+      await handleNew(ctx as any);
+      expect(ctx._replies[0]?.text).toContain("Path does not exist");
+    } finally {
+      whichSpy.mockRestore();
+    }
   });
 
   test("handlers handle undefined message gracefully", async () => {
@@ -1406,11 +1593,7 @@ describe("commands: /ls", () => {
   });
 
   test("handleLs shows symlink icon for symbolic links", async () => {
-    const {
-      mkdtemp,
-      writeFile,
-      symlink,
-    } = await import("fs/promises");
+    const { mkdtemp, writeFile, symlink } = await import("fs/promises");
     const tmpDir = await mkdtemp("/tmp/ls-symlink-test-");
     await writeFile(`${tmpDir}/real-file.txt`, "test");
     await symlink(`${tmpDir}/real-file.txt`, `${tmpDir}/link-file`);
