@@ -12,6 +12,13 @@ import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import {
+  createOpId,
+  debug,
+  elapsedMs,
+  error as logError,
+  info,
+} from "../logger";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -93,7 +100,7 @@ async function extractText(
       const result = await Bun.$`pdftotext -layout ${filePath} -`.quiet();
       return result.text();
     } catch (error) {
-      console.error("PDF parsing failed:", error);
+      logError("document: pdf parsing failed", error, { filePath });
       return "[PDF parsing failed - ensure pdftotext is installed: brew install poppler]";
     }
   }
@@ -213,9 +220,11 @@ async function processArchive(
   userId: number,
   username: string,
   chatId: number,
+  opId: string,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const typing = startTypingIndicator(ctx);
+  const requestStartedAt = Date.now();
 
   // Show extraction progress
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
@@ -224,10 +233,26 @@ async function processArchive(
 
   try {
     // Extract archive
-    console.log(`Extracting archive: ${fileName}`);
+    info("document: extracting archive", {
+      opId,
+      fileName,
+      archivePath,
+      chatId,
+      userId,
+    });
+    const extractStartedAt = Date.now();
     const extractDir = await extractArchive(archivePath, fileName);
     const { tree, contents } = await extractArchiveContent(extractDir);
-    console.log(`Extracted: ${tree.length} files, ${contents.length} readable`);
+    info("document: archive extracted", {
+      opId,
+      fileName,
+      extractDir,
+      fileCount: tree.length,
+      readableCount: contents.length,
+      chatId,
+      userId,
+      durationMs: elapsedMs(extractStartedAt),
+    });
 
     // Update status
     await ctx.api.editMessageText(
@@ -259,6 +284,11 @@ async function processArchive(
       statusCallback,
       chatId,
       ctx,
+      "bypassPermissions",
+      {
+        opId,
+        requestKind: "archive",
+      },
     );
 
     await auditLog(
@@ -268,6 +298,15 @@ async function processArchive(
       `[${fileName}] ${caption || ""}`,
       response,
     );
+    info("request: completed", {
+      opId,
+      requestKind: "archive",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "sdk",
+      fileName,
+    });
 
     // Cleanup
     await Bun.$`rm -rf ${extractDir}`.quiet();
@@ -279,7 +318,15 @@ async function processArchive(
       // Ignore deletion errors
     }
   } catch (error) {
-    console.error("Archive processing error:", error);
+    logError("document: archive processing failed", error, {
+      opId,
+      fileName,
+      archivePath,
+      chatId,
+      userId,
+      username,
+      durationMs: elapsedMs(requestStartedAt),
+    });
     // Delete status message on error
     try {
       await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
@@ -305,9 +352,11 @@ async function processDocuments(
   userId: number,
   username: string,
   chatId: number,
+  opId: string,
 ): Promise<void> {
   // Mark processing started
   const stopProcessing = session.startProcessing();
+  const requestStartedAt = Date.now();
 
   // Build prompt
   let prompt: string;
@@ -340,6 +389,11 @@ async function processDocuments(
       statusCallback,
       chatId,
       ctx,
+      "bypassPermissions",
+      {
+        opId,
+        requestKind: documents.length === 1 ? "document" : "document_batch",
+      },
     );
 
     await auditLog(
@@ -349,6 +403,15 @@ async function processDocuments(
       `[${documents.length} docs] ${caption || ""}`,
       response,
     );
+    info("request: completed", {
+      opId,
+      requestKind: documents.length === 1 ? "document" : "document_batch",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "sdk",
+      documentCount: documents.length,
+    });
   } catch (error) {
     await handleProcessingError(ctx, error, state.toolMessages);
   } finally {
@@ -367,9 +430,11 @@ async function processDocumentPaths(
   userId: number,
   username: string,
   chatId: number,
+  opId: string,
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
+  const extractStartedAt = Date.now();
 
   for (const path of paths) {
     try {
@@ -377,16 +442,38 @@ async function processDocumentPaths(
       const content = await extractText(path);
       documents.push({ path, name, content });
     } catch (error) {
-      console.error(`Failed to extract ${path}:`, error);
+      logError("document: extract failed", error, {
+        opId,
+        path,
+        chatId,
+        userId,
+      });
     }
   }
+
+  info("document: extracted text", {
+    opId,
+    chatId,
+    userId,
+    durationMs: elapsedMs(extractStartedAt),
+    requestedCount: paths.length,
+    extractedCount: documents.length,
+  });
 
   if (documents.length === 0) {
     await ctx.reply("❌ Failed to extract any documents.");
     return;
   }
 
-  await processDocuments(ctx, documents, caption, userId, username, chatId);
+  await processDocuments(
+    ctx,
+    documents,
+    caption,
+    userId,
+    username,
+    chatId,
+    opId,
+  );
 }
 
 /**
@@ -422,6 +509,21 @@ export async function handleDocument(ctx: Context): Promise<void> {
   const isText =
     TEXT_EXTENSIONS.includes(extension) || doc.mime_type?.startsWith("text/");
   const isArchiveFile = isArchive(fileName);
+  const opId = createOpId(
+    isArchiveFile ? "archive" : mediaGroupId ? "document_batch" : "document",
+  );
+  info("request: started", {
+    opId,
+    requestKind: isArchiveFile
+      ? "archive"
+      : mediaGroupId
+        ? "document_batch"
+        : "document",
+    chatId,
+    userId,
+    username,
+    fileName,
+  });
 
   if (!isPdf && !isText && !isArchiveFile) {
     await ctx.reply(
@@ -438,14 +540,25 @@ export async function handleDocument(ctx: Context): Promise<void> {
   try {
     docPath = await downloadDocument(ctx);
   } catch (error) {
-    console.error("Failed to download document:", error);
+    logError("document: download failed", error, {
+      opId,
+      fileName,
+      chatId,
+      userId,
+      username,
+    });
     await ctx.reply("❌ Failed to download document.");
     return;
   }
 
   // 5. Archive files - process separately (no media group support)
   if (isArchiveFile) {
-    console.log(`Received archive: ${fileName} from @${username}`);
+    info("document: received archive", {
+      fileName,
+      username,
+      chatId,
+      userId,
+    });
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
@@ -463,13 +576,19 @@ export async function handleDocument(ctx: Context): Promise<void> {
       userId,
       username,
       chatId,
+      opId,
     );
     return;
   }
 
   // 6. Single document - process immediately
   if (!mediaGroupId) {
-    console.log(`Received document: ${fileName} from @${username}`);
+    info("document: received", {
+      fileName,
+      username,
+      chatId,
+      userId,
+    });
     // Rate limit
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
@@ -489,9 +608,16 @@ export async function handleDocument(ctx: Context): Promise<void> {
         userId,
         username,
         chatId,
+        opId,
       );
     } catch (error) {
-      console.error("Failed to extract document:", error);
+      logError("document: single-file processing failed", error, {
+        opId,
+        fileName,
+        docPath,
+        chatId,
+        userId,
+      });
       await ctx.reply(
         `❌ Failed to process document: ${String(error).slice(0, 100)}`,
       );
@@ -506,6 +632,15 @@ export async function handleDocument(ctx: Context): Promise<void> {
     ctx,
     userId,
     username,
-    processDocumentPaths,
+    (groupCtx, items, groupCaption, groupUserId, groupUsername, groupChatId) =>
+      processDocumentPaths(
+        groupCtx,
+        items,
+        groupCaption,
+        groupUserId,
+        groupUsername,
+        groupChatId,
+        opId,
+      ),
   );
 }

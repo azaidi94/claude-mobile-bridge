@@ -18,7 +18,7 @@ import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
 import { getActiveSession } from "../sessions";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
-import { debug, info } from "../logger";
+import { debug, elapsedMs, info, warn } from "../logger";
 
 export async function sendViaRelay(
   ctx: Context,
@@ -26,11 +26,13 @@ export async function sendViaRelay(
   username: string,
   chatId: number,
   imagePath?: string,
+  opId?: string,
 ): Promise<boolean> {
   const active = getActiveSession();
   const sessionId = active?.info.id || session.sessionId;
   const sessionDir = session.workingDir || active?.info.dir;
   if (!sessionDir) return false;
+  const startedAt = Date.now();
 
   const client = await getRelayClient({
     sessionId: sessionId || undefined,
@@ -39,7 +41,13 @@ export async function sendViaRelay(
   });
   if (!client) return false;
 
-  info(`relay: sending via relay for ${sessionDir}`);
+  info("relay: sending", {
+    chatId,
+    username,
+    sessionDir,
+    sessionId,
+    hasImage: Boolean(imagePath),
+  });
 
   const typing = startTypingIndicator(ctx);
   const displayState = createRelayDisplayState(chatId);
@@ -68,17 +76,40 @@ export async function sendViaRelay(
   try {
     await waitForReply(client, displayState, String(chatId));
   } catch (err) {
-    debug(`relay: wait error: ${err}`);
+    warn("relay: wait failed", err, {
+      opId,
+      chatId,
+      sessionDir,
+      sessionId,
+      finalReplyReceived: displayState.finalReplyReceived,
+      durationMs: elapsedMs(startedAt),
+    });
     cleanupProgressMessages(ctx.api, displayState);
     if (!displayState.finalReplyReceived) {
       relayDelivered = false;
-      debug("relay: no reply received, falling back to SDK");
+      warn("relay: falling back to SDK", {
+        opId,
+        chatId,
+        sessionDir,
+        sessionId,
+      });
     }
   }
 
   tailer?.stop();
   cleanupCallbacks();
   typing.stop();
+
+  if (relayDelivered) {
+    info("relay: completed", {
+      opId,
+      chatId,
+      sessionDir,
+      sessionId,
+      durationMs: elapsedMs(startedAt),
+      path: imagePath ? "image" : "text",
+    });
+  }
 
   return relayDelivered;
 }

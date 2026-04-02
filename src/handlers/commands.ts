@@ -42,6 +42,13 @@ import {
   stopWatching,
   isWatching,
 } from "./watch";
+import {
+  createOpId,
+  elapsedMs,
+  error as logError,
+  info,
+  warn,
+} from "../logger";
 
 function relayIdentity(pf: {
   sessionId?: string;
@@ -145,14 +152,37 @@ export async function handleNew(ctx: Context): Promise<void> {
   const text = ctx.message?.text || "";
   const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
   const explicitPath = rawPath ? resolve(WORKING_DIR, rawPath) : WORKING_DIR;
+  const opId = createOpId("spawn");
+  const spawnStartedAt = Date.now();
+  info("request: started", {
+    opId,
+    requestKind: "spawn",
+    chatId,
+    userId,
+    explicitPath,
+  });
 
   try {
     const s = await stat(explicitPath);
     if (!s.isDirectory()) {
+      warn("spawn: target is not a directory", {
+        opId,
+        chatId,
+        userId,
+        explicitPath,
+        durationMs: elapsedMs(spawnStartedAt),
+      });
       await ctx.reply("❌ Not a directory.");
       return;
     }
   } catch {
+    warn("spawn: path does not exist", {
+      opId,
+      chatId,
+      userId,
+      explicitPath,
+      durationMs: elapsedMs(spawnStartedAt),
+    });
     await ctx.reply("❌ Path does not exist.");
     return;
   }
@@ -189,6 +219,13 @@ export async function handleNew(ctx: Context): Promise<void> {
     const wsOutput = wsResult.stdout.toString().trim();
     const wsMatch = wsOutput.match(/workspace:(\d+)/);
     if (!wsMatch) {
+      warn("spawn: failed to create workspace", {
+        opId,
+        chatId,
+        userId,
+        explicitPath,
+        durationMs: elapsedMs(spawnStartedAt),
+      });
       await ctx.reply("❌ Failed to create cmux workspace.");
       return;
     }
@@ -213,6 +250,14 @@ export async function handleNew(ctx: Context): Promise<void> {
           pf.cwd === explicitPath && !knownRelayIds.has(relayIdentity(pf)),
       );
       if (newRelays.length > 1) {
+        warn("spawn: ambiguous new relays", {
+          opId,
+          chatId,
+          userId,
+          explicitPath,
+          durationMs: elapsedMs(spawnStartedAt),
+          candidateCount: newRelays.length,
+        });
         await ctx.reply(
           "⚠️ Session spawned, but multiple new relays appeared.\n" +
             "Use /list to pick the right session.",
@@ -226,6 +271,13 @@ export async function handleNew(ctx: Context): Promise<void> {
     }
 
     if (!spawnedRelay) {
+      warn("spawn: relay not detected", {
+        opId,
+        chatId,
+        userId,
+        explicitPath,
+        durationMs: elapsedMs(spawnStartedAt),
+      });
       await ctx.reply(
         "⚠️ Session spawned but relay not detected yet. Check cmux and try /list.",
       );
@@ -264,6 +316,7 @@ export async function handleNew(ctx: Context): Promise<void> {
         ctx.api,
         chatId,
         spawned.name,
+        "spawn",
       );
       if (watching) {
         await ctx.reply(
@@ -277,13 +330,38 @@ export async function handleNew(ctx: Context): Promise<void> {
           parse_mode: "HTML",
         });
       }
+      info("request: completed", {
+        opId,
+        requestKind: "spawn",
+        chatId,
+        userId,
+        explicitPath,
+        sessionName: spawned.name,
+        sessionId: spawned.id,
+        durationMs: elapsedMs(spawnStartedAt),
+        watching,
+      });
     } else {
+      warn("spawn: session unresolved after relay detection", {
+        opId,
+        chatId,
+        userId,
+        explicitPath,
+        durationMs: elapsedMs(spawnStartedAt),
+      });
       await ctx.reply(
         "⚠️ Session spawned, but could not uniquely identify the new session.\n" +
           "Use /list to find it.",
       );
     }
   } catch (err) {
+    logError("spawn: failed", err, {
+      opId,
+      chatId,
+      userId,
+      explicitPath,
+      durationMs: elapsedMs(spawnStartedAt),
+    });
     await ctx.reply(`❌ Spawn failed: ${String(err).slice(0, 200)}`);
   }
 }
@@ -364,7 +442,7 @@ export async function handleKill(ctx: Context): Promise<void> {
 
   // Stop watching if active
   if (chatId) {
-    stopWatching(chatId, ctx.api);
+    stopWatching(chatId, ctx.api, "kill");
   }
 
   // Get session name before killing (kill() clears it)
@@ -522,7 +600,7 @@ export async function handleRestart(ctx: Context): Promise<void> {
         }),
       );
     } catch (e) {
-      console.warn("Failed to save restart info:", e);
+      warn("restart: failed to save state", e, { path: RESTART_FILE });
     }
   }
 
@@ -632,7 +710,7 @@ export async function handleList(ctx: Context): Promise<void> {
   // Auto-watch active desktop session if not already watching
   const chatId = ctx.chat?.id;
   if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
-    await startWatchingAndNotify(ctx, chatId, active.name);
+    await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
   }
 }
 
@@ -668,7 +746,9 @@ export async function handleSwitch(ctx: Context): Promise<void> {
 
       // Auto-watch desktop sessions
       if (active.info.source === "desktop" && chatId) {
-        if (!(await startWatchingAndNotify(ctx, chatId, active.name))) {
+        if (
+          !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
+        ) {
           await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
             parse_mode: "HTML",
           });
@@ -708,6 +788,8 @@ export async function handlePlan(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
   const text = ctx.message?.text || "";
+  const opId = createOpId("plan");
+  const requestStartedAt = Date.now();
 
   if (!userId || !chatId) {
     return;
@@ -726,6 +808,15 @@ export async function handlePlan(ctx: Context): Promise<void> {
     });
     return;
   }
+
+  info("request: started", {
+    opId,
+    requestKind: "plan",
+    chatId,
+    userId,
+    username,
+    messagePreview: message.slice(0, 120),
+  });
 
   // Rate limit
   const [allowed, retryAfter] = rateLimiter.check(userId);
@@ -762,6 +853,10 @@ export async function handlePlan(ctx: Context): Promise<void> {
       chatId,
       ctx,
       "plan",
+      {
+        opId,
+        requestKind: "plan",
+      },
     );
 
     // Check if plan is ready for approval
@@ -778,8 +873,23 @@ export async function handlePlan(ctx: Context): Promise<void> {
     }
 
     await auditLog(userId, username, "PLAN", message, response);
+    info("request: completed", {
+      opId,
+      requestKind: "plan",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "sdk",
+      pendingPlanApproval: Boolean(session.pendingPlanApproval),
+    });
   } catch (error) {
-    console.error("Error in plan mode:", error);
+    logError("plan: failed", error, {
+      opId,
+      chatId,
+      userId,
+      username,
+      durationMs: elapsedMs(requestStartedAt),
+    });
 
     // Cleanup tool messages
     for (const toolMsg of state.toolMessages) {
@@ -961,7 +1071,11 @@ export async function handleQueue(ctx: Context): Promise<void> {
 
   // Process queue (runs in background, doesn't block the command)
   taskQueue.process(ctx).catch(async (error) => {
-    console.error("Queue processing error:", error);
+    logError("queue: processing failed", error, {
+      chatId,
+      userId,
+      username,
+    });
     try {
       await ctx.reply(`❌ Queue error: ${String(error).slice(0, 200)}`);
     } catch {

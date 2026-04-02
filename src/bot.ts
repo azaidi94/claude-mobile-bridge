@@ -17,6 +17,7 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
+import { error as logError } from "./logger";
 import {
   handleStart,
   handleHelp,
@@ -135,7 +136,10 @@ export function createBot(options: BotOptions): Bot {
 
   // Error handler
   bot.catch((err) => {
-    console.error("Bot error:", err);
+    logError("bot: unhandled error", err.error, {
+      chatId: err.ctx?.chat?.id,
+      fromId: err.ctx?.from?.id,
+    });
   });
 
   return bot;

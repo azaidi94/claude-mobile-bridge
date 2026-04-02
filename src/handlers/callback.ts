@@ -30,6 +30,7 @@ import {
 } from "../sessions";
 import { startWatchingAndNotify, isWatching } from "./watch";
 import { escapeHtml } from "../formatting";
+import { debug, error as logError, info } from "../logger";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -75,9 +76,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Send /model command to Claude session to switch model mid-session
     if (session.isActive) {
-      console.log(
-        `[MODEL SWITCH] Sending /model ${modelId} to session ${session.sessionId?.slice(0, 8)}`,
-      );
+      info("model: syncing switch to Claude", {
+        chatId,
+        userId,
+        modelId,
+        sessionId: session.sessionId,
+      });
       try {
         await session.sendMessageStreaming(
           `/model ${modelId}`,
@@ -88,7 +92,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
           ctx,
         );
       } catch (error) {
-        console.error("[MODEL SWITCH] Failed to send /model command:", error);
+        logError("model: failed to sync switch", error, {
+          chatId,
+          userId,
+          modelId,
+          sessionId: session.sessionId,
+        });
       }
     }
 
@@ -134,11 +143,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Already on this session — start watching if not already
     if (currentActive?.name === name) {
-      if (
-        currentActive.info.source === "desktop" &&
-        !isWatching(chatId)
-      ) {
-        if (await startWatchingAndNotify(ctx, chatId, name)) {
+      if (currentActive.info.source === "desktop" && !isWatching(chatId)) {
+        if (await startWatchingAndNotify(ctx, chatId, name, "switch")) {
           await ctx.answerCallbackQuery({ text: `Watching ${name}` });
           return;
         }
@@ -193,7 +199,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         // Auto-watch desktop sessions
         if (active.info.source === "desktop") {
-          await startWatchingAndNotify(ctx, chatId, active.name);
+          await startWatchingAndNotify(ctx, chatId, active.name, "switch");
         } else {
           // Update pinned status for non-desktop sessions
           getGitBranch(active.info.dir)
@@ -281,7 +287,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
         response,
       );
     } catch (error) {
-      console.error("Error in plan approval:", error);
+      logError("callback: plan approval failed", error, {
+        chatId,
+        userId,
+        username,
+        action,
+      });
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
     } finally {
       typing.stop();
@@ -330,7 +341,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
         );
         await auditLog(userId, username, "AUQ_SKIP", "skip", response);
       } catch (error) {
-        console.error("Error in AskUserQuestion skip:", error);
+        logError("callback: ask-user skip failed", error, {
+          chatId,
+          userId,
+          username,
+          requestId,
+        });
         await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
       } finally {
         typing.stop();
@@ -421,7 +437,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
             await ctx.reply("Review and approve?", { reply_markup: keyboard });
           }
         } catch (error) {
-          console.error("Error in AskUserQuestion answer:", error);
+          logError("callback: ask-user answer failed", error, {
+            chatId,
+            userId,
+            username,
+            requestId,
+          });
           await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
         } finally {
           typing.stop();
@@ -462,7 +483,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
     const text = await file.text();
     requestData = JSON.parse(text);
   } catch (error) {
-    console.error(`Failed to load ask-user request ${requestId}:`, error);
+    logError("callback: failed to load ask-user request", error, {
+      chatId,
+      requestId,
+      requestFile,
+    });
     await ctx.answerCallbackQuery({ text: "Request expired or invalid" });
     return;
   }
@@ -479,7 +504,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
   try {
     await ctx.editMessageText(`✓ ${selectedOption}`);
   } catch (error) {
-    console.debug("Failed to edit callback message:", error);
+    debug("callback: failed to edit confirmation message", {
+      chatId,
+      requestId,
+      err: String(error),
+    });
   }
 
   // 10. Answer the callback
@@ -491,7 +520,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
   try {
     unlinkSync(requestFile);
   } catch (error) {
-    console.debug("Failed to delete request file:", error);
+    debug("callback: failed to delete request file", {
+      requestId,
+      requestFile,
+      err: String(error),
+    });
   }
 
   // 12. Send the choice to Claude as a message
@@ -499,7 +532,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   // Interrupt any running query - button responses are always immediate
   if (session.isRunning) {
-    console.log("Interrupting current query for button response");
+    info("callback: interrupting current query for response", {
+      chatId,
+      userId,
+      requestId,
+    });
     await session.stop();
     // Small delay to ensure clean interruption
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -524,13 +561,22 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     await auditLog(userId, username, "CALLBACK", message, response);
   } catch (error) {
-    console.error("Error processing callback:", error);
+    logError("callback: processing failed", error, {
+      chatId,
+      userId,
+      username,
+      requestId,
+    });
 
     for (const toolMsg of state.toolMessages) {
       try {
         await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
       } catch (error) {
-        console.debug("Failed to delete tool message:", error);
+        debug("callback: failed to delete tool message", {
+          chatId: toolMsg.chat.id,
+          messageId: toolMsg.message_id,
+          err: String(error),
+        });
       }
     }
 

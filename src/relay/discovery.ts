@@ -8,7 +8,7 @@ import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
-import { debug, info } from "../logger";
+import { debug, info, warn } from "../logger";
 
 export interface PortFileData {
   port: number;
@@ -173,12 +173,22 @@ export async function getRelayClient(
         dir: target.cwd,
       });
     }
-    info(
-      `relay: connected to ${target.cwd} on port ${target.port} (ppid=${target.ppid || "?"})`,
-    );
+    info("relay: connected", {
+      cwd: target.cwd,
+      relayPort: target.port,
+      relayPid: target.pid,
+      claudePid: target.ppid,
+      sessionId: target.sessionId,
+    });
     return client;
   } catch (err) {
-    debug(`relay: connect failed for ${target.cwd}: ${err}`);
+    warn("relay: connect failed", err, {
+      cwd: target.cwd,
+      relayPort: target.port,
+      relayPid: target.pid,
+      claudePid: target.ppid,
+      sessionId: target.sessionId,
+    });
     return null;
   }
 }
@@ -217,7 +227,11 @@ export function selectRelayTarget(
   }
 
   if (selector.sessionId) {
-    debug(`relay: no exact relay match for session ${selector.sessionId}`);
+    warn("relay: no exact match for session", {
+      sessionId: selector.sessionId,
+      sessionDir: selector.sessionDir,
+      claudePid: selector.claudePid,
+    });
     return null;
   }
 
@@ -225,9 +239,10 @@ export function selectRelayTarget(
     const byDir = alive.filter((pf) => pf.cwd === selector.sessionDir);
     if (byDir.length === 1) return byDir[0]!;
     if (byDir.length > 1) {
-      debug(
-        `relay: ambiguous relay selection for ${selector.sessionDir} (${byDir.length} candidates)`,
-      );
+      warn("relay: ambiguous selection", {
+        sessionDir: selector.sessionDir,
+        candidateCount: byDir.length,
+      });
       return null;
     }
   }

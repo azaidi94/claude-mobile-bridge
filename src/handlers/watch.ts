@@ -27,7 +27,7 @@ import {
   updatePinnedStatus,
   getGitBranch,
 } from "../sessions";
-import { info, debug, warn } from "../logger";
+import { info, debug, warn, elapsedMs } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
@@ -124,9 +124,11 @@ export async function sendWatchRelay(
   chatId: number,
   username: string,
   text: string,
+  opId?: string,
 ): Promise<boolean> {
   const state = watches.get(chatId);
   if (!state) return false;
+  const startedAt = Date.now();
 
   const client = await getRelayClient({
     sessionId: state.sessionId,
@@ -140,6 +142,14 @@ export async function sendWatchRelay(
     user: username,
     text,
   });
+  info("watch: relay queued", {
+    opId,
+    chatId,
+    sessionName: state.sessionName,
+    sessionId: state.sessionId,
+    sessionDir: state.sessionDir,
+    durationMs: elapsedMs(startedAt),
+  });
   return true;
 }
 
@@ -150,6 +160,7 @@ export async function sendWatchRelay(
 export function stopWatching(
   chatId: number,
   botApi?: Api,
+  reason = "manual",
 ): WatchState | undefined {
   const state = watches.get(chatId);
   if (state) {
@@ -161,7 +172,13 @@ export function stopWatching(
     state.relayCleanup?.();
     stopWatchTyping(chatId);
     watches.delete(chatId);
-    info(`watch: stopped for chat ${chatId}`);
+    info("watch: stopped", {
+      chatId,
+      sessionName: state.sessionName,
+      sessionId: state.sessionId,
+      sessionDir: state.sessionDir,
+      reason,
+    });
   }
   return state;
 }
@@ -192,9 +209,13 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
         )
         .catch((err) => warn(`watch offline notify: ${err}`));
 
-      info(
-        `watch: session ${state.sessionName} went offline, ready for resume`,
-      );
+      warn("watch: session went offline", {
+        chatId,
+        sessionName: state.sessionName,
+        sessionId: state.sessionId,
+        sessionDir,
+        readyForResume: Boolean(sessionInfo),
+      });
     }
   }
 }
@@ -273,7 +294,12 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  const started = await startWatchingAndNotify(ctx, chatId, targetName);
+  const started = await startWatchingAndNotify(
+    ctx,
+    chatId,
+    targetName,
+    "command",
+  );
   if (!started) {
     await ctx.reply("Could not start watching (no session ID or log file).");
   }
@@ -287,17 +313,32 @@ export async function startWatchingSession(
   botApi: Api,
   chatId: number,
   targetName: string,
+  reason = "watch",
 ): Promise<boolean> {
   // Stop existing watch if any
   if (watches.has(chatId)) {
-    stopWatching(chatId, botApi);
+    stopWatching(chatId, botApi, "replace");
   }
 
   const sessionInfo = getSession(targetName);
-  if (!sessionInfo?.id) return false;
+  if (!sessionInfo?.id) {
+    warn("watch: start failed, missing session id", {
+      chatId,
+      targetName,
+    });
+    return false;
+  }
 
   const jsonlPath = await findSessionJsonlPath(sessionInfo.id);
-  if (!jsonlPath) return false;
+  if (!jsonlPath) {
+    warn("watch: start failed, missing session log", {
+      chatId,
+      targetName,
+      sessionId: sessionInfo.id,
+      sessionDir: sessionInfo.dir,
+    });
+    return false;
+  }
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event);
@@ -353,7 +394,14 @@ export async function startWatchingSession(
     isWatching: targetName,
   }).catch(() => {});
 
-  info(`watch: started ${targetName} for chat ${chatId}`);
+  info("watch: started", {
+    chatId,
+    sessionName: targetName,
+    sessionId: sessionInfo.id,
+    sessionDir: sessionInfo.dir,
+    pid: sessionInfo.pid,
+    reason,
+  });
   return true;
 }
 
@@ -365,8 +413,14 @@ export async function startWatchingAndNotify(
   ctx: Context,
   chatId: number,
   sessionName: string,
+  reason = "watch",
 ): Promise<boolean> {
-  const watching = await startWatchingSession(ctx.api, chatId, sessionName);
+  const watching = await startWatchingSession(
+    ctx.api,
+    chatId,
+    sessionName,
+    reason,
+  );
   if (!watching) return false;
 
   const sessionInfo = getSession(sessionName);
@@ -396,7 +450,7 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
     return;
   }
 
-  const state = stopWatching(chatId, ctx.api);
+  const state = stopWatching(chatId, ctx.api, "unwatch");
 
   if (state) {
     await ctx.reply(

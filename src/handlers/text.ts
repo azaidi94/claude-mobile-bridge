@@ -25,7 +25,15 @@ import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
 import { isWatching, sendWatchRelay } from "./watch";
 import { getActiveQueue, parseTasks } from "../queue";
-import { debug, truncate } from "../logger";
+import {
+  createOpId,
+  debug,
+  elapsedMs,
+  error as logError,
+  info,
+  warn,
+  truncate,
+} from "../logger";
 import { sendViaRelay } from "./relay-bridge";
 
 /**
@@ -46,6 +54,17 @@ export async function handleText(ctx: Context): Promise<void> {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }
+
+  const opId = createOpId("text");
+  const requestStartedAt = Date.now();
+  info("request: started", {
+    opId,
+    requestKind: "text",
+    chatId,
+    userId,
+    username,
+    messagePreview: truncate(message, 120),
+  });
 
   // 1.5. Check for pending plan feedback
   if (pendingPlanFeedback.has(chatId)) {
@@ -72,6 +91,10 @@ export async function handleText(ctx: Context): Promise<void> {
         statusCallback,
         chatId,
         ctx,
+        {
+          opId,
+          requestKind: "plan_edit",
+        },
       );
 
       // Check if another plan approval is pending
@@ -90,8 +113,22 @@ export async function handleText(ctx: Context): Promise<void> {
         message,
         response,
       );
+      info("request: completed", {
+        opId,
+        requestKind: "plan_edit",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "plan_edit",
+      });
     } catch (err) {
-      debug(`plan feedback error: ${err}`);
+      logError("request: failed", err, {
+        opId,
+        requestKind: "plan_edit",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+      });
       await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
     } finally {
       typing.stop();
@@ -153,6 +190,12 @@ export async function handleText(ctx: Context): Promise<void> {
           chatId,
           ctx,
           permissionMode,
+          {
+            opId,
+            requestKind: wasPlanMode
+              ? "ask_user_custom_plan"
+              : "ask_user_custom",
+          },
         );
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
 
@@ -168,8 +211,22 @@ export async function handleText(ctx: Context): Promise<void> {
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
           await ctx.reply("Review and approve?", { reply_markup: keyboard });
         }
+        info("request: completed", {
+          opId,
+          requestKind: wasPlanMode ? "ask_user_custom_plan" : "ask_user_custom",
+          chatId,
+          userId,
+          durationMs: elapsedMs(requestStartedAt),
+          path: "sdk",
+        });
       } catch (err) {
-        debug(`AUQ custom error: ${err}`);
+        logError("request: failed", err, {
+          opId,
+          requestKind: wasPlanMode ? "ask_user_custom_plan" : "ask_user_custom",
+          chatId,
+          userId,
+          durationMs: elapsedMs(requestStartedAt),
+        });
         await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
       } finally {
         typing.stop();
@@ -180,14 +237,29 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 1.7. Check for active watch — relay message to desktop session
   if (isWatching(chatId)) {
-    const relayed = await sendWatchRelay(chatId, username, message);
+    const relayed = await sendWatchRelay(chatId, username, message, opId);
     if (relayed) {
       ctx.replyWithChatAction("typing").catch(() => {});
       await auditLog(userId, username, "WATCH_RELAY", message, "(via relay)");
+      info("request: completed", {
+        opId,
+        requestKind: "text",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "watch_relay",
+      });
       return;
     }
 
     // Relay failed — session may be offline
+    warn("request: watch relay unavailable", {
+      opId,
+      requestKind: "text",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+    });
     await ctx.reply(
       "❌ Relay failed. Session may be offline.\n" +
         "Use /unwatch and check /list.",
@@ -220,6 +292,15 @@ export async function handleText(ctx: Context): Promise<void> {
         `📋 Added ${tasks.length} task(s) to queue (now ${activeQueue.tasks.length} total).`,
       );
     }
+    info("request: completed", {
+      opId,
+      requestKind: "text",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "queue_append",
+      taskCount: tasks.length,
+    });
     return;
   }
 
@@ -238,6 +319,14 @@ export async function handleText(ctx: Context): Promise<void> {
     session.sessionId = null;
     await ctx.reply("✓ Session cleared");
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
+    info("request: completed", {
+      opId,
+      requestKind: "text",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "clear",
+    });
     return;
   }
 
@@ -256,13 +345,35 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 7.5. Try relay path — inject into running desktop session
-  const relayResult = await sendViaRelay(ctx, message, username, chatId);
+  const relayResult = await sendViaRelay(
+    ctx,
+    message,
+    username,
+    chatId,
+    undefined,
+    opId,
+  );
   if (relayResult) {
     await auditLog(userId, username, "RELAY", message, "(via relay)");
+    info("request: completed", {
+      opId,
+      requestKind: "text",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "relay",
+    });
     return;
   }
 
   // No relay available — tell the user
+  warn("request: no desktop session available", {
+    opId,
+    requestKind: "text",
+    chatId,
+    userId,
+    durationMs: elapsedMs(requestStartedAt),
+  });
   await ctx.reply(
     "❌ No desktop session found.\n\n" +
       "Use /new to spawn one, or /list to find existing sessions.",

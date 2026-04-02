@@ -15,6 +15,14 @@ import {
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { sendViaRelay } from "./relay-bridge";
+import {
+  createOpId,
+  debug,
+  elapsedMs,
+  error as logError,
+  info,
+  warn,
+} from "../logger";
 
 /**
  * Handle incoming voice messages.
@@ -34,6 +42,16 @@ export async function handleVoice(ctx: Context): Promise<void> {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
     return;
   }
+
+  const opId = createOpId("voice");
+  const requestStartedAt = Date.now();
+  info("request: started", {
+    opId,
+    requestKind: "voice",
+    chatId,
+    userId,
+    username,
+  });
 
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
@@ -77,8 +95,15 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 7. Transcribe
     const statusMsg = await ctx.reply("🎤 Transcribing...");
 
+    const transcriptionStartedAt = Date.now();
     const transcript = await transcribeVoice(voicePath);
     if (!transcript) {
+      warn("transcription: no transcript", {
+        opId,
+        chatId,
+        userId,
+        durationMs: elapsedMs(transcriptionStartedAt),
+      });
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
@@ -87,6 +112,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
       stopProcessing();
       return;
     }
+    info("transcription: completed", {
+      opId,
+      chatId,
+      userId,
+      durationMs: elapsedMs(transcriptionStartedAt),
+      transcriptLength: transcript.length,
+    });
 
     // 8. Show transcript
     await ctx.api.editMessageText(
@@ -96,9 +128,30 @@ export async function handleVoice(ctx: Context): Promise<void> {
     );
 
     // 9. Try relay path first
-    const relayResult = await sendViaRelay(ctx, transcript, username, chatId);
+    const relayResult = await sendViaRelay(
+      ctx,
+      transcript,
+      username,
+      chatId,
+      undefined,
+      opId,
+    );
     if (relayResult) {
-      await auditLog(userId, username, "VOICE_RELAY", transcript, "(via relay)");
+      await auditLog(
+        userId,
+        username,
+        "VOICE_RELAY",
+        transcript,
+        "(via relay)",
+      );
+      info("request: completed", {
+        opId,
+        requestKind: "voice",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "relay",
+      });
       return;
     }
 
@@ -113,12 +166,31 @@ export async function handleVoice(ctx: Context): Promise<void> {
       statusCallback,
       chatId,
       ctx,
+      "bypassPermissions",
+      {
+        opId,
+        requestKind: "voice",
+      },
     );
 
     // 11. Audit log
     await auditLog(userId, username, "VOICE", transcript, claudeResponse);
+    info("request: completed", {
+      opId,
+      requestKind: "voice",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "sdk",
+    });
   } catch (error) {
-    console.error("Error processing voice:", error);
+    logError("voice: processing failed", error, {
+      opId,
+      chatId,
+      userId,
+      username,
+      durationMs: elapsedMs(requestStartedAt),
+    });
 
     if (String(error).includes("abort") || String(error).includes("cancel")) {
       // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
@@ -138,7 +210,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
       try {
         unlinkSync(voicePath);
       } catch (error) {
-        console.debug("Failed to delete voice file:", error);
+        debug("voice: failed to delete temp file", {
+          path: voicePath,
+          err: String(error),
+        });
       }
     }
   }

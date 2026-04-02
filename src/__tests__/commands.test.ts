@@ -856,6 +856,7 @@ describe("commands: /new", () => {
         ctx.api,
         789,
         "spawned-session",
+        "spawn",
       );
       expect(mockActiveSession?.name).toBe("spawned-session");
       expect(ctx._replies.at(-1)?.text).toContain("spawned-session");

@@ -12,6 +12,13 @@ import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
+import {
+  createOpId,
+  debug,
+  elapsedMs,
+  error as logError,
+  info,
+} from "../logger";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -56,9 +63,11 @@ async function processPhotos(
   userId: number,
   username: string,
   chatId: number,
+  opId: string,
 ): Promise<void> {
   // Mark processing started (allows /stop to work during relay and SDK paths)
   const stopProcessing = session.startProcessing();
+  const requestStartedAt = Date.now();
 
   // Try relay path first (single photo only — relay supports one image_path)
   if (photoPaths.length === 1) {
@@ -69,10 +78,20 @@ async function processPhotos(
       username,
       chatId,
       photoPaths[0],
+      opId,
     );
     if (relayResult) {
       stopProcessing();
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
+      info("request: completed", {
+        opId,
+        requestKind: "photo",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "relay",
+        itemCount: photoPaths.length,
+      });
       return;
     }
   }
@@ -105,9 +124,23 @@ async function processPhotos(
       statusCallback,
       chatId,
       ctx,
+      "bypassPermissions",
+      {
+        opId,
+        requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
+      },
     );
 
     await auditLog(userId, username, "PHOTO", prompt, response);
+    info("request: completed", {
+      opId,
+      requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "sdk",
+      itemCount: photoPaths.length,
+    });
   } catch (error) {
     await handleProcessingError(ctx, error, state.toolMessages);
   } finally {
@@ -135,10 +168,23 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
+  const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
+  info("request: started", {
+    opId,
+    requestKind: mediaGroupId ? "photo_album" : "photo",
+    chatId,
+    userId,
+    username,
+  });
+
   // 2. For single photos, show status and rate limit early
   let statusMsg: Awaited<ReturnType<typeof ctx.reply>> | null = null;
   if (!mediaGroupId) {
-    console.log(`Received photo from @${username}`);
+    info("photo: received", {
+      username,
+      chatId,
+      userId,
+    });
     // Rate limit
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
@@ -158,7 +204,11 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   try {
     photoPath = await downloadPhoto(ctx);
   } catch (error) {
-    console.error("Failed to download photo:", error);
+    logError("photo: download failed", error, {
+      chatId,
+      userId,
+      username,
+    });
     if (statusMsg) {
       try {
         await ctx.api.editMessageText(
@@ -167,7 +217,11 @@ export async function handlePhoto(ctx: Context): Promise<void> {
           "❌ Failed to download photo.",
         );
       } catch (editError) {
-        console.debug("Failed to edit status message:", editError);
+        debug("photo: failed to edit status message", {
+          chatId,
+          messageId: statusMsg.message_id,
+          err: String(editError),
+        });
         await ctx.reply("❌ Failed to download photo.");
       }
     } else {
@@ -185,13 +239,18 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       userId,
       username,
       chatId,
+      opId,
     );
 
     // Clean up status message
     try {
       await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
     } catch (error) {
-      console.debug("Failed to delete status message:", error);
+      debug("photo: failed to delete status message", {
+        chatId: statusMsg.chat.id,
+        messageId: statusMsg.message_id,
+        err: String(error),
+      });
     }
     return;
   }
@@ -205,6 +264,15 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     ctx,
     userId,
     username,
-    processPhotos,
+    (groupCtx, items, groupCaption, groupUserId, groupUsername, groupChatId) =>
+      processPhotos(
+        groupCtx,
+        items,
+        groupCaption,
+        groupUserId,
+        groupUsername,
+        groupChatId,
+        opId,
+      ),
   );
 }

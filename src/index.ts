@@ -27,11 +27,19 @@ import {
 import { notifySessionOffline } from "./handlers";
 import { createBot } from "./bot";
 import { session } from "./session";
-import { info, warn } from "./logger";
+import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 
 // Create bot instance using factory
 const bot = createBot({ token: TELEGRAM_TOKEN });
+
+process.on("warning", (warning) => {
+  warn("process: warning", warning);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logError("process: unhandled rejection", reason);
+});
 
 // ============== Startup ==============
 
@@ -148,6 +156,12 @@ const stopRunner = () => {
     runner.stop();
   }
 };
+
+process.on("uncaughtException", (err) => {
+  logError("process: uncaught exception", err);
+  stopRunner();
+  process.exit(1);
+});
 
 process.on("SIGINT", () => {
   info("SIGINT");

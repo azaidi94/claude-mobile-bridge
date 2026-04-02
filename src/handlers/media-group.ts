@@ -12,6 +12,7 @@ import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import { session } from "../session";
+import { debug, error as logError, info } from "../logger";
 
 /**
  * Configuration for a media group handler.
@@ -63,9 +64,14 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
 
     if (!userId || !chatId) return;
 
-    console.log(
-      `Processing ${group.items.length} ${config.itemLabelPlural} from @${username}`,
-    );
+    info("media-group: processing", {
+      groupId,
+      itemLabel: config.itemLabel,
+      itemCount: group.items.length,
+      username,
+      chatId,
+      userId,
+    });
 
     // Update status message
     if (group.statusMsg) {
@@ -76,7 +82,12 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
           `${config.emoji} Processing ${group.items.length} ${config.itemLabelPlural}...`,
         );
       } catch (error) {
-        console.debug("Failed to update status message:", error);
+        debug("media-group: failed to update status message", {
+          groupId,
+          chatId: group.statusMsg.chat.id,
+          messageId: group.statusMsg.message_id,
+          err: String(error),
+        });
       }
     }
 
@@ -97,7 +108,12 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
           group.statusMsg.message_id,
         );
       } catch (error) {
-        console.debug("Failed to delete status message:", error);
+        debug("media-group: failed to delete status message", {
+          groupId,
+          chatId: group.statusMsg.chat.id,
+          messageId: group.statusMsg.message_id,
+          err: String(error),
+        });
       }
     }
   }
@@ -127,7 +143,13 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       }
 
       // Create new group
-      console.log(`Receiving ${config.itemLabel} album from @${username}`);
+      info("media-group: receiving", {
+        groupId: mediaGroupId,
+        itemLabel: config.itemLabel,
+        username,
+        chatId: ctx.chat?.id,
+        userId,
+      });
       const statusMsg = await ctx.reply(
         `${config.emoji} Receiving ${config.itemLabelPlural}...`,
       );
@@ -180,14 +202,21 @@ export async function handleProcessingError(
   error: unknown,
   toolMessages: Message[],
 ): Promise<void> {
-  console.error("Error processing media:", error);
+  logError("media-group: processing failed", error, {
+    chatId: ctx.chat?.id,
+    userId: ctx.from?.id,
+  });
 
   // Clean up tool messages
   for (const toolMsg of toolMessages) {
     try {
       await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
     } catch (cleanupError) {
-      console.debug("Failed to delete tool message:", cleanupError);
+      debug("media-group: failed to delete tool message", {
+        chatId: toolMsg.chat.id,
+        messageId: toolMsg.message_id,
+        err: String(cleanupError),
+      });
     }
   }
 

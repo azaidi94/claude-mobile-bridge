@@ -39,7 +39,12 @@ import type {
 } from "./types";
 import type { SessionInfo } from "./sessions/types";
 import { updateSessionId, updateSessionActivity } from "./sessions";
-import { info, warn, error, debug } from "./logger";
+import { createOpId, elapsedMs, info, warn, error, debug } from "./logger";
+
+interface RequestTelemetry {
+  opId?: string;
+  requestKind?: string;
+}
 
 // ============== File Send Directive Helpers ==============
 
@@ -274,7 +279,32 @@ class ClaudeSession {
     chatId?: number,
     ctx?: Context,
     permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
+    telemetry: RequestTelemetry = {},
   ): Promise<string> {
+    const opId = telemetry.opId || createOpId("claude");
+    const requestKind =
+      telemetry.requestKind || (permissionMode === "plan" ? "plan" : "message");
+    const requestStartedAt = Date.now();
+    let completionState = "completed";
+
+    const requestFields = () => ({
+      opId,
+      requestKind,
+      chatId,
+      userId,
+      username,
+      sessionId: this.sessionId,
+      sessionName: this._sessionName,
+      cwd: this._workingDir,
+      model: this._model,
+      permissionMode,
+    });
+
+    info("claude: request started", {
+      ...requestFields(),
+      messagePreview: message.slice(0, 120),
+    });
+
     // Set chat context for ask_user MCP tool
     if (chatId) {
       process.env.TELEGRAM_CHAT_ID = String(chatId);
@@ -599,9 +629,19 @@ class ClaudeSession {
           askUserQuestionTriggered ||
           this.stopRequested)
       ) {
+        if (this.stopRequested && !queryCompleted) {
+          completionState = "cancelled";
+        }
         debug(`suppressed: ${err}`);
       } else {
-        error(`query: ${err}`);
+        error("claude: request failed", err, {
+          ...requestFields(),
+          durationMs: elapsedMs(requestStartedAt),
+          queryCompleted,
+          askUserTriggered,
+          askUserQuestionTriggered,
+          stopRequested: this.stopRequested,
+        });
         this.lastError = String(err).slice(0, 100);
         this.lastErrorTime = new Date();
         throw err;
@@ -619,7 +659,13 @@ class ClaudeSession {
 
     // If ask_user was triggered, return early - user will respond via button
     if (askUserTriggered) {
+      completionState = "awaiting_user_selection";
       await statusCallback("done", "");
+      info("claude: request completed", {
+        ...requestFields(),
+        durationMs: elapsedMs(requestStartedAt),
+        completionState,
+      });
       return "[Waiting for user selection]";
     }
 
@@ -639,7 +685,13 @@ class ClaudeSession {
         this._isPlanMode,
       );
       if (buttonsSent) {
+        completionState = "awaiting_user_selection";
         await statusCallback("done", "");
+        info("claude: request completed", {
+          ...requestFields(),
+          durationMs: elapsedMs(requestStartedAt),
+          completionState,
+        });
         return "[Waiting for user selection]";
       }
     }
@@ -664,7 +716,13 @@ class ClaudeSession {
         planContent,
         timestamp: Date.now(),
       };
+      completionState = "plan_ready";
       await statusCallback("done", "");
+      info("claude: request completed", {
+        ...requestFields(),
+        durationMs: elapsedMs(requestStartedAt),
+        completionState,
+      });
       return "[Plan ready for approval]";
     }
 
@@ -684,10 +742,17 @@ class ClaudeSession {
     }
 
     await statusCallback("done", "");
-
-    return (
-      stripFileDirectives(responseParts.join("")) || "No response from Claude."
-    );
+    const finalResponse =
+      stripFileDirectives(responseParts.join("")) || "No response from Claude.";
+    info("claude: request completed", {
+      ...requestFields(),
+      durationMs: elapsedMs(requestStartedAt),
+      completionState,
+      responseLength: finalResponse.length,
+      usageInputTokens: this.lastUsage?.input_tokens,
+      usageOutputTokens: this.lastUsage?.output_tokens,
+    });
+    return finalResponse;
   }
 
   /**
@@ -729,7 +794,13 @@ class ClaudeSession {
     this.lastActivity = sessionInfo.lastActivity
       ? new Date(sessionInfo.lastActivity)
       : null;
-    info(`load: ${sessionInfo.name}`);
+    info("session: loaded", {
+      sessionName: sessionInfo.name,
+      sessionId: sessionInfo.id,
+      cwd: sessionInfo.dir,
+      pid: sessionInfo.pid,
+      source: sessionInfo.source,
+    });
   }
 
   /**
@@ -769,6 +840,7 @@ class ClaudeSession {
     statusCallback: StatusCallback,
     chatId?: number,
     ctx?: Context,
+    telemetry: RequestTelemetry = {},
   ): Promise<string> {
     if (!this._pendingPlanApproval) {
       throw new Error("No pending plan approval");
@@ -803,6 +875,10 @@ class ClaudeSession {
       chatId,
       ctx,
       nextPermissionMode,
+      {
+        opId: telemetry.opId,
+        requestKind: telemetry.requestKind || `plan_${action}`,
+      },
     );
   }
 

@@ -15,6 +15,7 @@ import {
   TRANSCRIPTION_PROMPT,
   TRANSCRIPTION_AVAILABLE,
 } from "./config";
+import { debug, error as logError, info, warn } from "./logger";
 
 // ============== OpenAI Client ==============
 
@@ -50,7 +51,7 @@ async function writeAuditLog(event: AuditEvent): Promise<void> {
     const fs = await import("fs/promises");
     await fs.appendFile(AUDIT_LOG_PATH, content);
   } catch (error) {
-    console.error("Failed to write audit log:", error);
+    logError("audit: write failed", error, { path: AUDIT_LOG_PATH });
   }
 }
 
@@ -151,7 +152,7 @@ export async function transcribeVoice(
   filePath: string,
 ): Promise<string | null> {
   if (!openaiClient) {
-    console.warn("OpenAI client not available for transcription");
+    warn("transcription: client unavailable");
     return null;
   }
 
@@ -164,7 +165,7 @@ export async function transcribeVoice(
     });
     return transcript.text;
   } catch (error) {
-    console.error("Transcription failed:", error);
+    logError("transcription: failed", error, { path: filePath });
     return null;
   }
 }
@@ -183,7 +184,10 @@ export function startTypingIndicator(ctx: Context): TypingController {
       try {
         await ctx.replyWithChatAction("typing");
       } catch (error) {
-        console.debug("Typing indicator failed:", error);
+        debug("typing: send failed", {
+          chatId: ctx.chat?.id,
+          err: String(error),
+        });
       }
       await Bun.sleep(4000);
     }
@@ -233,7 +237,7 @@ export async function checkInterrupt(text: string): Promise<string> {
   // Cancel active queue entirely — interrupt takes over
   const activeQueue = queueModule.getActiveQueue();
   if (activeQueue) {
-    console.log("! prefix - cancelling active queue");
+    info("interrupt: cancelling active queue");
     activeQueue.cancel();
     await Bun.sleep(100);
     sessionModule.session.clearStopRequested();
@@ -241,7 +245,7 @@ export async function checkInterrupt(text: string): Promise<string> {
   }
 
   if (sessionModule.session.isRunning) {
-    console.log("! prefix - interrupting current query");
+    info("interrupt: stopping active query");
     sessionModule.session.markInterrupt();
     await sessionModule.session.stop();
     await Bun.sleep(100);

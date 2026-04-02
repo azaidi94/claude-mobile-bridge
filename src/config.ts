@@ -8,7 +8,7 @@ import { homedir } from "os";
 import { resolve, dirname } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
-import { info, debug } from "./logger";
+import { info, debug, error as logError } from "./logger";
 
 // ============== Environment Setup ==============
 
@@ -242,11 +242,11 @@ await mkdir(TEMP_DIR, { recursive: true });
 // ============== Validation ==============
 
 if (!TELEGRAM_TOKEN) {
-  console.error("ERROR: TELEGRAM_BOT_TOKEN required");
+  logError("startup: TELEGRAM_BOT_TOKEN required");
   process.exit(1);
 }
 
 if (ALLOWED_USERS.length === 0) {
-  console.error("ERROR: TELEGRAM_ALLOWED_USERS required");
+  logError("startup: TELEGRAM_ALLOWED_USERS required");
   process.exit(1);
 }
