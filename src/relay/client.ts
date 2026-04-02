@@ -148,11 +148,8 @@ export class RelayClient {
     this.disconnectCallbacks.push(cb);
   }
 
-  clearCallbacks(): void {
-    this.replyCallbacks = [];
-    this.editCallbacks = [];
-    this.reactCallbacks = [];
-    this.disconnectCallbacks = [];
+  offDisconnect(cb: DisconnectCallback): void {
+    this.disconnectCallbacks = this.disconnectCallbacks.filter((c) => c !== cb);
   }
 
   private send(msg: Record<string, unknown>): void {
@@ -173,9 +170,7 @@ export class RelayClient {
           text: String(msg.text || ""),
           files: (msg.files as string[]) ?? [],
           send_as_pdf: Boolean(msg.send_as_pdf),
-          pdf_filename: msg.pdf_filename
-            ? String(msg.pdf_filename)
-            : undefined,
+          pdf_filename: msg.pdf_filename ? String(msg.pdf_filename) : undefined,
         };
         for (const { cb, chatId } of this.replyCallbacks) {
           if (!chatId || chatId === msgChatId) cb(reply);

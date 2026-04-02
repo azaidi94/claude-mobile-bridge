@@ -93,6 +93,7 @@ function waitForReply(
     const cleanup = () => {
       clearTimeout(timeout);
       client.offReply(onReply);
+      client.offDisconnect(onDisconnect);
     };
 
     const onReply = () => {
@@ -104,14 +105,15 @@ function waitForReply(
     // Scope to this chat so other chats' replies don't resolve us
     client.onReply(onReply, chatId);
 
-    client.onDisconnect(() => {
+    const onDisconnect = () => {
       cleanup();
       if (!state.finalReplyReceived) {
         reject(new Error("relay disconnected"));
       } else {
         resolve();
       }
-    });
+    };
+    client.onDisconnect(onDisconnect);
 
     const timeout = setTimeout(() => {
       cleanup();
