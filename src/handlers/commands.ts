@@ -22,6 +22,7 @@ import {
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
+import { findSessionJsonlPath } from "../sessions/tailer";
 import { auditLog } from "../utils";
 import {
   isRelayAvailable,
@@ -302,6 +303,16 @@ export async function handleNew(ctx: Context): Promise<void> {
 
     if (spawned) {
       setActiveSession(spawned.name);
+
+      // Wait for JSONL to appear (needed for watch/tailer)
+      if (spawned.id) {
+        const jsonlDeadline = Date.now() + 10_000;
+        while (Date.now() < jsonlDeadline) {
+          if (await findSessionJsonlPath(spawned.id)) break;
+          await Bun.sleep(1000);
+        }
+      }
+
       const watching = await startWatchingSession(
         ctx.api,
         chatId,

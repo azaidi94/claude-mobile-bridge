@@ -139,6 +139,11 @@ mock.module("../relay", () => ({
   scanPortFiles: mockScanPortFiles,
 }));
 
+const mockFindSessionJsonlPath = mock(async () => "/tmp/mock-session.jsonl");
+mock.module("../sessions/tailer", () => ({
+  findSessionJsonlPath: mockFindSessionJsonlPath,
+}));
+
 const mockStartWatchingSession = mock(async () => true);
 const mockStartWatchingAndNotify = mock(async () => true);
 const mockStopWatching = mock(() => undefined);
