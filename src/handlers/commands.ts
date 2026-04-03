@@ -403,13 +403,9 @@ export async function killSession(
   chatId: number,
   botApi: Context["api"],
 ): Promise<{ killed: boolean; pid?: number }> {
-  // Stop watching if we're watching this session
   stopWatching(chatId, botApi, "kill");
-
-  // Disconnect relay
   disconnectRelay(sessionInfo.dir);
 
-  // SIGTERM the Claude process if we have a PID
   let pid: number | undefined;
   if (sessionInfo.pid) {
     pid = sessionInfo.pid;
@@ -420,7 +416,6 @@ export async function killSession(
     }
   }
 
-  // Clear bot session state if this was the active session
   const active = getActiveSession();
   if (active?.name === sessionInfo.name) {
     if (session.isRunning) {
@@ -431,7 +426,6 @@ export async function killSession(
     await session.kill();
   }
 
-  // Remove from cache
   removeSession(sessionInfo.name);
 
   info("kill: terminated", {
@@ -477,11 +471,10 @@ export async function sendPostKillSessionList(
     lines.push(`• <b>${escapeHtml(s.name)}</b>`, `   ${meta}`, "");
   }
 
-  const prefix = action === "switch" ? "switch" : "kill";
   const buttons = sessions.map((s) => [
     {
       text: action === "kill" ? `Kill ${s.name}` : s.name,
-      callback_data: `${prefix}:${s.name}`,
+      callback_data: `${action}:${s.name}`,
     },
   ]);
 
@@ -508,40 +501,27 @@ export async function handleKill(ctx: Context): Promise<void> {
   const text = ctx.message?.text || "";
   const targetName = text.split(/\s+/).slice(1).join(" ").trim();
 
-  if (targetName) {
-    // Kill by name
-    const target = getSession(targetName);
+  // Resolve target: explicit name > active session
+  const resolvedName = targetName || getActiveSession()?.name;
+
+  if (resolvedName) {
+    const target = getSession(resolvedName);
     if (!target) {
-      await ctx.reply(`❌ Session "${escapeHtml(targetName)}" not found.`, {
+      await ctx.reply(`❌ Session "${escapeHtml(resolvedName)}" not found.`, {
         parse_mode: "HTML",
       });
       return;
     }
     const { pid } = await killSession(target, chatId, ctx.api);
     const pidStr = pid ? ` (pid ${pid})` : "";
-    await ctx.reply(`💀 Killed <b>${escapeHtml(targetName)}</b>${pidStr}`, {
+    await ctx.reply(`💀 Killed <b>${escapeHtml(resolvedName)}</b>${pidStr}`, {
       parse_mode: "HTML",
     });
     await sendPostKillSessionList(ctx, chatId, "switch");
     return;
   }
 
-  // No name arg — kill active session or show picker
-  const active = getActiveSession();
-  if (active) {
-    const target = getSession(active.name);
-    if (target) {
-      const { pid } = await killSession(target, chatId, ctx.api);
-      const pidStr = pid ? ` (pid ${pid})` : "";
-      await ctx.reply(`💀 Killed <b>${escapeHtml(active.name)}</b>${pidStr}`, {
-        parse_mode: "HTML",
-      });
-      await sendPostKillSessionList(ctx, chatId, "switch");
-      return;
-    }
-  }
-
-  // No active session — show kill picker
+  // No name and no active session — show kill picker
   const sessions = getSessions();
   if (sessions.length === 0) {
     await ctx.reply("No sessions to kill.");

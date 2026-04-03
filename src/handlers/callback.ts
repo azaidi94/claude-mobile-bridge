@@ -24,13 +24,13 @@ import {
   setActiveSession,
   getActiveSession,
   getSessions,
+  getSession,
   updatePinnedStatus,
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
 import { startWatchingAndNotify, isWatching } from "./watch";
 import { killSession, sendPostKillSessionList } from "./commands";
-import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { debug, error as logError, info } from "../logger";
 
