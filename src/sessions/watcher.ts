@@ -319,6 +319,13 @@ async function scanSessions(): Promise<SessionInfo[]> {
     const dirFound: SessionInfo[] = [];
     const knownIds = new Set<string>();
 
+    // Build sessionId→mtime from JSONL candidates for accurate lastActivity
+    const candidates = candidatesByDir.get(dir) || [];
+    const jsonlMtime = new Map<string, number>();
+    for (const c of candidates) {
+      if (c.info.id) jsonlMtime.set(c.info.id, c.mtime);
+    }
+
     // 1. Add port-file sessions (authoritative, have PIDs)
     const pfs = portsByDir.get(dir) || [];
     for (const pf of pfs) {
@@ -328,9 +335,9 @@ async function scanSessions(): Promise<SessionInfo[]> {
         id: pf.sessionId || "",
         name: "",
         dir,
-        lastActivity: pf.startedAt
-          ? new Date(pf.startedAt).getTime()
-          : Date.now(),
+        lastActivity:
+          jsonlMtime.get(pf.sessionId!) ??
+          (pf.startedAt ? new Date(pf.startedAt).getTime() : Date.now()),
         source: "desktop",
         pid: pf.ppid,
       });
@@ -338,7 +345,6 @@ async function scanSessions(): Promise<SessionInfo[]> {
     }
 
     // 2. Fill remaining slots with JSONL sessions (prefer port-matched, then mtime)
-    const candidates = candidatesByDir.get(dir) || [];
     candidates.sort((a, b) => {
       const aMatch = portSessionIds.has(a.info.id) ? 1 : 0;
       const bMatch = portSessionIds.has(b.info.id) ? 1 : 0;
