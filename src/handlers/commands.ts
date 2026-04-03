@@ -16,12 +16,14 @@ import {
   getSessions,
   getActiveSession,
   setActiveSession,
+  getSession,
   forceRefresh,
   removeSession,
   updatePinnedStatus,
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
+import type { SessionInfo } from "../sessions/types";
 import { findSessionJsonlPath } from "../sessions/tailer";
 import { auditLog } from "../utils";
 import {
@@ -98,7 +100,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/unwatch - Stop watching\n\n` +
       `<b>Control:</b>\n` +
       `/stop - Interrupt current query\n` +
-      `/kill - Terminate session\n` +
+      `/kill [name] - Terminate session (SIGTERM)\n` +
       `/retry - Retry last message\n` +
       `/status - Show session details\n` +
       `/model - Switch model\n` +
@@ -393,56 +395,159 @@ export async function handleStop(ctx: Context): Promise<void> {
 }
 
 /**
- * /kill - Terminate session entirely.
+ * Kill a session by SIGTERM, clean up relay/watch/cache.
+ * Shared by /kill command and kill: callback.
+ */
+export async function killSession(
+  sessionInfo: SessionInfo,
+  chatId: number,
+  botApi: Context["api"],
+): Promise<{ killed: boolean; pid?: number }> {
+  // Stop watching if we're watching this session
+  stopWatching(chatId, botApi, "kill");
+
+  // Disconnect relay
+  disconnectRelay(sessionInfo.dir);
+
+  // SIGTERM the Claude process if we have a PID
+  let pid: number | undefined;
+  if (sessionInfo.pid) {
+    pid = sessionInfo.pid;
+    try {
+      process.kill(sessionInfo.pid, "SIGTERM");
+    } catch {
+      // Process already dead — that's fine
+    }
+  }
+
+  // Clear bot session state if this was the active session
+  const active = getActiveSession();
+  if (active?.name === sessionInfo.name) {
+    if (session.isRunning) {
+      await session.stop();
+      await Bun.sleep(100);
+      session.clearStopRequested();
+    }
+    await session.kill();
+  }
+
+  // Remove from cache
+  removeSession(sessionInfo.name);
+
+  info("kill: terminated", {
+    sessionName: sessionInfo.name,
+    sessionDir: sessionInfo.dir,
+    pid,
+  });
+
+  return { killed: true, pid };
+}
+
+/**
+ * Show session list after a kill (for picking next session or killing another).
+ */
+export async function sendPostKillSessionList(
+  ctx: Context,
+  chatId: number,
+  action: "switch" | "kill",
+): Promise<void> {
+  await forceRefresh();
+  const sessions = getSessions();
+
+  if (sessions.length === 0) {
+    await ctx.reply("No sessions available. Use /new to start one.");
+    return;
+  }
+
+  const branches = await Promise.all(sessions.map((s) => getGitBranch(s.dir)));
+  const lines: string[] = [
+    action === "switch"
+      ? "📋 <b>Select a session to continue:</b>\n"
+      : "📋 <b>Select a session to kill:</b>\n",
+  ];
+
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i]!;
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const ago = formatTimeAgo(s.lastActivity);
+    const branch = branches[i];
+    const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`• <b>${escapeHtml(s.name)}</b>`, `   ${meta}`, "");
+  }
+
+  const prefix = action === "switch" ? "switch" : "kill";
+  const buttons = sessions.map((s) => [
+    {
+      text: action === "kill" ? `Kill ${s.name}` : s.name,
+      callback_data: `${prefix}:${s.name}`,
+    },
+  ]);
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+/**
+ * /kill [name] - Terminate a Claude session.
  */
 export async function handleKill(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
     return;
   }
 
-  // Stop any running query first
-  if (session.isRunning) {
-    await session.stop();
-    await Bun.sleep(100);
-    session.clearStopRequested();
-  }
+  if (!chatId) return;
 
-  const chatId = ctx.chat?.id;
-  const activeSession = getActiveSession();
-  const sessionDir = session.workingDir || activeSession?.info.dir;
-  const hasRelay = sessionDir
-    ? await isRelayAvailable({
-        sessionId: activeSession?.info.id || session.sessionId || undefined,
-        sessionDir,
-        claudePid: activeSession?.info.pid,
-      })
-    : false;
+  const text = ctx.message?.text || "";
+  const targetName = text.split(/\s+/).slice(1).join(" ").trim();
 
-  if (!session.isActive && !hasRelay) {
-    await ctx.reply("⏸️ No active session.");
+  if (targetName) {
+    // Kill by name
+    const target = getSession(targetName);
+    if (!target) {
+      await ctx.reply(`❌ Session "${escapeHtml(targetName)}" not found.`, {
+        parse_mode: "HTML",
+      });
+      return;
+    }
+    const { pid } = await killSession(target, chatId, ctx.api);
+    const pidStr = pid ? ` (pid ${pid})` : "";
+    await ctx.reply(`💀 Killed <b>${escapeHtml(targetName)}</b>${pidStr}`, {
+      parse_mode: "HTML",
+    });
+    await sendPostKillSessionList(ctx, chatId, "switch");
     return;
   }
 
-  // Disconnect relay if active
-  if (sessionDir && hasRelay) {
-    disconnectRelay(sessionDir);
+  // No name arg — kill active session or show picker
+  const active = getActiveSession();
+  if (active) {
+    const target = getSession(active.name);
+    if (target) {
+      const { pid } = await killSession(target, chatId, ctx.api);
+      const pidStr = pid ? ` (pid ${pid})` : "";
+      await ctx.reply(`💀 Killed <b>${escapeHtml(active.name)}</b>${pidStr}`, {
+        parse_mode: "HTML",
+      });
+      await sendPostKillSessionList(ctx, chatId, "switch");
+      return;
+    }
   }
 
-  // Stop watching if active
-  if (chatId) {
-    stopWatching(chatId, ctx.api, "kill");
+  // No active session — show kill picker
+  const sessions = getSessions();
+  if (sessions.length === 0) {
+    await ctx.reply("No sessions to kill.");
+    return;
   }
-
-  // Get session name before killing (kill() clears it)
-  const sessionName = session.sessionName;
-  await session.kill();
-  if (sessionName) {
-    removeSession(sessionName);
-  }
-  await ctx.reply("💀 Session terminated. Next message starts fresh.");
+  await sendPostKillSessionList(ctx, chatId, "kill");
 }
 
 /**

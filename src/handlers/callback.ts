@@ -29,6 +29,8 @@ import {
   sendSwitchHistory,
 } from "../sessions";
 import { startWatchingAndNotify, isWatching } from "./watch";
+import { killSession, sendPostKillSessionList } from "./commands";
+import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { debug, error as logError, info } from "../logger";
 
@@ -220,7 +222,28 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Handle plan approval callbacks: plan:{action}:{request_id}
+  // 4. Handle kill callbacks: kill:{session_name}
+  if (callbackData.startsWith("kill:")) {
+    const name = callbackData.slice(5);
+    const target = getSession(name);
+
+    if (!target) {
+      await ctx.answerCallbackQuery({ text: "Session not found" });
+      return;
+    }
+
+    const { pid } = await killSession(target, chatId, ctx.api);
+    const pidStr = pid ? ` (pid ${pid})` : "";
+    await ctx.answerCallbackQuery({ text: `Killed ${name}` });
+
+    await ctx.editMessageText(`💀 Killed <b>${escapeHtml(name)}</b>${pidStr}`, {
+      parse_mode: "HTML",
+    });
+    await sendPostKillSessionList(ctx, chatId, "switch");
+    return;
+  }
+
+  // 5. Handle plan approval callbacks: plan:{action}:{request_id}
   if (callbackData.startsWith("plan:")) {
     const parts = callbackData.split(":");
     if (parts.length !== 3) {

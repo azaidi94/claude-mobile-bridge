@@ -83,6 +83,11 @@ type MockPortFile = {
   startedAt: string;
 };
 
+const mockRemoveSession = mock(() => true);
+const mockGetSession = mock(
+  (name: string) => mockSessions.find((s) => s.name === name) || null,
+);
+
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
   getActiveSession: mock(() => mockActiveSession),
@@ -119,9 +124,9 @@ mock.module("../sessions", () => ({
   }),
   forceRefresh: mockForceRefresh,
   updatePinnedStatus: mock(() => Promise.resolve()),
-  removeSession: mock(() => true),
+  removeSession: mockRemoveSession,
   getGitBranch: mock(() => Promise.resolve("main")),
-  getSession: mock(() => null),
+  getSession: mockGetSession,
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
@@ -308,6 +313,11 @@ function resetMocks() {
   mockGetRelayDirs.mockClear();
   mockGetRelayDirs.mockImplementation(async () => []);
   mockDisconnectRelay.mockClear();
+  mockRemoveSession.mockClear();
+  mockGetSession.mockClear();
+  mockGetSession.mockImplementation(
+    (name: string) => mockSessions.find((s) => s.name === name) || null,
+  );
   mockStartWatchingSession.mockClear();
   mockStartWatchingSession.mockImplementation(async () => true);
   mockStartWatchingAndNotify.mockClear();
@@ -1640,5 +1650,182 @@ describe("commands: /ls", () => {
 
     const { rm } = await import("fs/promises");
     await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+});
+
+// ============== /kill Command Tests ==============
+
+describe("commands: /kill", () => {
+  beforeEach(resetMocks);
+  let processKillSpy: ReturnType<typeof spyOn> | null = null;
+
+  beforeEach(() => {
+    processKillSpy = spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    processKillSpy?.mockRestore();
+  });
+
+  test("handleKill returns unauthorized for non-allowed user", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999, messageText: "/kill" });
+
+    await handleKill(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+  });
+
+  test("handleKill kills active session with SIGTERM", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    mockSessions.push({
+      name: "my-session",
+      dir: "/tmp/proj",
+      lastActivity: Date.now(),
+      pid: 42,
+      source: "desktop",
+    });
+    mockActiveSession = {
+      name: "my-session",
+      info: {
+        dir: "/tmp/proj",
+        name: "my-session",
+        pid: 42,
+        source: "desktop",
+      },
+    };
+    mockGetSession.mockImplementation(
+      (name: string) => mockSessions.find((s) => s.name === name) || null,
+    );
+    const ctx = createMockContext({ userId: 123456, messageText: "/kill" });
+
+    await handleKill(ctx as any);
+
+    expect(processKillSpy).toHaveBeenCalledWith(42, "SIGTERM");
+    expect(mockRemoveSession).toHaveBeenCalledWith("my-session");
+    const killReply = ctx._replies.find((r: any) => r.text?.includes("Killed"));
+    expect(killReply?.text).toContain("my-session");
+    expect(killReply?.text).toContain("pid 42");
+  });
+
+  test("handleKill by name kills specific session", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    mockSessions.push(
+      {
+        name: "session-a",
+        dir: "/tmp/a",
+        lastActivity: Date.now(),
+        pid: 100,
+        source: "desktop",
+      },
+      {
+        name: "session-b",
+        dir: "/tmp/b",
+        lastActivity: Date.now(),
+        pid: 200,
+        source: "desktop",
+      },
+    );
+    mockGetSession.mockImplementation(
+      (name: string) => mockSessions.find((s) => s.name === name) || null,
+    );
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/kill session-b",
+    });
+
+    await handleKill(ctx as any);
+
+    expect(processKillSpy).toHaveBeenCalledWith(200, "SIGTERM");
+    expect(mockRemoveSession).toHaveBeenCalledWith("session-b");
+    const killReply = ctx._replies.find((r: any) => r.text?.includes("Killed"));
+    expect(killReply?.text).toContain("session-b");
+  });
+
+  test("handleKill unknown name shows error", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    mockGetSession.mockReturnValue(null);
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/kill nonexistent",
+    });
+
+    await handleKill(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("not found");
+    expect(processKillSpy).not.toHaveBeenCalled();
+  });
+
+  test("handleKill with no active session and no sessions shows empty message", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    mockActiveSession = null;
+    const ctx = createMockContext({ userId: 123456, messageText: "/kill" });
+
+    await handleKill(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("No sessions to kill");
+  });
+
+  test("handleKill with no active session shows kill picker", async () => {
+    const { handleKill } = await import("../handlers/commands");
+    mockActiveSession = null;
+    mockSessions.push(
+      {
+        name: "pick-a",
+        dir: "/tmp/a",
+        lastActivity: Date.now(),
+        source: "desktop",
+      },
+      {
+        name: "pick-b",
+        dir: "/tmp/b",
+        lastActivity: Date.now(),
+        source: "desktop",
+      },
+    );
+    const ctx = createMockContext({ userId: 123456, messageText: "/kill" });
+
+    await handleKill(ctx as any);
+
+    // Should show picker with kill buttons
+    const pickerReply = ctx._replies.find((r: any) => r.options?.reply_markup);
+    expect(pickerReply).toBeDefined();
+    const buttons = (
+      pickerReply?.options?.reply_markup as any
+    )?.inline_keyboard?.flat();
+    const killButtons = buttons?.filter((b: any) =>
+      b.callback_data?.startsWith("kill:"),
+    );
+    expect(killButtons?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("sendPostKillSessionList shows switch buttons after kill", async () => {
+    const { sendPostKillSessionList } = await import("../handlers/commands");
+    mockSessions.push({
+      name: "remaining",
+      dir: "/tmp/remaining",
+      lastActivity: Date.now(),
+      source: "desktop",
+    });
+    const ctx = createMockContext({ userId: 123456 });
+
+    await sendPostKillSessionList(ctx as any, 789, "switch");
+
+    const reply = ctx._replies.find((r: any) => r.options?.reply_markup);
+    expect(reply).toBeDefined();
+    const buttons = (
+      reply?.options?.reply_markup as any
+    )?.inline_keyboard?.flat();
+    expect(buttons?.[0]?.callback_data).toContain("switch:");
+  });
+
+  test("sendPostKillSessionList shows helpful message when no sessions", async () => {
+    const { sendPostKillSessionList } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456 });
+
+    await sendPostKillSessionList(ctx as any, 789, "switch");
+
+    expect(ctx._replies[0]?.text).toContain("No sessions");
+    expect(ctx._replies[0]?.text).toContain("/new");
   });
 });
