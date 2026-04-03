@@ -309,7 +309,7 @@ describe("session-manager: pid assignment", () => {
       },
     ];
 
-    assignPidsToSessions(sessions, [{ pid: 101, dir: "/repo" }]);
+    assignPidsToSessions(sessions, [{ pid: 101, ppid: 1, dir: "/repo" }]);
 
     expect(sessions[0]!.pid).toBe(101);
   });
@@ -335,12 +335,64 @@ describe("session-manager: pid assignment", () => {
     ];
 
     assignPidsToSessions(sessions, [
-      { pid: 101, dir: "/repo" },
-      { pid: 102, dir: "/repo" },
+      { pid: 101, ppid: 1, dir: "/repo" },
+      { pid: 102, ppid: 1, dir: "/repo" },
     ]);
 
     expect(sessions[0]!.pid).toBeUndefined();
     expect(sessions[1]!.pid).toBeUndefined();
+  });
+
+  test("uses port files to disambiguate multiple sessions in same dir", async () => {
+    const { assignPidsToSessions } = await import("../sessions/watcher");
+
+    const sessions: SessionInfo[] = [
+      {
+        id: "aaaa-1111",
+        name: "repo-a",
+        dir: "/repo",
+        lastActivity: 1,
+        source: "desktop",
+      },
+      {
+        id: "bbbb-2222",
+        name: "repo-b",
+        dir: "/repo",
+        lastActivity: 2,
+        source: "desktop",
+      },
+    ];
+
+    const portFiles = [
+      {
+        port: 5001,
+        pid: 901,
+        ppid: 101,
+        sessionId: "aaaa-1111",
+        cwd: "/repo",
+        startedAt: "",
+      },
+      {
+        port: 5002,
+        pid: 902,
+        ppid: 102,
+        sessionId: "bbbb-2222",
+        cwd: "/repo",
+        startedAt: "",
+      },
+    ];
+
+    assignPidsToSessions(
+      sessions,
+      [
+        { pid: 101, ppid: 1, dir: "/repo" },
+        { pid: 102, ppid: 1, dir: "/repo" },
+      ],
+      portFiles,
+    );
+
+    expect(sessions[0]!.pid).toBe(101);
+    expect(sessions[1]!.pid).toBe(102);
   });
 });
 

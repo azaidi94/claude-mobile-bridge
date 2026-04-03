@@ -13,6 +13,7 @@ import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
 import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
+import type { PortFileData } from "../relay/discovery";
 
 const execAsync = promisify(exec);
 
@@ -71,6 +72,7 @@ async function loadActiveSession(): Promise<string | null> {
 
 export interface ClaudeProcess {
   pid: number;
+  ppid: number;
   dir: string;
   sessionId?: string;
 }
@@ -78,16 +80,33 @@ export interface ClaudeProcess {
 /**
  * Get running Claude Code processes with their PIDs and working directories.
  * Only includes processes with a TTY (filters out orphans).
+ * Filters out subagent processes (whose parent is also a claude process).
  */
 async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
   const processes: ClaudeProcess[] = [];
   try {
-    // Get PIDs of Claude processes with a TTY
+    // Get PIDs and PPIDs of Claude processes with a TTY
     const { stdout: pidOutput } = await execAsync(
-      `ps -eo pid,tty,comm | awk '{n=split($3,a,"/"); base=a[n]} (base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $2 != "??" {print $1}'`,
+      `ps -eo pid,ppid,tty,comm | awk '{n=split($4,a,"/"); base=a[n]} (base == "claude" || $4 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $3 != "??" {print $1, $2}'`,
     );
-    const pids = pidOutput.trim().split("\n").filter(Boolean);
+    const entries = pidOutput
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [pid, ppid] = line.trim().split(/\s+/);
+        return { pid: parseInt(pid!), ppid: parseInt(ppid!) };
+      });
+    if (entries.length === 0) return [];
+
+    // Filter out subagents: any process whose parent is also a claude process
+    const allPids = new Set(entries.map((e) => e.pid));
+    const rootEntries = entries.filter((e) => !allPids.has(e.ppid));
+
+    const pids = rootEntries.map((e) => e.pid);
     if (pids.length === 0) return [];
+
+    const ppidMap = new Map(rootEntries.map((e) => [e.pid, e.ppid]));
 
     // Get working directory for each PID via lsof (single call)
     const { stdout: lsofOutput } = await execAsync(
@@ -103,7 +122,11 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
         let dir = line.slice(1);
         const wtMatch = dir.match(/^(.+)\/\.claude\/worktrees\/.+$/);
         if (wtMatch) dir = wtMatch[1]!;
-        processes.push({ pid: currentPid, dir });
+        processes.push({
+          pid: currentPid,
+          ppid: ppidMap.get(currentPid) || 0,
+          dir,
+        });
       }
     }
 
@@ -204,9 +227,14 @@ async function scanSessions(): Promise<SessionInfo[]> {
     runningDirs.set(p.dir, (runningDirs.get(p.dir) || 0) + 1);
   }
 
+  // Scan port files early for disambiguation
+  const portFiles = await scanPortFiles(true);
+  const portSessionIds = new Set(
+    portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
+  );
+
   if (runningDirs.size === 0) {
-    // Still check port files even with no detected processes
-    const portFiles = await scanPortFiles(true);
+    // Still use port files even with no detected processes
     for (const pf of portFiles) {
       found.push({
         id: "",
@@ -271,20 +299,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
     error(`scan: ${err}`);
   }
 
-  // Keep the N most recent JSONL sessions per dir (N = running process count)
-  const jsonlCountByDir = new Map<string, number>();
-  for (const [dir, candidates] of candidatesByDir) {
-    const processCount = runningDirs.get(dir) || 1;
-    candidates.sort((a, b) => b.mtime - a.mtime);
-    const kept = candidates.slice(0, processCount);
-    jsonlCountByDir.set(dir, kept.length);
-    for (const { info: si } of kept) {
-      found.push(si);
-    }
-  }
-
-  // Add port-file sessions not already covered by JSONL
-  const portFiles = await scanPortFiles(true);
+  // Build port-file index by dir (authoritative — represents running relays)
   const portsByDir = new Map<string, typeof portFiles>();
   for (const pf of portFiles) {
     const list = portsByDir.get(pf.cwd) || [];
@@ -292,19 +307,22 @@ async function scanSessions(): Promise<SessionInfo[]> {
     portsByDir.set(pf.cwd, list);
   }
 
-  for (const [dir, pfs] of portsByDir) {
-    const knownIds = new Set(
-      found.filter((s) => s.dir === dir && s.id).map((s) => s.id),
-    );
-    let remainingUnnamed = jsonlCountByDir.get(dir) || 0;
+  // Per-dir assembly: port-file sessions first, then JSONL for remaining slots.
+  // Port files represent actual running relays with known PIDs, so they take
+  // priority over JSONL-only sessions (which may be stale).
+  const allDirs = new Set([...candidatesByDir.keys(), ...portsByDir.keys()]);
 
+  for (const dir of allDirs) {
+    const processCount = runningDirs.get(dir) || 1;
+    const dirFound: SessionInfo[] = [];
+    const knownIds = new Set<string>();
+
+    // 1. Add port-file sessions (authoritative, have PIDs)
+    const pfs = portsByDir.get(dir) || [];
     for (const pf of pfs) {
+      if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      if (!pf.sessionId && remainingUnnamed > 0) {
-        remainingUnnamed--;
-        continue;
-      }
-      found.push({
+      dirFound.push({
         id: pf.sessionId || "",
         name: "",
         dir,
@@ -314,33 +332,76 @@ async function scanSessions(): Promise<SessionInfo[]> {
       });
       if (pf.sessionId) knownIds.add(pf.sessionId);
     }
+
+    // 2. Fill remaining slots with JSONL sessions (prefer port-matched, then mtime)
+    const candidates = candidatesByDir.get(dir) || [];
+    candidates.sort((a, b) => {
+      const aMatch = portSessionIds.has(a.info.id) ? 1 : 0;
+      const bMatch = portSessionIds.has(b.info.id) ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+      return b.mtime - a.mtime;
+    });
+    for (const { info: si } of candidates) {
+      if (dirFound.length >= processCount) break;
+      if (si.id && knownIds.has(si.id)) continue;
+      dirFound.push(si);
+      if (si.id) knownIds.add(si.id);
+    }
+
+    found.push(...dirFound);
   }
 
-  assignPidsToSessions(found, runningProcesses);
+  assignPidsToSessions(found, runningProcesses, portFiles);
 
   return found;
 }
 
 /**
  * Assign Claude process PIDs to discovered sessions.
- * Matches by session ID when available, falls back to dir-based heuristic.
+ * Matches by session ID when available, uses relay port files as a bridge,
+ * then falls back to dir-based heuristic.
  */
 export function assignPidsToSessions(
   sessions: SessionInfo[],
   processes: ClaudeProcess[],
+  portFiles?: PortFileData[],
 ): void {
-  // First pass: match by session ID (authoritative)
+  // Build lookup maps for O(1) matching
+  const procBySessionId = new Map<string, ClaudeProcess>();
+  for (const p of processes) {
+    if (p.sessionId) procBySessionId.set(p.sessionId, p);
+  }
+
+  // First pass: match by session ID from process args (authoritative)
   const matched = new Set<number>();
   for (const s of sessions) {
     if (!s.id) continue;
-    const proc = processes.find((p) => p.sessionId === s.id);
+    const proc = procBySessionId.get(s.id);
     if (proc) {
       s.pid = proc.pid;
       matched.add(proc.pid);
     }
   }
 
-  // Second pass: dir-based fallback only when there is exactly one live
+  // Second pass: use relay port files as a bridge.
+  // Port files have both sessionId and ppid (Claude PID), so if
+  // portFile.sessionId matches session.id, we can assign portFile.ppid.
+  if (portFiles?.length) {
+    const pfBySessionId = new Map<string, PortFileData>();
+    for (const pf of portFiles) {
+      if (pf.sessionId) pfBySessionId.set(pf.sessionId, pf);
+    }
+    for (const s of sessions) {
+      if (s.pid || !s.id) continue;
+      const pf = pfBySessionId.get(s.id);
+      if (pf?.ppid && !matched.has(pf.ppid)) {
+        s.pid = pf.ppid;
+        matched.add(pf.ppid);
+      }
+    }
+  }
+
+  // Third pass: dir-based fallback only when there is exactly one live
   // unmatched process for the directory. Multiple matches are ambiguous.
   const unmatched = sessions.filter((s) => !s.pid);
   if (unmatched.length === 0) return;
