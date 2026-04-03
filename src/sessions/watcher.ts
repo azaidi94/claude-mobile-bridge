@@ -240,7 +240,9 @@ async function scanSessions(): Promise<SessionInfo[]> {
         id: "",
         name: "",
         dir: pf.cwd,
-        lastActivity: Date.now(),
+        lastActivity: pf.startedAt
+          ? new Date(pf.startedAt).getTime()
+          : Date.now(),
         source: "desktop",
       });
     }
@@ -326,7 +328,9 @@ async function scanSessions(): Promise<SessionInfo[]> {
         id: pf.sessionId || "",
         name: "",
         dir,
-        lastActivity: Date.now(),
+        lastActivity: pf.startedAt
+          ? new Date(pf.startedAt).getTime()
+          : Date.now(),
         source: "desktop",
         pid: pf.ppid,
       });
