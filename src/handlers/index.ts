@@ -34,7 +34,7 @@ export {
   sendWatchRelay,
   startWatchingSession,
 } from "./watch";
-export { sendViaRelay } from "./relay-bridge";
+export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {
   StreamingState,
   createStatusCallback,

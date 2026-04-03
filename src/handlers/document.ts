@@ -12,6 +12,8 @@ import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
+import { isRelayAvailable } from "../relay";
+import { getActiveSession } from "../sessions";
 import {
   createOpId,
   elapsedMs,
@@ -283,7 +285,7 @@ async function processArchive(
       undefined,
       opId,
     );
-    if (relayResult) {
+    if (relayResult === "delivered") {
       await auditLog(
         userId,
         username,
@@ -303,17 +305,24 @@ async function processArchive(
       return;
     }
 
-    warn("request: no desktop session available", {
+    warn("request: relay " + relayResult, {
       opId,
       requestKind: "archive",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
-      "❌ No desktop session found.\n\n" +
-        "Use /new to spawn one, or /list to find existing sessions.",
-    );
+    if (relayResult === "failed") {
+      await ctx.reply(
+        "⚠️ Message was sent but the session stopped responding.\n" +
+          "It may still be processing. Check /status or try again.",
+      );
+    } else {
+      await ctx.reply(
+        "❌ No desktop session found.\n\n" +
+          "Use /new to spawn one, or /list to find existing sessions.",
+      );
+    }
   } catch (error) {
     logError("document: archive processing failed", error, {
       opId,
@@ -377,7 +386,7 @@ async function processDocuments(
       undefined,
       opId,
     );
-    if (relayResult) {
+    if (relayResult === "delivered") {
       await auditLog(
         userId,
         username,
@@ -397,17 +406,24 @@ async function processDocuments(
       return;
     }
 
-    warn("request: no desktop session available", {
+    warn("request: relay " + relayResult, {
       opId,
       requestKind: "document",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
-      "❌ No desktop session found.\n\n" +
-        "Use /new to spawn one, or /list to find existing sessions.",
-    );
+    if (relayResult === "failed") {
+      await ctx.reply(
+        "⚠️ Message was sent but the session stopped responding.\n" +
+          "It may still be processing. Check /status or try again.",
+      );
+    } else {
+      await ctx.reply(
+        "❌ No desktop session found.\n\n" +
+          "Use /new to spawn one, or /list to find existing sessions.",
+      );
+    }
   } finally {
     stopProcessing();
   }
@@ -528,7 +544,22 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Download document
+  // 4. Relay preflight — avoid download/extraction if no session exists
+  const active = getActiveSession();
+  const relayUp = await isRelayAvailable({
+    sessionId: active?.info.id,
+    sessionDir: session.workingDir || active?.info.dir,
+    claudePid: active?.info.pid,
+  });
+  if (!relayUp) {
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
+    return;
+  }
+
+  // 5. Download document
   let docPath: string;
   try {
     docPath = await downloadDocument(ctx);

@@ -321,7 +321,7 @@ export async function handleText(ctx: Context): Promise<void> {
     undefined,
     opId,
   );
-  if (relayResult) {
+  if (relayResult === "delivered") {
     await auditLog(userId, username, "RELAY", message, "(via relay)");
     info("request: completed", {
       opId,
@@ -334,16 +334,22 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // No relay available — tell the user
-  warn("request: no desktop session available", {
+  warn("request: relay " + relayResult, {
     opId,
     requestKind: "text",
     chatId,
     userId,
     durationMs: elapsedMs(requestStartedAt),
   });
-  await ctx.reply(
-    "❌ No desktop session found.\n\n" +
-      "Use /new to spawn one, or /list to find existing sessions.",
-  );
+  if (relayResult === "failed") {
+    await ctx.reply(
+      "⚠️ Message was sent but the session stopped responding.\n" +
+        "It may still be processing. Check /status or try again.",
+    );
+  } else {
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
+  }
 }

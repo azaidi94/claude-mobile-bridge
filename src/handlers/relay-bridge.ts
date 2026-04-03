@@ -1,7 +1,6 @@
 /**
  * Relay bridge — sends a message through the channel relay to a running
- * desktop Claude session. Returns true if relay delivered, false if no
- * relay-enabled session was found.
+ * desktop Claude session.
  */
 
 import type { Context } from "grammy";
@@ -20,6 +19,8 @@ import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
 import { debug, elapsedMs, info, warn } from "../logger";
 
+export type RelayResult = "delivered" | "unavailable" | "failed";
+
 export async function sendViaRelay(
   ctx: Context,
   message: string,
@@ -27,11 +28,11 @@ export async function sendViaRelay(
   chatId: number,
   imagePath?: string,
   opId?: string,
-): Promise<boolean> {
+): Promise<RelayResult> {
   const active = getActiveSession();
   const sessionId = active?.info.id || session.sessionId;
   const sessionDir = session.workingDir || active?.info.dir;
-  if (!sessionDir) return false;
+  if (!sessionDir) return "unavailable";
   const startedAt = Date.now();
 
   const client = await getRelayClient({
@@ -39,7 +40,7 @@ export async function sendViaRelay(
     sessionDir,
     claudePid: active?.info.pid,
   });
-  if (!client) return false;
+  if (!client) return "unavailable";
 
   info("relay: sending", {
     chatId,
@@ -72,7 +73,7 @@ export async function sendViaRelay(
     ...(imagePath ? { image_path: imagePath } : {}),
   });
 
-  let relayDelivered = true;
+  let result: RelayResult = "delivered";
   try {
     await waitForReply(client, displayState, String(chatId));
   } catch (err) {
@@ -86,8 +87,8 @@ export async function sendViaRelay(
     });
     cleanupProgressMessages(ctx.api, displayState);
     if (!displayState.finalReplyReceived) {
-      relayDelivered = false;
-      warn("relay: falling back to SDK", {
+      result = "failed";
+      warn("relay: delivery failed", {
         opId,
         chatId,
         sessionDir,
@@ -100,7 +101,7 @@ export async function sendViaRelay(
   cleanupCallbacks();
   typing.stop();
 
-  if (relayDelivered) {
+  if (result === "delivered") {
     info("relay: completed", {
       opId,
       chatId,
@@ -111,7 +112,7 @@ export async function sendViaRelay(
     });
   }
 
-  return relayDelivered;
+  return result;
 }
 
 /**

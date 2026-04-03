@@ -14,6 +14,8 @@ import {
   startTypingIndicator,
 } from "../utils";
 import { sendViaRelay } from "./relay-bridge";
+import { isRelayAvailable } from "../relay";
+import { getActiveSession } from "../sessions";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
 
 /**
@@ -63,7 +65,22 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Mark processing started (allows /stop to work during transcription/classification)
+  // 4. Quick relay preflight — avoid transcription cost if no session exists
+  const active = getActiveSession();
+  const relayUp = await isRelayAvailable({
+    sessionId: active?.info.id,
+    sessionDir: session.workingDir || active?.info.dir,
+    claudePid: active?.info.pid,
+  });
+  if (!relayUp) {
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
+    return;
+  }
+
+  // 5. Mark processing started (allows /stop to work during transcription/classification)
   const stopProcessing = session.startProcessing();
 
   // 5. Start typing indicator for transcription
@@ -128,7 +145,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       undefined,
       opId,
     );
-    if (relayResult) {
+    if (relayResult === "delivered") {
       await auditLog(
         userId,
         username,
@@ -147,18 +164,24 @@ export async function handleVoice(ctx: Context): Promise<void> {
       return;
     }
 
-    // No relay available
-    warn("request: no desktop session available", {
+    warn("request: relay " + relayResult, {
       opId,
       requestKind: "voice",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
-      "❌ No desktop session found.\n\n" +
-        "Use /new to spawn one, or /list to find existing sessions.",
-    );
+    if (relayResult === "failed") {
+      await ctx.reply(
+        "⚠️ Message was sent but the session stopped responding.\n" +
+          "It may still be processing. Check /status or try again.",
+      );
+    } else {
+      await ctx.reply(
+        "❌ No desktop session found.\n\n" +
+          "Use /new to spawn one, or /list to find existing sessions.",
+      );
+    }
   } catch (error) {
     warn("voice: processing failed", {
       opId,

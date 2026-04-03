@@ -11,6 +11,8 @@ import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
+import { isRelayAvailable } from "../relay";
+import { getActiveSession } from "../sessions";
 import {
   createOpId,
   debug,
@@ -83,7 +85,7 @@ async function processPhotos(
       photoPaths[0],
       opId,
     );
-    if (relayResult) {
+    if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
       info("request: completed", {
         opId,
@@ -97,18 +99,24 @@ async function processPhotos(
       return;
     }
 
-    // No relay available
-    warn("request: no desktop session available", {
+    warn("request: relay " + relayResult, {
       opId,
       requestKind: "photo",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
-      "❌ No desktop session found.\n\n" +
-        "Use /new to spawn one, or /list to find existing sessions.",
-    );
+    if (relayResult === "failed") {
+      await ctx.reply(
+        "⚠️ Message was sent but the session stopped responding.\n" +
+          "It may still be processing. Check /status or try again.",
+      );
+    } else {
+      await ctx.reply(
+        "❌ No desktop session found.\n\n" +
+          "Use /new to spawn one, or /list to find existing sessions.",
+      );
+    }
   } finally {
     stopProcessing();
   }
@@ -142,7 +150,22 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     username,
   });
 
-  // 2. For single photos, show status and rate limit early
+  // 2. Relay preflight — avoid download if no session exists
+  const active = getActiveSession();
+  const relayUp = await isRelayAvailable({
+    sessionId: active?.info.id,
+    sessionDir: session.workingDir || active?.info.dir,
+    claudePid: active?.info.pid,
+  });
+  if (!relayUp) {
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+    );
+    return;
+  }
+
+  // 3. For single photos, show status and rate limit early
   let statusMsg: Awaited<ReturnType<typeof ctx.reply>> | null = null;
   if (!mediaGroupId) {
     info("photo: received", {
