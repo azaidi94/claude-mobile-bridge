@@ -445,7 +445,7 @@ export async function sendPostKillSessionList(
   chatId: number,
   action: "switch" | "kill",
 ): Promise<void> {
-  await forceRefresh();
+  // Skip forceRefresh — killed process may still be exiting and would get rediscovered
   const sessions = getSessions();
 
   if (sessions.length === 0) {
