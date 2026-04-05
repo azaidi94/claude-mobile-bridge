@@ -252,3 +252,64 @@ export async function findSessionJsonlPath(
   }
   return null;
 }
+
+/**
+ * Read the last meaningful message from a JSONL session file.
+ * Returns the last assistant text or user prompt, truncated for display.
+ */
+export async function getLastSessionMessage(
+  jsonlPath: string,
+  maxLen = 300,
+): Promise<{ role: "user" | "assistant"; text: string } | null> {
+  try {
+    const { readFile } = await import("fs/promises");
+    const raw = await readFile(jsonlPath, "utf-8");
+    const lines = raw.split("\n").filter(Boolean);
+
+    let lastUser: string | null = null;
+    let lastAssistant: string | null = null;
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === "user") {
+          const content = entry.message?.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .filter((b: { type: string }) => b.type === "text")
+                    .map((b: { text: string }) => b.text)
+                    .join("")
+                : null;
+          if (text && !text.includes('<channel source="channel-relay"')) {
+            lastUser = text.trim();
+          }
+        } else if (entry.type === "assistant") {
+          const content = entry.message?.content;
+          if (Array.isArray(content)) {
+            const text = content
+              .filter((b: { type: string }) => b.type === "text")
+              .map((b: { text: string }) => b.text)
+              .join("");
+            if (text.trim()) lastAssistant = text.trim();
+          }
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+
+    // Prefer the last assistant message, fall back to last user prompt
+    const text = lastAssistant ?? lastUser;
+    const role = lastAssistant ? "assistant" : "user";
+    if (!text) return null;
+    return {
+      role,
+      text: text.length > maxLen ? text.slice(0, maxLen) + "…" : text,
+    };
+  } catch {
+    return null;
+  }
+}

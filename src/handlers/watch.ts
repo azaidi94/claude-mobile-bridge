@@ -17,6 +17,7 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
+  getLastSessionMessage,
   type TailEvent,
 } from "../sessions/tailer";
 import {
@@ -458,9 +459,19 @@ export async function startWatchingAndNotify(
 
   const sessionInfo = getSession(sessionName);
   const dir = (sessionInfo?.dir || "").replace(/^\/Users\/[^/]+/, "~");
+
+  const jsonlPath = sessionInfo?.id
+    ? await findSessionJsonlPath(sessionInfo.id)
+    : null;
+  const lastMsg = jsonlPath ? await getLastSessionMessage(jsonlPath) : null;
+
+  const lastMsgLine = lastMsg
+    ? `\n<blockquote>${lastMsg.role === "user" ? "👤" : "🤖"} ${escapeHtml(lastMsg.text)}</blockquote>`
+    : "";
+
   await ctx.reply(
     `👁 Watching <b>${escapeHtml(sessionName)}</b>\n` +
-      `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+      `📁 <code>${escapeHtml(dir)}</code>${lastMsgLine}\n\n` +
       `Live events will stream here.\n` +
       `Type a message to send via relay.\n` +
       `Use /unwatch to stop.`,
