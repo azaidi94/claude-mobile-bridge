@@ -221,6 +221,18 @@ export const RATE_LIMIT_WINDOW = parseInt(
   10,
 );
 
+// ============== Web UI ==============
+
+export const WEB_PORT = process.env.WEB_PORT
+  ? parseInt(process.env.WEB_PORT, 10)
+  : undefined;
+export const WEB_TOKEN = process.env.WEB_TOKEN || "";
+
+// ============== TTS ==============
+
+export const TTS_RESPONSE_FORMAT =
+  (process.env.TTS_RESPONSE_FORMAT as "opus" | "mp3" | undefined) || "opus";
+
 // ============== Channel Relay ==============
 
 export const RELAY_PORT_FILE_PREFIX = "/tmp/channel-relay-";
