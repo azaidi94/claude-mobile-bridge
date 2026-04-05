@@ -26,6 +26,7 @@ import {
   setActiveSession,
   updatePinnedStatus,
   getGitBranch,
+  forceRefresh,
 } from "../sessions";
 import { info, debug, warn, elapsedMs } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
@@ -323,6 +324,7 @@ export async function startWatchingSession(
     stopWatching(chatId, botApi, "replace");
   }
 
+  await forceRefresh();
   const sessionInfo = getSession(targetName);
   if (!sessionInfo?.id) {
     warn("watch: start failed, missing session id", {
