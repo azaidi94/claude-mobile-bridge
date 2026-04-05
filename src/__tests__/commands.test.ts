@@ -875,7 +875,6 @@ describe("commands: /new", () => {
         "spawn",
       );
       expect(mockActiveSession?.name).toBe("spawned-session");
-      expect(ctx._replies.at(-1)?.text).toContain("spawned-session");
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }

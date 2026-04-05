@@ -305,25 +305,11 @@ export async function handleNew(ctx: Context): Promise<void> {
     if (spawned) {
       setActiveSession(spawned.name);
 
-      // startWatchingSession polls for session ID + JSONL internally
-      const watching = await startWatchingSession(
-        ctx.api,
-        chatId,
-        spawned.name,
-        "spawn",
+      // Fire watch in background — online notification will confirm to user
+      startWatchingSession(ctx.api, chatId, spawned.name, "spawn").catch(
+        () => {},
       );
-      if (watching) {
-        await ctx.reply(
-          `✅ <b>${escapeHtml(spawned.name)}</b> ready\n` +
-            `📁 <code>${escapeHtml(dir)}</code>\n\n` +
-            `Watching live. Type a message to send via relay.`,
-          { parse_mode: "HTML" },
-        );
-      } else {
-        await ctx.reply(`✅ <b>${escapeHtml(spawned.name)}</b> ready`, {
-          parse_mode: "HTML",
-        });
-      }
+
       info("request: completed", {
         opId,
         requestKind: "spawn",
@@ -333,7 +319,6 @@ export async function handleNew(ctx: Context): Promise<void> {
         sessionName: spawned.name,
         sessionId: spawned.id,
         durationMs: elapsedMs(spawnStartedAt),
-        watching,
       });
     } else {
       warn("spawn: session unresolved after relay detection", {
