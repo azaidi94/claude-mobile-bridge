@@ -45,6 +45,9 @@ export const ALLOWED_USERS: number[] = (
   .filter((x) => !isNaN(x));
 
 export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
+
+// The bot's own source directory — never auto-watch this session
+export const BOT_DIR = dirname(import.meta.dir);
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 // ============== Claude CLI Path ==============
@@ -220,6 +223,18 @@ export const RATE_LIMIT_WINDOW = parseInt(
   process.env.RATE_LIMIT_WINDOW || "60",
   10,
 );
+
+// ============== Web UI ==============
+
+export const WEB_PORT = process.env.WEB_PORT
+  ? parseInt(process.env.WEB_PORT, 10)
+  : undefined;
+export const WEB_TOKEN = process.env.WEB_TOKEN || "";
+
+// ============== TTS ==============
+
+export const TTS_RESPONSE_FORMAT =
+  (process.env.TTS_RESPONSE_FORMAT as "opus" | "mp3" | undefined) || "opus";
 
 // ============== Channel Relay ==============
 

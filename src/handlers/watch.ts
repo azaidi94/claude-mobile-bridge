@@ -17,6 +17,7 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
+  getLastSessionMessage,
   type TailEvent,
 } from "../sessions/tailer";
 import {
@@ -26,6 +27,7 @@ import {
   setActiveSession,
   updatePinnedStatus,
   getGitBranch,
+  forceRefresh,
 } from "../sessions";
 import { info, debug, warn, elapsedMs } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
@@ -62,6 +64,8 @@ interface WatchState extends TailDisplayState {
   suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
   relayCleanup?: () => void;
+  /** Interval that detects when the desktop session starts a new conversation. */
+  idCheckInterval?: Timer;
 }
 
 // Active watches: chatId -> WatchState
@@ -170,6 +174,7 @@ export function stopWatching(
     }
     state.tailer.stop();
     state.relayCleanup?.();
+    if (state.idCheckInterval) clearInterval(state.idCheckInterval);
     stopWatchTyping(chatId);
     watches.delete(chatId);
     info("watch: stopped", {
@@ -320,6 +325,7 @@ export async function startWatchingSession(
     stopWatching(chatId, botApi, "replace");
   }
 
+  await forceRefresh();
   const sessionInfo = getSession(targetName);
   if (!sessionInfo?.id) {
     warn("watch: start failed, missing session id", {
@@ -359,6 +365,34 @@ export async function startWatchingSession(
   };
   watches.set(chatId, watchState);
   await tailer.start();
+
+  // Detect when the desktop session starts a new conversation (new JSONL, same dir).
+  // refresh() diffs by name only, so an ID change won't surface as added/removed.
+  watchState.idCheckInterval = setInterval(async () => {
+    const current = getSession(targetName);
+    if (!current?.id || current.id === watchState.sessionId) return;
+    const newPath = await findSessionJsonlPath(current.id);
+    if (!newPath) return;
+    watchState.tailer.stop();
+    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
+      handleTailEvent(botApi, watchState, event),
+    );
+    watchState.tailer = newTailer;
+    watchState.sessionId = current.id;
+    await newTailer.start();
+    info("watch: restarted tailer for new conversation", {
+      chatId,
+      sessionName: targetName,
+      sessionId: current.id,
+    });
+    botApi
+      .sendMessage(
+        chatId,
+        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation — reconnected.`,
+        { parse_mode: "HTML" },
+      )
+      .catch(() => {});
+  }, 5_000);
 
   // Wire relay client for file attachments (tailer only captures text)
   const relayClient = await getRelayClient({
@@ -425,9 +459,19 @@ export async function startWatchingAndNotify(
 
   const sessionInfo = getSession(sessionName);
   const dir = (sessionInfo?.dir || "").replace(/^\/Users\/[^/]+/, "~");
+
+  const jsonlPath = sessionInfo?.id
+    ? await findSessionJsonlPath(sessionInfo.id)
+    : null;
+  const lastMsg = jsonlPath ? await getLastSessionMessage(jsonlPath) : null;
+
+  const lastMsgLine = lastMsg
+    ? `\n<blockquote>${lastMsg.role === "user" ? "👤" : "🤖"} ${escapeHtml(lastMsg.text)}</blockquote>`
+    : "";
+
   await ctx.reply(
     `👁 Watching <b>${escapeHtml(sessionName)}</b>\n` +
-      `📁 <code>${escapeHtml(dir)}</code>\n\n` +
+      `📁 <code>${escapeHtml(dir)}</code>${lastMsgLine}\n\n` +
       `Live events will stream here.\n` +
       `Type a message to send via relay.\n` +
       `Use /unwatch to stop.`,
@@ -635,10 +679,11 @@ export function handleTailEvent(
 
       const preview =
         event.content.length > 300
-          ? event.content.slice(0, 300) + "..."
+          ? event.content.slice(0, 300) + "…"
           : event.content;
+      const formatted = convertMarkdownToHtml(preview);
       botApi
-        .sendMessage(chatId, `🖥 <b>Desktop:</b> ${escapeHtml(preview)}`, {
+        .sendMessage(chatId, `🖥 <b>Desktop:</b>\n${formatted}`, {
           parse_mode: "HTML",
         })
         .catch((err) => debug(`tail user: ${err}`));

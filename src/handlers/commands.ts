@@ -9,7 +9,7 @@ import { readdir, stat } from "fs/promises";
 import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
-import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
+import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE, BOT_DIR } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
@@ -783,9 +783,14 @@ export async function handleList(ctx: Context): Promise<void> {
     reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
   });
 
-  // Auto-watch active desktop session if not already watching
+  // Auto-watch active desktop session if not already watching (never watch the bot itself)
   const chatId = ctx.chat?.id;
-  if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
+  if (
+    chatId &&
+    active?.info.source === "desktop" &&
+    active.info.dir !== BOT_DIR &&
+    !isWatching(chatId)
+  ) {
     await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
   }
 }

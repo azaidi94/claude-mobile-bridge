@@ -14,6 +14,7 @@ import {
   OPENAI_API_KEY,
   TRANSCRIPTION_PROMPT,
   TRANSCRIPTION_AVAILABLE,
+  TTS_RESPONSE_FORMAT,
 } from "./config";
 import { debug, error as logError, info, warn } from "./logger";
 
@@ -144,6 +145,29 @@ export async function auditLogRateLimit(
     username,
     retry_after: retryAfter,
   });
+}
+
+// ============== TTS Synthesis ==============
+
+export async function synthesizeSpeech(text: string): Promise<Buffer | null> {
+  if (!openaiClient) {
+    warn("tts: client unavailable");
+    return null;
+  }
+
+  try {
+    const response = await openaiClient.audio.speech.create({
+      model: "tts-1",
+      voice: "alloy",
+      input: text,
+      response_format: TTS_RESPONSE_FORMAT,
+    });
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (error) {
+    logError("tts: synthesis failed", error);
+    return null;
+  }
 }
 
 // ============== Voice Transcription ==============

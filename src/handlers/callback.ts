@@ -7,7 +7,7 @@
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
-import { ALLOWED_USERS } from "../config";
+import { ALLOWED_USERS, BOT_DIR } from "../config";
 import { formatTimeAgo } from "../formatting";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
@@ -76,33 +76,6 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     session.setModel(modelId);
 
-    // Send /model command to Claude session to switch model mid-session
-    if (session.isActive) {
-      info("model: syncing switch to Claude", {
-        chatId,
-        userId,
-        modelId,
-        sessionId: session.sessionId,
-      });
-      try {
-        await session.sendMessageStreaming(
-          `/model ${modelId}`,
-          username,
-          userId,
-          async () => {}, // Silent - no status updates
-          chatId,
-          ctx,
-        );
-      } catch (error) {
-        logError("model: failed to sync switch", error, {
-          chatId,
-          userId,
-          modelId,
-          sessionId: session.sessionId,
-        });
-      }
-    }
-
     // Update message with new selection
     const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
     const buttons = models.map(([id, name]) => [
@@ -145,7 +118,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Already on this session — start watching if not already
     if (currentActive?.name === name) {
-      if (currentActive.info.source === "desktop" && !isWatching(chatId)) {
+      if (
+        currentActive.info.source === "desktop" &&
+        currentActive.info.dir !== BOT_DIR &&
+        !isWatching(chatId)
+      ) {
         if (await startWatchingAndNotify(ctx, chatId, name, "switch")) {
           await ctx.answerCallbackQuery({ text: `Watching ${name}` });
           return;
@@ -199,8 +176,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         await sendSwitchHistory(ctx, active.info);
 
-        // Auto-watch desktop sessions
-        if (active.info.source === "desktop") {
+        // Auto-watch desktop sessions (never watch the bot itself)
+        if (active.info.source === "desktop" && active.info.dir !== BOT_DIR) {
           await startWatchingAndNotify(ctx, chatId, active.name, "switch");
         } else {
           // Update pinned status for non-desktop sessions

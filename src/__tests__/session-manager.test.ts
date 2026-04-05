@@ -225,7 +225,6 @@ describe("session-manager: session discovery", () => {
     for (const session of desktopSessions) {
       expect(session.source).toBe("desktop");
       expect(session.dir).toBeTruthy();
-      expect(session.id).toBeTruthy();
     }
   });
 

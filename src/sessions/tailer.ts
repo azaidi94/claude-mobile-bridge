@@ -13,7 +13,12 @@ import { debug, warn } from "../logger";
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
 
-export type TailEventType = "text" | "tool" | "thinking" | "user" | "relay_reply";
+export type TailEventType =
+  | "text"
+  | "tool"
+  | "thinking"
+  | "user"
+  | "relay_reply";
 
 export interface TailEvent {
   type: TailEventType;
@@ -136,10 +141,24 @@ export class SessionTailer {
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
-        if (text && !text.includes('<channel source="channel-relay"')) {
-          return [{ type: "user", content: text }];
+        if (!text || text.includes('<channel source="channel-relay"'))
+          return [];
+
+        // Local command output (e.g. /model, /cost) — strip tags and ANSI codes
+        const cmdMatch = text.match(
+          /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/,
+        );
+        if (cmdMatch) {
+          const cmdOutput = cmdMatch[1]!
+            // Strip ANSI escape codes
+            .replace(/\x1b\[[0-9;]*m/g, "")
+            .trim();
+          // Skip trivial/empty output
+          if (!cmdOutput) return [];
+          return [{ type: "user", content: `⌘ ${cmdOutput}` }];
         }
-        return [];
+
+        return [{ type: "user", content: text }];
       }
 
       // Assistant message — emit all blocks
@@ -232,4 +251,65 @@ export async function findSessionJsonlPath(
     // PROJECTS_DIR doesn't exist
   }
   return null;
+}
+
+/**
+ * Read the last meaningful message from a JSONL session file.
+ * Returns the last assistant text or user prompt, truncated for display.
+ */
+export async function getLastSessionMessage(
+  jsonlPath: string,
+  maxLen = 300,
+): Promise<{ role: "user" | "assistant"; text: string } | null> {
+  try {
+    const { readFile } = await import("fs/promises");
+    const raw = await readFile(jsonlPath, "utf-8");
+    const lines = raw.split("\n").filter(Boolean);
+
+    let lastUser: string | null = null;
+    let lastAssistant: string | null = null;
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === "user") {
+          const content = entry.message?.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .filter((b: { type: string }) => b.type === "text")
+                    .map((b: { text: string }) => b.text)
+                    .join("")
+                : null;
+          if (text && !text.includes('<channel source="channel-relay"')) {
+            lastUser = text.trim();
+          }
+        } else if (entry.type === "assistant") {
+          const content = entry.message?.content;
+          if (Array.isArray(content)) {
+            const text = content
+              .filter((b: { type: string }) => b.type === "text")
+              .map((b: { text: string }) => b.text)
+              .join("");
+            if (text.trim()) lastAssistant = text.trim();
+          }
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+
+    // Prefer the last assistant message, fall back to last user prompt
+    const text = lastAssistant ?? lastUser;
+    const role = lastAssistant ? "assistant" : "user";
+    if (!text) return null;
+    return {
+      role,
+      text: text.length > maxLen ? text.slice(0, maxLen) + "…" : text,
+    };
+  } catch {
+    return null;
+  }
 }

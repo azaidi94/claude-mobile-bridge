@@ -40,13 +40,16 @@ let watcher: FSWatcher | null = null;
 let relayWatcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
+let watcherStarted = false;
 let debounceTimer: Timer | null = null;
 const DEBOUNCE_MS = 500;
 
 /**
  * Save active session name to disk for persistence across restarts.
+ * Only runs when the watcher has been started to avoid test interference.
  */
 async function saveActiveSession(): Promise<void> {
+  if (!watcherStarted) return;
   try {
     if (cache.active) {
       await writeFile(ACTIVE_SESSION_FILE, cache.active, "utf-8");
@@ -322,8 +325,17 @@ async function scanSessions(): Promise<SessionInfo[]> {
     // Build sessionId→mtime from JSONL candidates for accurate lastActivity
     const candidates = candidatesByDir.get(dir) || [];
     const jsonlMtime = new Map<string, number>();
+    // Also track the most recent JSONL session ID for this dir (fallback for port files with no sessionId)
+    let mostRecentJsonlId = "";
+    let mostRecentJsonlMtime = 0;
     for (const c of candidates) {
-      if (c.info.id) jsonlMtime.set(c.info.id, c.mtime);
+      if (c.info.id) {
+        jsonlMtime.set(c.info.id, c.mtime);
+        if (c.mtime > mostRecentJsonlMtime) {
+          mostRecentJsonlMtime = c.mtime;
+          mostRecentJsonlId = c.info.id;
+        }
+      }
     }
 
     // 1. Add port-file sessions (authoritative, have PIDs)
@@ -331,17 +343,19 @@ async function scanSessions(): Promise<SessionInfo[]> {
     for (const pf of pfs) {
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
+      // If port file has no sessionId, fall back to most recent JSONL for this dir
+      const resolvedId = pf.sessionId || mostRecentJsonlId;
       dirFound.push({
-        id: pf.sessionId || "",
+        id: resolvedId,
         name: "",
         dir,
         lastActivity:
-          jsonlMtime.get(pf.sessionId!) ??
+          jsonlMtime.get(resolvedId) ??
           (pf.startedAt ? new Date(pf.startedAt).getTime() : Date.now()),
         source: "desktop",
         pid: pf.ppid,
       });
-      if (pf.sessionId) knownIds.add(pf.sessionId);
+      if (resolvedId) knownIds.add(resolvedId);
     }
 
     // 2. Fill remaining slots with JSONL sessions (prefer port-matched, then mtime)
@@ -545,6 +559,7 @@ export async function startWatcher(
   onChange?: (diff: SessionDiff) => void,
 ): Promise<void> {
   onChangeCallback = onChange || null;
+  watcherStarted = true;
 
   // Initial scan (no notifications on startup)
   await refresh();
@@ -614,6 +629,7 @@ export function stopWatcher(): void {
     clearInterval(pollInterval);
     pollInterval = null;
   }
+  watcherStarted = false;
 }
 
 /**

@@ -46,6 +46,7 @@ mock.module("../config", () => ({
   RATE_LIMIT_WINDOW: 60,
   SESSION_FILE: "/tmp/test-session.json",
   RESTART_FILE: "/tmp/test-restart.json",
+  BOT_DIR: "/tmp/test-bot-dir",
   TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/"],
   RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",

@@ -85,6 +85,7 @@ mock.module("../config", () => ({
   RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
+  BOT_DIR: "/tmp/test-bot-dir",
 }));
 
 // Mock handlers to avoid complex dependencies

@@ -41,20 +41,32 @@ export function convertMarkdownToHtml(text: string): string {
   // Escape HTML entities in the remaining text
   text = escapeHtml(text);
 
-  // Headers: ## Header -> <b>Header</b>
-  text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>\n");
-
   // Bold: **text** -> <b>text</b>
   text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Also handle *text* as bold (single asterisk)
-  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<b>$1</b>");
-
   // Double underscore: __text__ -> <b>text</b>
-  text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
+  text = text.replace(/__([^_\n]+)__/g, "<b>$1</b>");
 
-  // Italic: _text_ -> <i>text</i> (but not __text__)
-  text = text.replace(/(?<!_)_([^_]+)_(?!_)/g, "<i>$1</i>");
+  // Italic: *text* -> <i>text</i>
+  // Require content to start/end with non-space to avoid matching "2 * 3 = 6"
+  text = text.replace(
+    /(?<![a-zA-Z0-9*])\*(\S(?:[^*\n]*\S)?)\*(?![a-zA-Z0-9*])/g,
+    "<i>$1</i>",
+  );
+
+  // Italic: _text_ -> <i>text</i> (only when surrounded by non-word chars)
+  text = text.replace(
+    /(?<![a-zA-Z0-9_])_(\S(?:[^_\n]*\S)?)_(?![a-zA-Z0-9_])/g,
+    "<i>$1</i>",
+  );
+
+  // Headers: ## Header -> <b>Header</b>
+  // Run after inline formatting so **bold** inside headers is already converted.
+  // Strip inner <b> tags to prevent nested <b> which Telegram rejects.
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, (_, content) => {
+    const flat = content.replace(/<b>([^<]*)<\/b>/g, "$1");
+    return `<b>${flat}</b>\n`;
+  });
 
   // Blockquotes: &gt; text -> <blockquote>text</blockquote>
   text = convertBlockquotes(text);
@@ -191,6 +203,9 @@ export function formatToolStatus(
     }
   }
 
+  // Helper: wrap in italic for background/low-signal tools
+  const dim = (s: string) => `<i>${s}</i>`;
+
   // Format based on tool type
   if (toolName === "Read") {
     const filePath = String(toolInput.file_path || "file");
@@ -206,70 +221,104 @@ export function formatToolStatus(
       ".ico",
     ];
     if (imageExtensions.some((ext) => filePath.toLowerCase().endsWith(ext))) {
-      return "👀 Viewing";
+      return dim("👀 Viewing");
     }
-    return `${emoji} Reading ${code(shortPath)}`;
+    return dim(`${emoji} Reading ${code(shortPath)}`);
   }
 
   if (toolName === "Write") {
     const filePath = String(toolInput.file_path || "file");
-    return `${emoji} Writing ${code(shortenPath(filePath))}`;
+    return dim(`${emoji} Writing ${code(shortenPath(filePath))}`);
   }
 
   if (toolName === "Edit") {
     const filePath = String(toolInput.file_path || "file");
-    return `${emoji} Editing ${code(shortenPath(filePath))}`;
+    return dim(`${emoji} Editing ${code(shortenPath(filePath))}`);
   }
 
   if (toolName === "Bash") {
     const cmd = String(toolInput.command || "");
     const desc = String(toolInput.description || "");
     if (desc) {
-      return `${emoji} ${escapeHtml(desc)}`;
+      return dim(`${emoji} ${escapeHtml(desc)}`);
     }
-    return `${emoji} ${code(truncate(cmd, 50))}`;
+    return dim(`${emoji} ${code(truncate(cmd, 50))}`);
   }
 
   if (toolName === "Grep") {
     const pattern = String(toolInput.pattern || "");
     const path = String(toolInput.path || "");
     if (path) {
-      return `${emoji} Searching ${code(truncate(pattern, 30))} in ${code(
-        shortenPath(path),
-      )}`;
+      return dim(
+        `${emoji} Searching ${code(truncate(pattern, 30))} in ${code(shortenPath(path))}`,
+      );
     }
-    return `${emoji} Searching ${code(truncate(pattern, 40))}`;
+    return dim(`${emoji} Searching ${code(truncate(pattern, 40))}`);
   }
 
   if (toolName === "Glob") {
     const pattern = String(toolInput.pattern || "");
-    return `${emoji} Finding ${code(truncate(pattern, 50))}`;
+    return dim(`${emoji} Finding ${code(truncate(pattern, 50))}`);
   }
 
   if (toolName === "WebSearch") {
     const query = String(toolInput.query || "");
-    return `${emoji} Searching: ${escapeHtml(truncate(query, 50))}`;
+    return dim(`${emoji} Searching: ${escapeHtml(truncate(query, 50))}`);
   }
 
   if (toolName === "WebFetch") {
     const url = String(toolInput.url || "");
-    return `${emoji} Fetching ${code(truncate(url, 50))}`;
+    return dim(`${emoji} Fetching ${code(truncate(url, 50))}`);
   }
 
+  // Agent/task tools — bold so they stand out from file noise
   if (toolName === "Task" || toolName === "Agent") {
     const desc = String(toolInput.description || "");
     if (desc) {
-      return `${emoji} Agent: ${escapeHtml(desc)}`;
+      return `${emoji} <b>Agent:</b> ${escapeHtml(truncate(desc, 60))}`;
     }
-    return `${emoji} Running agent...`;
+    return `${emoji} <b>Running agent...</b>`;
+  }
+
+  if (toolName === "TaskCreate") {
+    const desc = String(toolInput.description || "");
+    return desc
+      ? `📋 <b>Task:</b> ${escapeHtml(truncate(desc, 60))}`
+      : `📋 <b>Creating task...</b>`;
+  }
+
+  if (toolName === "TaskUpdate") {
+    const status = String(toolInput.status || "");
+    const desc = String(toolInput.description || "");
+    const label = desc
+      ? escapeHtml(truncate(desc, 50))
+      : `task ${String(toolInput.id || "").slice(0, 8)}`;
+    const statusIcon: Record<string, string> = {
+      completed: "✅",
+      in_progress: "⏳",
+      cancelled: "❌",
+      pending: "⏸",
+    };
+    const icon = statusIcon[status] || "📋";
+    return status
+      ? `${icon} <b>${escapeHtml(status)}:</b> ${label}`
+      : `📋 <b>Update:</b> ${label}`;
+  }
+
+  if (toolName === "TaskGet" || toolName === "TaskList") {
+    return dim(`📋 Checking tasks`);
+  }
+
+  if (toolName === "TaskStop") {
+    return `⏹ <b>Stopping task</b>`;
   }
 
   if (toolName === "Skill") {
     const skillName = String(toolInput.skill || "");
     if (skillName) {
-      return `💭 Using skill: ${escapeHtml(skillName)}`;
+      return `💭 <b>Skill:</b> ${escapeHtml(skillName)}`;
     }
-    return `💭 Using skill...`;
+    return dim(`💭 Using skill...`);
   }
 
   if (toolName.startsWith("mcp__")) {
