@@ -325,8 +325,21 @@ export async function startWatchingSession(
     stopWatching(chatId, botApi, "replace");
   }
 
-  await forceRefresh();
-  const sessionInfo = getSession(targetName);
+  // Poll for session ID and JSONL — freshly spawned sessions need a moment
+  let sessionInfo: ReturnType<typeof getSession> = null;
+  let jsonlPath: string | null = null;
+  const watchDeadline = Date.now() + 15_000;
+
+  while (Date.now() < watchDeadline) {
+    await forceRefresh();
+    sessionInfo = getSession(targetName);
+    if (sessionInfo?.id) {
+      jsonlPath = await findSessionJsonlPath(sessionInfo.id);
+      if (jsonlPath) break;
+    }
+    await Bun.sleep(2_000);
+  }
+
   if (!sessionInfo?.id) {
     warn("watch: start failed, missing session id", {
       chatId,
@@ -335,7 +348,6 @@ export async function startWatchingSession(
     return false;
   }
 
-  const jsonlPath = await findSessionJsonlPath(sessionInfo.id);
   if (!jsonlPath) {
     warn("watch: start failed, missing session log", {
       chatId,
