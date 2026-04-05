@@ -373,7 +373,7 @@ export async function startWatchingSession(
     if (!current?.id || current.id === watchState.sessionId) return;
     const newPath = await findSessionJsonlPath(current.id);
     if (!newPath) return;
-    watchState.tailer.stop();
+    watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
       handleTailEvent(botApi, watchState, event),
     );
