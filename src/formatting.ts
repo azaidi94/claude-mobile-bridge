@@ -41,20 +41,32 @@ export function convertMarkdownToHtml(text: string): string {
   // Escape HTML entities in the remaining text
   text = escapeHtml(text);
 
-  // Headers: ## Header -> <b>Header</b>
-  text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>\n");
-
   // Bold: **text** -> <b>text</b>
   text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Also handle *text* as bold (single asterisk)
-  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<b>$1</b>");
-
   // Double underscore: __text__ -> <b>text</b>
-  text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
+  text = text.replace(/__([^_\n]+)__/g, "<b>$1</b>");
 
-  // Italic: _text_ -> <i>text</i> (but not __text__)
-  text = text.replace(/(?<!_)_([^_]+)_(?!_)/g, "<i>$1</i>");
+  // Italic: *text* -> <i>text</i>
+  // Require content to start/end with non-space to avoid matching "2 * 3 = 6"
+  text = text.replace(
+    /(?<![a-zA-Z0-9*])\*(\S(?:[^*\n]*\S)?)\*(?![a-zA-Z0-9*])/g,
+    "<i>$1</i>",
+  );
+
+  // Italic: _text_ -> <i>text</i> (only when surrounded by non-word chars)
+  text = text.replace(
+    /(?<![a-zA-Z0-9_])_(\S(?:[^_\n]*\S)?)_(?![a-zA-Z0-9_])/g,
+    "<i>$1</i>",
+  );
+
+  // Headers: ## Header -> <b>Header</b>
+  // Run after inline formatting so **bold** inside headers is already converted.
+  // Strip inner <b> tags to prevent nested <b> which Telegram rejects.
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, (_, content) => {
+    const flat = content.replace(/<b>([^<]*)<\/b>/g, "$1");
+    return `<b>${flat}</b>\n`;
+  });
 
   // Blockquotes: &gt; text -> <blockquote>text</blockquote>
   text = convertBlockquotes(text);
