@@ -40,13 +40,16 @@ let watcher: FSWatcher | null = null;
 let relayWatcher: FSWatcher | null = null;
 let pollInterval: Timer | null = null;
 let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
+let watcherStarted = false;
 let debounceTimer: Timer | null = null;
 const DEBOUNCE_MS = 500;
 
 /**
  * Save active session name to disk for persistence across restarts.
+ * Only runs when the watcher has been started to avoid test interference.
  */
 async function saveActiveSession(): Promise<void> {
+  if (!watcherStarted) return;
   try {
     if (cache.active) {
       await writeFile(ACTIVE_SESSION_FILE, cache.active, "utf-8");
@@ -556,6 +559,7 @@ export async function startWatcher(
   onChange?: (diff: SessionDiff) => void,
 ): Promise<void> {
   onChangeCallback = onChange || null;
+  watcherStarted = true;
 
   // Initial scan (no notifications on startup)
   await refresh();
@@ -625,6 +629,7 @@ export function stopWatcher(): void {
     clearInterval(pollInterval);
     pollInterval = null;
   }
+  watcherStarted = false;
 }
 
 /**
