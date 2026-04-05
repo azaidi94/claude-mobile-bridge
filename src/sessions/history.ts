@@ -91,11 +91,21 @@ function extractTextBlocks(
  * Returns null if content is empty or only tool_result blocks.
  */
 function extractUserText(content: unknown): string | null {
-  if (typeof content === "string") return content.trim() || null;
+  if (typeof content === "string")
+    return stripChannelTag(content.trim()) || null;
   if (!Array.isArray(content)) return null;
   if (content.every((b: { type?: string }) => b.type === "tool_result"))
     return null;
-  return extractTextBlocks(content);
+  const text = extractTextBlocks(content);
+  return text ? stripChannelTag(text) : null;
+}
+
+/** Strip <channel ...>...</channel> wrapper from relay messages. */
+export function stripChannelTag(text: string): string {
+  return text
+    .replace(/^<channel\s[^>]*>\n?/, "")
+    .replace(/\n?<\/channel>\s*$/, "")
+    .trim();
 }
 
 /**

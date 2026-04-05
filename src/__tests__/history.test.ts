@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import {
   formatHistoryMessage,
   getRecentHistory,
+  stripChannelTag,
   type ConversationPair,
 } from "../sessions/history";
 
@@ -145,5 +146,36 @@ describe("history: conversation pairing logic", () => {
 
   test("returns empty string for empty input", () => {
     expect(formatHistoryMessage([])).toBe("");
+  });
+});
+
+// ============== stripChannelTag ==============
+
+describe("history: stripChannelTag", () => {
+  test("strips full channel wrapper", () => {
+    const input =
+      '<channel source="channel-relay" chat_id="123" request_id="r1" user="Ali" ts="2026-04-05T22:56:15.271Z">\nwhats the git status here\n</channel>';
+    expect(stripChannelTag(input)).toBe("whats the git status here");
+  });
+
+  test("strips opening tag without closing tag", () => {
+    const input = '<channel source="channel-relay" chat_id="123">\nhello';
+    expect(stripChannelTag(input)).toBe("hello");
+  });
+
+  test("returns plain text unchanged", () => {
+    expect(stripChannelTag("just a normal message")).toBe(
+      "just a normal message",
+    );
+  });
+
+  test("returns empty string for empty input", () => {
+    expect(stripChannelTag("")).toBe("");
+  });
+
+  test("preserves multiline inner content", () => {
+    const input =
+      '<channel source="channel-relay" chat_id="123">\nline one\nline two\n</channel>';
+    expect(stripChannelTag(input)).toBe("line one\nline two");
   });
 });

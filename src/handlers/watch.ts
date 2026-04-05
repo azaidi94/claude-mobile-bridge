@@ -473,10 +473,27 @@ export async function startWatchingAndNotify(
   const dir = (sessionInfo?.dir || "").replace(/^\/Users\/[^/]+/, "~");
 
   const history = await getRecentHistory(sessionInfo?.id, 1, sessionInfo?.dir);
-  const lastAssistant = history[history.length - 1]?.assistant;
-  const lastMsgLine = lastAssistant
-    ? `\n<blockquote>🤖 ${escapeHtml(lastAssistant.length > 300 ? lastAssistant.slice(0, 300) + "…" : lastAssistant)}</blockquote>`
-    : "";
+  const lastPair = history[history.length - 1];
+  let lastMsgLine = "";
+  if (lastPair) {
+    const parts: string[] = [];
+    if (lastPair.user) {
+      const u =
+        lastPair.user.length > 150
+          ? lastPair.user.slice(0, 150) + "…"
+          : lastPair.user;
+      parts.push(`👤 ${escapeHtml(u)}`);
+    }
+    if (lastPair.assistant) {
+      const a =
+        lastPair.assistant.length > 300
+          ? lastPair.assistant.slice(0, 300) + "…"
+          : lastPair.assistant;
+      parts.push(`🤖 ${escapeHtml(a)}`);
+    }
+    if (parts.length)
+      lastMsgLine = `\n<blockquote>${parts.join("\n")}</blockquote>`;
+  }
 
   await ctx.reply(
     `👁 Watching <b>${escapeHtml(sessionName)}</b>\n` +
