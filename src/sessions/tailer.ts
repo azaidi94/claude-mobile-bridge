@@ -13,7 +13,12 @@ import { debug, warn } from "../logger";
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
 
-export type TailEventType = "text" | "tool" | "thinking" | "user" | "relay_reply";
+export type TailEventType =
+  | "text"
+  | "tool"
+  | "thinking"
+  | "user"
+  | "relay_reply";
 
 export interface TailEvent {
   type: TailEventType;
@@ -136,10 +141,24 @@ export class SessionTailer {
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
-        if (text && !text.includes('<channel source="channel-relay"')) {
-          return [{ type: "user", content: text }];
+        if (!text || text.includes('<channel source="channel-relay"'))
+          return [];
+
+        // Local command output (e.g. /model, /cost) — strip tags and ANSI codes
+        const cmdMatch = text.match(
+          /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/,
+        );
+        if (cmdMatch) {
+          const cmdOutput = cmdMatch[1]!
+            // Strip ANSI escape codes
+            .replace(/\x1b\[[0-9;]*m/g, "")
+            .trim();
+          // Skip trivial/empty output
+          if (!cmdOutput) return [];
+          return [{ type: "user", content: `⌘ ${cmdOutput}` }];
         }
-        return [];
+
+        return [{ type: "user", content: text }];
       }
 
       // Assistant message — emit all blocks

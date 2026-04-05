@@ -37,6 +37,7 @@ mock.module("../config", () => ({
   RATE_LIMIT_WINDOW: 60,
   SESSION_FILE: "/tmp/test-session.json",
   RESTART_FILE: "/tmp/test-restart.json",
+  BOT_DIR: "/tmp/test-bot-dir",
   TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/", "/private/tmp/", "/var/folders/"],
   RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
@@ -67,7 +68,10 @@ mock.module("../security", () => ({
       }
       for (const allowed of MOCK_ALLOWED_PATHS) {
         const allowedResolved = resolve(allowed);
-        if (resolved === allowedResolved || resolved.startsWith(allowedResolved + "/"))
+        if (
+          resolved === allowedResolved ||
+          resolved.startsWith(allowedResolved + "/")
+        )
           return true;
       }
       return false;
@@ -75,7 +79,10 @@ mock.module("../security", () => ({
       return false;
     }
   },
-  rateLimiter: { check: () => [true], getStatus: () => ({ tokens: 20, max: 20, refillRate: 0.33 }) },
+  rateLimiter: {
+    check: () => [true],
+    getStatus: () => ({ tokens: 20, max: 20, refillRate: 0.33 }),
+  },
   checkCommandSafety: () => [true, ""],
   isAuthorized: (userId: number, allowed: number[]) => allowed.includes(userId),
 }));
@@ -99,14 +106,18 @@ describe("file-download: sendFileToTelegram", () => {
         replies.push({ text });
         return { chat: { id: 123 }, message_id: replies.length };
       }),
-      replyWithPhoto: mock(async (_file: unknown, opts?: { caption?: string }) => {
-        photos.push({ caption: opts?.caption });
-        return { chat: { id: 123 }, message_id: 1 };
-      }),
-      replyWithDocument: mock(async (_file: unknown, opts?: { caption?: string }) => {
-        documents.push({ caption: opts?.caption });
-        return { chat: { id: 123 }, message_id: 1 };
-      }),
+      replyWithPhoto: mock(
+        async (_file: unknown, opts?: { caption?: string }) => {
+          photos.push({ caption: opts?.caption });
+          return { chat: { id: 123 }, message_id: 1 };
+        },
+      ),
+      replyWithDocument: mock(
+        async (_file: unknown, opts?: { caption?: string }) => {
+          documents.push({ caption: opts?.caption });
+          return { chat: { id: 123 }, message_id: 1 };
+        },
+      ),
       _replies: replies,
       _photos: photos,
       _documents: documents,
@@ -349,7 +360,8 @@ describe("file-download: directive stripping", () => {
   });
 
   test("strips multiple directives", () => {
-    const text = "Files:\n<<SEND_FILE:/tmp/a.md>>\n<<SEND_FILE:/tmp/b.png>>\nDone.";
+    const text =
+      "Files:\n<<SEND_FILE:/tmp/a.md>>\n<<SEND_FILE:/tmp/b.png>>\nDone.";
     expect(strip(text)).toBe("Files:\nDone.");
   });
 
@@ -373,7 +385,13 @@ describe("file-download: directive stripping", () => {
 
 describe("file-download: deduplication", () => {
   test("Set removes duplicate paths", () => {
-    const files = ["/tmp/a.md", "/tmp/b.md", "/tmp/a.md", "/tmp/c.md", "/tmp/b.md"];
+    const files = [
+      "/tmp/a.md",
+      "/tmp/b.md",
+      "/tmp/a.md",
+      "/tmp/c.md",
+      "/tmp/b.md",
+    ];
     const unique = [...new Set(files)];
     expect(unique).toEqual(["/tmp/a.md", "/tmp/b.md", "/tmp/c.md"]);
   });
@@ -400,10 +418,12 @@ describe("file-download: createStatusCallback send_file", () => {
       replyWithPhoto: mock(async () => {
         return { chat: { id: 123 }, message_id: 1 };
       }),
-      replyWithDocument: mock(async (_file: unknown, opts?: { caption?: string }) => {
-        documents.push({ caption: opts?.caption });
-        return { chat: { id: 123 }, message_id: 1 };
-      }),
+      replyWithDocument: mock(
+        async (_file: unknown, opts?: { caption?: string }) => {
+          documents.push({ caption: opts?.caption });
+          return { chat: { id: 123 }, message_id: 1 };
+        },
+      ),
       api: {
         editMessageText: mock(async () => ({})),
         deleteMessage: mock(async () => true),

@@ -62,6 +62,8 @@ interface WatchState extends TailDisplayState {
   suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
   relayCleanup?: () => void;
+  /** Interval that detects when the desktop session starts a new conversation. */
+  idCheckInterval?: Timer;
 }
 
 // Active watches: chatId -> WatchState
@@ -170,6 +172,7 @@ export function stopWatching(
     }
     state.tailer.stop();
     state.relayCleanup?.();
+    if (state.idCheckInterval) clearInterval(state.idCheckInterval);
     stopWatchTyping(chatId);
     watches.delete(chatId);
     info("watch: stopped", {
@@ -359,6 +362,34 @@ export async function startWatchingSession(
   };
   watches.set(chatId, watchState);
   await tailer.start();
+
+  // Detect when the desktop session starts a new conversation (new JSONL, same dir).
+  // refresh() diffs by name only, so an ID change won't surface as added/removed.
+  watchState.idCheckInterval = setInterval(async () => {
+    const current = getSession(targetName);
+    if (!current?.id || current.id === watchState.sessionId) return;
+    const newPath = await findSessionJsonlPath(current.id);
+    if (!newPath) return;
+    watchState.tailer.stop();
+    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
+      handleTailEvent(botApi, watchState, event),
+    );
+    watchState.tailer = newTailer;
+    watchState.sessionId = current.id;
+    await newTailer.start();
+    info("watch: restarted tailer for new conversation", {
+      chatId,
+      sessionName: targetName,
+      sessionId: current.id,
+    });
+    botApi
+      .sendMessage(
+        chatId,
+        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation — reconnected.`,
+        { parse_mode: "HTML" },
+      )
+      .catch(() => {});
+  }, 5_000);
 
   // Wire relay client for file attachments (tailer only captures text)
   const relayClient = await getRelayClient({

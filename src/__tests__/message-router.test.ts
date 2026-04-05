@@ -40,6 +40,7 @@ mock.module("../config", () => ({
   MCP_SERVERS: {},
   SESSION_FILE: "/tmp/test-session.json",
   RESTART_FILE: "/tmp/test-restart.json",
+  BOT_DIR: "/tmp/test-bot-dir",
   STREAMING_THROTTLE_MS: 500,
   TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/"],

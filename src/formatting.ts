@@ -264,6 +264,39 @@ export function formatToolStatus(
     return `${emoji} Running agent...`;
   }
 
+  if (toolName === "TaskCreate") {
+    const desc = String(toolInput.description || "");
+    return desc
+      ? `📋 Task: ${escapeHtml(truncate(desc, 60))}`
+      : `📋 Creating task...`;
+  }
+
+  if (toolName === "TaskUpdate") {
+    const status = String(toolInput.status || "");
+    const desc = String(toolInput.description || "");
+    const label = desc
+      ? escapeHtml(truncate(desc, 50))
+      : `task ${String(toolInput.id || "").slice(0, 8)}`;
+    const statusIcon: Record<string, string> = {
+      completed: "✅",
+      in_progress: "⏳",
+      cancelled: "❌",
+      pending: "⏸",
+    };
+    const icon = statusIcon[status] || "📋";
+    return status
+      ? `${icon} ${escapeHtml(status)}: ${label}`
+      : `📋 Update: ${label}`;
+  }
+
+  if (toolName === "TaskGet" || toolName === "TaskList") {
+    return `📋 Checking tasks`;
+  }
+
+  if (toolName === "TaskStop") {
+    return `⏹ Stopping task`;
+  }
+
   if (toolName === "Skill") {
     const skillName = String(toolInput.skill || "");
     if (skillName) {
