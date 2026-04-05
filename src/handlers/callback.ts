@@ -7,7 +7,7 @@
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
-import { ALLOWED_USERS, BOT_DIR } from "../config";
+import { ALLOWED_USERS } from "../config";
 import { formatTimeAgo } from "../formatting";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
@@ -118,11 +118,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Already on this session — start watching if not already
     if (currentActive?.name === name) {
-      if (
-        currentActive.info.source === "desktop" &&
-        currentActive.info.dir !== BOT_DIR &&
-        !isWatching(chatId)
-      ) {
+      if (currentActive.info.source === "desktop" && !isWatching(chatId)) {
         if (await startWatchingAndNotify(ctx, chatId, name, "switch")) {
           await ctx.answerCallbackQuery({ text: `Watching ${name}` });
           return;
@@ -174,8 +170,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        // Auto-watch desktop sessions (never watch the bot itself)
-        if (active.info.source === "desktop" && active.info.dir !== BOT_DIR) {
+        // Auto-watch desktop sessions
+        if (active.info.source === "desktop") {
           if (
             !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
           ) {
