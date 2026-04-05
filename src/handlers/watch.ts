@@ -669,9 +669,11 @@ export function handleTailEvent(
           ? event.content.slice(0, 300) + "..."
           : event.content;
       botApi
-        .sendMessage(chatId, `🖥 <b>Desktop:</b> ${escapeHtml(preview)}`, {
-          parse_mode: "HTML",
-        })
+        .sendMessage(
+          chatId,
+          `🖥 <b>Desktop:</b> <i>${escapeHtml(preview)}</i>`,
+          { parse_mode: "HTML" },
+        )
         .catch((err) => debug(`tail user: ${err}`));
 
       state.currentTextMsg = null;

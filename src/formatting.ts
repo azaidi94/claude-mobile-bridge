@@ -191,6 +191,9 @@ export function formatToolStatus(
     }
   }
 
+  // Helper: wrap in italic for background/low-signal tools
+  const dim = (s: string) => `<i>${s}</i>`;
+
   // Format based on tool type
   if (toolName === "Read") {
     const filePath = String(toolInput.file_path || "file");
@@ -206,69 +209,70 @@ export function formatToolStatus(
       ".ico",
     ];
     if (imageExtensions.some((ext) => filePath.toLowerCase().endsWith(ext))) {
-      return "👀 Viewing";
+      return dim("👀 Viewing");
     }
-    return `${emoji} Reading ${code(shortPath)}`;
+    return dim(`${emoji} Reading ${code(shortPath)}`);
   }
 
   if (toolName === "Write") {
     const filePath = String(toolInput.file_path || "file");
-    return `${emoji} Writing ${code(shortenPath(filePath))}`;
+    return dim(`${emoji} Writing ${code(shortenPath(filePath))}`);
   }
 
   if (toolName === "Edit") {
     const filePath = String(toolInput.file_path || "file");
-    return `${emoji} Editing ${code(shortenPath(filePath))}`;
+    return dim(`${emoji} Editing ${code(shortenPath(filePath))}`);
   }
 
   if (toolName === "Bash") {
     const cmd = String(toolInput.command || "");
     const desc = String(toolInput.description || "");
     if (desc) {
-      return `${emoji} ${escapeHtml(desc)}`;
+      return dim(`${emoji} ${escapeHtml(desc)}`);
     }
-    return `${emoji} ${code(truncate(cmd, 50))}`;
+    return dim(`${emoji} ${code(truncate(cmd, 50))}`);
   }
 
   if (toolName === "Grep") {
     const pattern = String(toolInput.pattern || "");
     const path = String(toolInput.path || "");
     if (path) {
-      return `${emoji} Searching ${code(truncate(pattern, 30))} in ${code(
-        shortenPath(path),
-      )}`;
+      return dim(
+        `${emoji} Searching ${code(truncate(pattern, 30))} in ${code(shortenPath(path))}`,
+      );
     }
-    return `${emoji} Searching ${code(truncate(pattern, 40))}`;
+    return dim(`${emoji} Searching ${code(truncate(pattern, 40))}`);
   }
 
   if (toolName === "Glob") {
     const pattern = String(toolInput.pattern || "");
-    return `${emoji} Finding ${code(truncate(pattern, 50))}`;
+    return dim(`${emoji} Finding ${code(truncate(pattern, 50))}`);
   }
 
   if (toolName === "WebSearch") {
     const query = String(toolInput.query || "");
-    return `${emoji} Searching: ${escapeHtml(truncate(query, 50))}`;
+    return dim(`${emoji} Searching: ${escapeHtml(truncate(query, 50))}`);
   }
 
   if (toolName === "WebFetch") {
     const url = String(toolInput.url || "");
-    return `${emoji} Fetching ${code(truncate(url, 50))}`;
+    return dim(`${emoji} Fetching ${code(truncate(url, 50))}`);
   }
 
+  // Agent/task tools — bold so they stand out from file noise
   if (toolName === "Task" || toolName === "Agent") {
     const desc = String(toolInput.description || "");
     if (desc) {
-      return `${emoji} Agent: ${escapeHtml(desc)}`;
+      return `${emoji} <b>Agent:</b> ${escapeHtml(truncate(desc, 60))}`;
     }
-    return `${emoji} Running agent...`;
+    return `${emoji} <b>Running agent...</b>`;
   }
 
   if (toolName === "TaskCreate") {
     const desc = String(toolInput.description || "");
     return desc
-      ? `📋 Task: ${escapeHtml(truncate(desc, 60))}`
-      : `📋 Creating task...`;
+      ? `📋 <b>Task:</b> ${escapeHtml(truncate(desc, 60))}`
+      : `📋 <b>Creating task...</b>`;
   }
 
   if (toolName === "TaskUpdate") {
@@ -285,24 +289,24 @@ export function formatToolStatus(
     };
     const icon = statusIcon[status] || "📋";
     return status
-      ? `${icon} ${escapeHtml(status)}: ${label}`
-      : `📋 Update: ${label}`;
+      ? `${icon} <b>${escapeHtml(status)}:</b> ${label}`
+      : `📋 <b>Update:</b> ${label}`;
   }
 
   if (toolName === "TaskGet" || toolName === "TaskList") {
-    return `📋 Checking tasks`;
+    return dim(`📋 Checking tasks`);
   }
 
   if (toolName === "TaskStop") {
-    return `⏹ Stopping task`;
+    return `⏹ <b>Stopping task</b>`;
   }
 
   if (toolName === "Skill") {
     const skillName = String(toolInput.skill || "");
     if (skillName) {
-      return `💭 Using skill: ${escapeHtml(skillName)}`;
+      return `💭 <b>Skill:</b> ${escapeHtml(skillName)}`;
     }
-    return `💭 Using skill...`;
+    return dim(`💭 Using skill...`);
   }
 
   if (toolName.startsWith("mcp__")) {
