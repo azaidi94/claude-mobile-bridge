@@ -799,18 +799,18 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       const chatId = ctx.chat?.id;
       const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
 
-      await sendSwitchHistory(ctx, active.info);
-
       // Auto-watch desktop sessions
       if (active.info.source === "desktop" && chatId) {
         if (
           !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
         ) {
+          await sendSwitchHistory(ctx, active.info);
           await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
             parse_mode: "HTML",
           });
         }
       } else {
+        await sendSwitchHistory(ctx, active.info);
         await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
           parse_mode: "HTML",
         });

@@ -174,12 +174,15 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        await sendSwitchHistory(ctx, active.info);
-
         // Auto-watch desktop sessions (never watch the bot itself)
         if (active.info.source === "desktop" && active.info.dir !== BOT_DIR) {
-          await startWatchingAndNotify(ctx, chatId, active.name, "switch");
+          if (
+            !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
+          ) {
+            await sendSwitchHistory(ctx, active.info);
+          }
         } else {
+          await sendSwitchHistory(ctx, active.info);
           // Update pinned status for non-desktop sessions
           getGitBranch(active.info.dir)
             .then((branch) =>

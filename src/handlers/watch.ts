@@ -17,7 +17,6 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
-  getLastSessionMessage,
   type TailEvent,
 } from "../sessions/tailer";
 import {
@@ -34,6 +33,7 @@ import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply } from "../relay/display";
+import { getRecentHistory } from "../sessions/history";
 
 // ============== Shared Tail Display State ==============
 
@@ -472,13 +472,10 @@ export async function startWatchingAndNotify(
   const sessionInfo = getSession(sessionName);
   const dir = (sessionInfo?.dir || "").replace(/^\/Users\/[^/]+/, "~");
 
-  const jsonlPath = sessionInfo?.id
-    ? await findSessionJsonlPath(sessionInfo.id)
-    : null;
-  const lastMsg = jsonlPath ? await getLastSessionMessage(jsonlPath) : null;
-
-  const lastMsgLine = lastMsg
-    ? `\n<blockquote>${lastMsg.role === "user" ? "👤" : "🤖"} ${escapeHtml(lastMsg.text)}</blockquote>`
+  const history = await getRecentHistory(sessionInfo?.id, 1, sessionInfo?.dir);
+  const lastAssistant = history[history.length - 1]?.assistant;
+  const lastMsgLine = lastAssistant
+    ? `\n<blockquote>🤖 ${escapeHtml(lastAssistant.length > 300 ? lastAssistant.slice(0, 300) + "…" : lastAssistant)}</blockquote>`
     : "";
 
   await ctx.reply(
