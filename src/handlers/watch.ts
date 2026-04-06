@@ -712,7 +712,10 @@ export function handleTailEvent(
         .sendMessage(chatId, `🖥 <b>Desktop:</b>\n${formatted}`, {
           parse_mode: "HTML",
         })
-        .catch((err) => debug(`tail user: ${err}`));
+        .catch((err) => {
+          debug(`tail user: ${err}`);
+          botApi.sendMessage(chatId, `🖥 Desktop:\n${preview}`).catch(() => {});
+        });
 
       state.currentTextMsg = null;
       state.currentTextContent = "";
