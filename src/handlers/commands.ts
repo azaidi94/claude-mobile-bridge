@@ -22,6 +22,7 @@ import {
   updatePinnedStatus,
   getGitBranch,
   sendSwitchHistory,
+  suppressDirNotifications,
 } from "../sessions";
 import type { SessionInfo } from "../sessions/types";
 import { auditLog } from "../utils";
@@ -381,6 +382,9 @@ export async function killSession(
 ): Promise<{ killed: boolean; pid?: number }> {
   stopWatching(chatId, botApi, "kill");
   disconnectRelay(sessionInfo.dir);
+  // Suppress notifications for this dir while the relay child winds down —
+  // its lingering port file would otherwise be rediscovered as a new session.
+  suppressDirNotifications(sessionInfo.dir);
 
   let pid: number | undefined;
   if (sessionInfo.pid) {

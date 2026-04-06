@@ -24,6 +24,7 @@ export {
   createNotificationHandler,
   getChatIds,
   setSessionOfflineCallback,
+  suppressDirNotifications,
 } from "./notifications";
 
 export { SessionTailer, findSessionJsonlPath } from "./tailer";
@@ -40,4 +41,8 @@ export {
   type StatusInfo,
 } from "./status-message";
 
-export { getRecentHistory, formatHistoryMessage, sendSwitchHistory } from "./history";
+export {
+  getRecentHistory,
+  formatHistoryMessage,
+  sendSwitchHistory,
+} from "./history";

@@ -15,6 +15,10 @@ import { getActiveSession } from "./watcher";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
 const FLAP_BUFFER_MS = 2_000;
+// Long enough for the relay child to exit after SIGTERM and for the next
+// discovery scan to clean up its stale port file (relay shutdown ≈ a few s,
+// discovery TTL is 5s in src/relay/discovery.ts).
+const KILL_SUPPRESS_MS = 15_000;
 
 // Registered chat IDs of allowed users
 const chatIds = new Set<number>();
@@ -28,6 +32,30 @@ interface PendingNotification {
   timer: Timer;
 }
 const pending = new Map<string, PendingNotification>();
+
+// Dirs whose add/remove notifications should be dropped — used by /kill so the
+// dying relay's lingering port file doesn't trigger a spurious online → offline
+// flap before its process actually exits. Keyed by session dir.
+const suppressedDirs = new Map<string, Timer>();
+
+/**
+ * Suppress add/remove notifications for a session dir for KILL_SUPPRESS_MS.
+ * Called by killSession to prevent spurious online/offline notifications while
+ * the relay child winds down.
+ */
+export function suppressDirNotifications(dir: string): void {
+  const existing = suppressedDirs.get(dir);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => suppressedDirs.delete(dir), KILL_SUPPRESS_MS);
+  suppressedDirs.set(dir, timer);
+
+  // Also cancel any in-flight pending notification for this dir.
+  const inFlight = pending.get(dir);
+  if (inFlight) {
+    clearTimeout(inFlight.timer);
+    pending.delete(dir);
+  }
+}
 
 /**
  * Register a chat ID (called from middleware on every message).
@@ -94,6 +122,10 @@ export function createNotificationHandler(
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
     for (const session of diff.added) {
+      if (suppressedDirs.has(session.dir)) {
+        info(`notify: suppressed add for killed ${session.name}`);
+        continue;
+      }
       const existing = pending.get(session.dir);
       if (existing?.type === "removed") {
         // Session reappeared within buffer — cancel removal, skip both
@@ -119,6 +151,10 @@ export function createNotificationHandler(
     }
 
     for (const session of diff.removed) {
+      if (suppressedDirs.has(session.dir)) {
+        info(`notify: suppressed remove for killed ${session.name}`);
+        continue;
+      }
       const existing = pending.get(session.dir);
       if (existing?.type === "added") {
         // Session disappeared before add notification fired — cancel, skip both

@@ -59,6 +59,7 @@ mock.module("../sessions", () => ({
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
+  suppressDirNotifications: mock(() => {}),
 }));
 
 // Mock session singleton
