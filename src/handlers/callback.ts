@@ -8,7 +8,7 @@ import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { ALLOWED_USERS } from "../config";
-import { formatTimeAgo } from "../formatting";
+import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
 import {
@@ -30,8 +30,12 @@ import {
   sendSwitchHistory,
 } from "../sessions";
 import { startWatchingAndNotify, isWatching } from "./watch";
-import { killSession, sendPostKillSessionList } from "./commands";
-import { escapeHtml } from "../formatting";
+import {
+  killSession,
+  sendPostKillSessionList,
+  offlineSessionCache,
+  spawnCmuxSession,
+} from "./commands";
 import { debug, error as logError, info } from "../logger";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
@@ -216,6 +220,72 @@ export async function handleCallback(ctx: Context): Promise<void> {
       parse_mode: "HTML",
     });
     await sendPostKillSessionList(ctx, chatId, "switch");
+    return;
+  }
+
+  // Handle offline session pick: sess_pick:{idx}
+  if (callbackData.startsWith("sess_pick:")) {
+    const idx = parseInt(callbackData.slice(10), 10);
+    const sessions = offlineSessionCache.get(chatId);
+    const s = sessions?.[idx];
+
+    if (!s) {
+      await ctx.answerCallbackQuery({
+        text: "Session list expired. Run /sessions again.",
+      });
+      return;
+    }
+
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const ago = formatTimeAgo(s.lastActivity);
+    const lines = [`📁 <b>${escapeHtml(dir)}</b>`, ago];
+    if (s.lastMessage) {
+      lines.push(`\n<i>${escapeHtml(s.lastMessage)}</i>`);
+    }
+
+    await ctx.editMessageText(lines.join("\n"), {
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "▶️ Resume", callback_data: `sess_resume:${idx}` },
+            { text: "✖ Cancel", callback_data: "sess_cancel" },
+          ],
+        ],
+      },
+    });
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  // Handle offline session resume: sess_resume:{idx}
+  if (callbackData.startsWith("sess_resume:")) {
+    const idx = parseInt(callbackData.slice(12), 10);
+    const sessions = offlineSessionCache.get(chatId);
+    const s = sessions?.[idx];
+
+    if (!s) {
+      await ctx.answerCallbackQuery({
+        text: "Session list expired. Run /sessions again.",
+      });
+      return;
+    }
+
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    await ctx.editMessageText(
+      `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
+      { parse_mode: "HTML" },
+    );
+    await ctx.answerCallbackQuery();
+
+    await spawnCmuxSession(ctx.api, chatId, s.dir, userId);
+    return;
+  }
+
+  // Handle offline session cancel: sess_cancel
+  if (callbackData === "sess_cancel") {
+    await ctx.editMessageText("✖ Cancelled.");
+    await ctx.answerCallbackQuery();
     return;
   }
 

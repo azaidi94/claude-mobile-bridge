@@ -5,7 +5,7 @@
  * /list, /switch, /refresh, /pin, /watch, /unwatch, /pwd, /cd, /ls
  */
 
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, access } from "fs/promises";
 import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
@@ -44,6 +44,30 @@ import {
   info,
   warn,
 } from "../logger";
+import type { OfflineSession } from "../sessions/offline";
+import { listOfflineSessions } from "../sessions/offline";
+
+/** In-memory cache of offline session lists, keyed by chatId.
+ *  Populated by handleSessions; consumed by sess_pick / sess_resume callbacks.
+ */
+export const offlineSessionCache = new Map<number, OfflineSession[]>();
+
+const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
+
+/**
+ * Resolve the cmux binary path.
+ * Checks PATH first, then falls back to the macOS app bundle location.
+ */
+async function getCmuxBin(): Promise<string | null> {
+  const onPath = Bun.which("cmux");
+  if (onPath) return onPath;
+  try {
+    await access(CMUX_APP_BIN);
+    return CMUX_APP_BIN;
+  } catch {
+    return null;
+  }
+}
 
 function relayIdentity(pf: {
   sessionId?: string;
@@ -93,6 +117,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `<b>Sessions:</b>\n` +
       `/list - Show all sessions\n` +
       `/switch &lt;name&gt; - Switch to session\n` +
+      `/sessions - Browse offline sessions\n` +
       `/new [path] - Spawn desktop session (cmux)\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +
@@ -118,74 +143,27 @@ export async function handleHelp(ctx: Context): Promise<void> {
 }
 
 /**
- * /new [path] - Spawn a desktop Claude session in cmux.
+ * Core cmux spawn logic — shared by /new command and sess_resume callback.
+ *
+ * Spawns a new cmux workspace in `explicitPath`, waits for the relay to come
+ * online, identifies the new session, sets it as active, and starts watching.
+ * All status messages are sent via `api.sendMessage(chatId, text)`.
  */
-export async function handleNew(ctx: Context): Promise<void> {
-  const userId = ctx.from?.id;
-  const chatId = ctx.chat?.id;
-
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+export async function spawnCmuxSession(
+  api: Context["api"],
+  chatId: number,
+  explicitPath: string,
+  userId: number,
+): Promise<void> {
+  const cmux = await getCmuxBin();
+  if (!cmux) {
+    await api.sendMessage(chatId, "❌ cmux not found. Install from cmux.dev");
     return;
   }
 
-  if (!chatId) return;
-
-  if (!Bun.which("cmux")) {
-    await ctx.reply(
-      "❌ <b>cmux required</b>\n\n" +
-        "<code>/new</code> opens a desktop Claude terminal via cmux.\n" +
-        'Install from: <a href="https://cmux.dev">cmux.dev</a>',
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-
-  const text = ctx.message?.text || "";
-  const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
-  const explicitPath = rawPath ? resolve(WORKING_DIR, rawPath) : WORKING_DIR;
   const opId = createOpId("spawn");
   const spawnStartedAt = Date.now();
-  info("request: started", {
-    opId,
-    requestKind: "spawn",
-    chatId,
-    userId,
-    explicitPath,
-  });
-
-  try {
-    const s = await stat(explicitPath);
-    if (!s.isDirectory()) {
-      warn("spawn: target is not a directory", {
-        opId,
-        chatId,
-        userId,
-        explicitPath,
-        durationMs: elapsedMs(spawnStartedAt),
-      });
-      await ctx.reply("❌ Not a directory.");
-      return;
-    }
-  } catch {
-    warn("spawn: path does not exist", {
-      opId,
-      chatId,
-      userId,
-      explicitPath,
-      durationMs: elapsedMs(spawnStartedAt),
-    });
-    await ctx.reply("❌ Path does not exist.");
-    return;
-  }
-
-  const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
-  await ctx.reply(
-    `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
-    {
-      parse_mode: "HTML",
-    },
-  );
+  info("spawn: started", { opId, chatId, userId, explicitPath });
 
   try {
     const beforeRelays = (await scanPortFiles(true)).filter(
@@ -203,7 +181,7 @@ export async function handleNew(ctx: Context): Promise<void> {
     );
 
     const wsResult = Bun.spawnSync([
-      "cmux",
+      cmux,
       "new-workspace",
       "--cwd",
       explicitPath,
@@ -218,22 +196,23 @@ export async function handleNew(ctx: Context): Promise<void> {
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await ctx.reply("❌ Failed to create cmux workspace.");
+      await api.sendMessage(chatId, "❌ Failed to create cmux workspace.");
       return;
     }
     const workspaceId = `workspace:${wsMatch[1]}`;
 
     await Bun.sleep(1000);
-    Bun.spawnSync(["cmux", "send", "--workspace", workspaceId, "cc\n"]);
+    Bun.spawnSync([cmux, "send", "--workspace", workspaceId, "cc\n"]);
 
     // Accept dev channels prompt
     await Bun.sleep(5000);
-    Bun.spawnSync(["cmux", "send-key", "--workspace", workspaceId, "Enter"]);
+    Bun.spawnSync([cmux, "send-key", "--workspace", workspaceId, "Enter"]);
 
-    await ctx.reply("⏳ Waiting for Claude to start...");
+    await api.sendMessage(chatId, "⏳ Waiting for Claude to start...");
 
     const deadline = Date.now() + 20_000;
-    let spawnedRelay: (typeof beforeRelays)[number] | null = null;
+    let spawnedRelay: Awaited<ReturnType<typeof scanPortFiles>>[number] | null =
+      null;
     while (Date.now() < deadline) {
       await Bun.sleep(2000);
       const portFiles = await scanPortFiles(true);
@@ -250,7 +229,8 @@ export async function handleNew(ctx: Context): Promise<void> {
           durationMs: elapsedMs(spawnStartedAt),
           candidateCount: newRelays.length,
         });
-        await ctx.reply(
+        await api.sendMessage(
+          chatId,
           "⚠️ Session spawned, but multiple new relays appeared.\n" +
             "Use /list to pick the right session.",
         );
@@ -270,7 +250,8 @@ export async function handleNew(ctx: Context): Promise<void> {
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await ctx.reply(
+      await api.sendMessage(
+        chatId,
         "⚠️ Session spawned but relay not detected yet. Check cmux and try /list.",
       );
       return;
@@ -304,15 +285,9 @@ export async function handleNew(ctx: Context): Promise<void> {
 
     if (spawned) {
       setActiveSession(spawned.name);
-
-      // Fire watch in background — online notification will confirm to user
-      startWatchingSession(ctx.api, chatId, spawned.name, "spawn").catch(
-        () => {},
-      );
-
-      info("request: completed", {
+      startWatchingSession(api, chatId, spawned.name, "spawn").catch(() => {});
+      info("spawn: completed", {
         opId,
-        requestKind: "spawn",
         chatId,
         userId,
         explicitPath,
@@ -328,7 +303,8 @@ export async function handleNew(ctx: Context): Promise<void> {
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await ctx.reply(
+      await api.sendMessage(
+        chatId,
         "⚠️ Session spawned, but could not uniquely identify the new session.\n" +
           "Use /list to find it.",
       );
@@ -341,8 +317,61 @@ export async function handleNew(ctx: Context): Promise<void> {
       explicitPath,
       durationMs: elapsedMs(spawnStartedAt),
     });
-    await ctx.reply(`❌ Spawn failed: ${String(err).slice(0, 200)}`);
+    await api.sendMessage(
+      chatId,
+      `❌ Spawn failed: ${String(err).slice(0, 200)}`,
+    );
   }
+}
+
+/**
+ * /new [path] - Spawn a desktop Claude session in cmux.
+ */
+export async function handleNew(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (!chatId) return;
+
+  if (!(await getCmuxBin())) {
+    await ctx.reply(
+      "❌ <b>cmux required</b>\n\n" +
+        "<code>/new</code> opens a desktop Claude terminal via cmux.\n" +
+        'Install from: <a href="https://cmux.dev">cmux.dev</a>',
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  const text = ctx.message?.text || "";
+  const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
+  const explicitPath = rawPath ? resolve(WORKING_DIR, rawPath) : WORKING_DIR;
+
+  try {
+    const s = await stat(explicitPath);
+    if (!s.isDirectory()) {
+      await ctx.reply("❌ Not a directory.");
+      return;
+    }
+  } catch {
+    await ctx.reply("❌ Path does not exist.");
+    return;
+  }
+
+  const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
+  await ctx.reply(
+    `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
+    {
+      parse_mode: "HTML",
+    },
+  );
+
+  await spawnCmuxSession(ctx.api, chatId, explicitPath, userId!);
 }
 
 /**
@@ -830,6 +859,67 @@ export async function handleRefresh(ctx: Context): Promise<void> {
   await forceRefresh();
   const sessions = getSessions();
   await ctx.reply(`🔄 Refreshed. Found ${sessions.length} session(s).`);
+}
+
+/**
+ * /sessions - List offline Claude sessions with Resume buttons.
+ */
+export async function handleSessions(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (!chatId) return;
+
+  if (!(await getCmuxBin())) {
+    await ctx.reply(
+      "❌ <b>cmux required</b>\n\n" +
+        "<code>/sessions</code> resumes sessions via cmux.\n" +
+        'Install from: <a href="https://cmux.dev">cmux.dev</a>',
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  const sessions = await listOfflineSessions();
+
+  if (sessions.length === 0) {
+    await ctx.reply(
+      "📋 No offline sessions found.\n\nAll sessions are either live or have no history.",
+    );
+    return;
+  }
+
+  // Cache for callback handlers
+  offlineSessionCache.set(chatId, sessions);
+
+  const lines: string[] = ["📋 <b>Offline Sessions</b>\n"];
+
+  for (const s of sessions) {
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const ago = formatTimeAgo(s.lastActivity);
+    lines.push(`📁 <code>${escapeHtml(dir)}</code> · ${ago}`);
+    if (s.lastMessage) {
+      lines.push(`   <i>${escapeHtml(s.lastMessage)}</i>`);
+    }
+    lines.push("");
+  }
+
+  const buttons = sessions.map((s, i) => [
+    {
+      text: s.dir.split("/").pop() || s.dir,
+      callback_data: `sess_pick:${i}`,
+    },
+  ]);
+
+  await ctx.reply(lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: buttons },
+  });
 }
 
 /**

@@ -16,6 +16,8 @@ export {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleSessions,
+  offlineSessionCache,
   handlePwd,
   handleCd,
   handleLs,
