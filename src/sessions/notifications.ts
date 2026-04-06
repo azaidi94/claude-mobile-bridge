@@ -8,7 +8,7 @@
 import { readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { Api } from "grammy";
+import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
@@ -107,6 +107,7 @@ export function createNotificationHandler(
         broadcast(
           botApi,
           `🟢 <b>${escHtml(session.name)}</b> online\n<code>${escHtml(session.dir)}</code>`,
+          new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
         );
       }, FLAP_BUFFER_MS);
       pending.set(session.dir, {
@@ -148,10 +149,17 @@ export function createNotificationHandler(
   };
 }
 
-function broadcast(botApi: Api, html: string): void {
+function broadcast(
+  botApi: Api,
+  html: string,
+  replyMarkup?: InlineKeyboard,
+): void {
   for (const chatId of chatIds) {
     botApi
-      .sendMessage(chatId, html, { parse_mode: "HTML" })
+      .sendMessage(chatId, html, {
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      })
       .catch((err) => warn(`notify send: ${err}`));
   }
 }
