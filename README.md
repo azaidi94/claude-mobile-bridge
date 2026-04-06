@@ -22,7 +22,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 | Category     | Commands                                           |
 | ------------ | -------------------------------------------------- |
-| Sessions     | `/list`, `/switch`, `/new`, `/kill`                |
+| Sessions     | `/list`, `/switch`, `/new`, `/sessions`, `/kill`   |
 | Control      | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
 | Live handoff | `/watch`, `/unwatch`                               |
 | Files        | `/pwd`, `/cd`, `/ls`                               |
@@ -97,6 +97,8 @@ Or spawn a relay-enabled desktop session directly from Telegram with `/new` (req
 ```
 
 > Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/new`.
+
+Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume spawns a new cmux session in that directory.
 
 ## Development
 

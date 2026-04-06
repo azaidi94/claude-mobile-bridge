@@ -223,11 +223,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // Handle offline session pick: sess_pick:{idx}
+  // Handle offline session pick: sess_pick:{gen}:{idx}
   if (callbackData.startsWith("sess_pick:")) {
-    const idx = parseInt(callbackData.slice(10), 10);
-    const sessions = offlineSessionCache.get(chatId);
-    const s = sessions?.[idx];
+    const parts = callbackData.split(":");
+    const gen = parseInt(parts[1] ?? "", 10);
+    const idx = parseInt(parts[2] ?? "", 10);
+    const cached = offlineSessionCache.get(chatId);
+    const s = cached && cached.gen === gen ? cached.sessions[idx] : undefined;
 
     if (!s) {
       await ctx.answerCallbackQuery({
@@ -248,7 +250,10 @@ export async function handleCallback(ctx: Context): Promise<void> {
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "▶️ Resume", callback_data: `sess_resume:${idx}` },
+            {
+              text: "▶️ Resume",
+              callback_data: `sess_resume:${gen}:${idx}`,
+            },
             { text: "✖ Cancel", callback_data: "sess_cancel" },
           ],
         ],
@@ -258,11 +263,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // Handle offline session resume: sess_resume:{idx}
+  // Handle offline session resume: sess_resume:{gen}:{idx}
   if (callbackData.startsWith("sess_resume:")) {
-    const idx = parseInt(callbackData.slice(12), 10);
-    const sessions = offlineSessionCache.get(chatId);
-    const s = sessions?.[idx];
+    const parts = callbackData.split(":");
+    const gen = parseInt(parts[1] ?? "", 10);
+    const idx = parseInt(parts[2] ?? "", 10);
+    const cached = offlineSessionCache.get(chatId);
+    const s = cached && cached.gen === gen ? cached.sessions[idx] : undefined;
 
     if (!s) {
       await ctx.answerCallbackQuery({

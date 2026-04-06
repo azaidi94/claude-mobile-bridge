@@ -47,10 +47,21 @@ import {
 import type { OfflineSession } from "../sessions/offline";
 import { listOfflineSessions } from "../sessions/offline";
 
+/** Max sessions to render in /sessions to stay under Telegram's keyboard/message caps. */
+const MAX_OFFLINE_SESSIONS = 25;
+
 /** In-memory cache of offline session lists, keyed by chatId.
+ *  Each entry carries a generation counter — callbacks from a stale /sessions
+ *  message embed the gen they were minted with, and we reject mismatches so
+ *  taps on an old message can't resolve against a newer cache.
  *  Populated by handleSessions; consumed by sess_pick / sess_resume callbacks.
  */
-export const offlineSessionCache = new Map<number, OfflineSession[]>();
+export const offlineSessionCache = new Map<
+  number,
+  { gen: number; sessions: OfflineSession[] }
+>();
+
+let offlineSessionGen = 0;
 
 const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
 
@@ -885,17 +896,18 @@ export async function handleSessions(ctx: Context): Promise<void> {
     return;
   }
 
-  const sessions = await listOfflineSessions();
+  const allSessions = await listOfflineSessions();
 
-  if (sessions.length === 0) {
+  if (allSessions.length === 0) {
     await ctx.reply(
       "📋 No offline sessions found.\n\nAll sessions are either live or have no history.",
     );
     return;
   }
 
-  // Cache for callback handlers
-  offlineSessionCache.set(chatId, sessions);
+  const sessions = allSessions.slice(0, MAX_OFFLINE_SESSIONS);
+  const gen = ++offlineSessionGen;
+  offlineSessionCache.set(chatId, { gen, sessions });
 
   const lines: string[] = ["📋 <b>Offline Sessions</b>\n"];
 
@@ -909,10 +921,16 @@ export async function handleSessions(ctx: Context): Promise<void> {
     lines.push("");
   }
 
+  if (allSessions.length > sessions.length) {
+    lines.push(
+      `<i>Showing ${sessions.length} of ${allSessions.length} most recent.</i>`,
+    );
+  }
+
   const buttons = sessions.map((s, i) => [
     {
       text: s.dir.split("/").pop() || s.dir,
-      callback_data: `sess_pick:${i}`,
+      callback_data: `sess_pick:${gen}:${i}`,
     },
   ]);
 
