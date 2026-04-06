@@ -308,7 +308,11 @@ export async function getLastSessionMessage(
                     .map((b: { text: string }) => b.text)
                     .join("")
                 : null;
-          if (text && !text.includes('<channel source="channel-relay"')) {
+          if (
+            text &&
+            !text.includes('<channel source="channel-relay"') &&
+            !text.includes("<local-command-stdout>")
+          ) {
             lastUser = text.trim();
           }
         } else if (entry.type === "assistant") {

@@ -32,6 +32,7 @@ import {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleSessions,
   handleWatch,
   handleUnwatch,
   handlePwd,
@@ -115,6 +116,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("watch", handleWatch);
   bot.command("unwatch", handleUnwatch);
   bot.command("pin", handlePin);
+  bot.command("sessions", handleSessions);
   bot.command("pwd", handlePwd);
   bot.command("cd", handleCd);
   bot.command("ls", handleLs);

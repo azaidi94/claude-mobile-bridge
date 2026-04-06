@@ -83,6 +83,7 @@ info(`bot: @${botInfo.username} ready`);
 await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
   { command: "switch", description: "Switch to session" },
+  { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Spawn desktop session (cmux)" },
   { command: "watch", description: "Watch a desktop session live" },
   { command: "unwatch", description: "Stop watching" },

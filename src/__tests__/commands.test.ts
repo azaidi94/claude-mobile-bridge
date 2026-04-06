@@ -151,6 +151,11 @@ mock.module("../sessions/tailer", () => ({
   findSessionJsonlPath: mockFindSessionJsonlPath,
 }));
 
+const mockListOfflineSessions = mock(async () => []);
+mock.module("../sessions/offline", () => ({
+  listOfflineSessions: mockListOfflineSessions,
+}));
+
 const mockStartWatchingSession = mock(async () => true);
 const mockStartWatchingAndNotify = mock(async () => true);
 const mockStopWatching = mock(() => undefined);
@@ -937,9 +942,17 @@ describe("commands: /new", () => {
 
       expect(mockStartWatchingSession).not.toHaveBeenCalled();
       expect(mockActiveSession).toBeNull();
-      expect(ctx._replies.at(-1)?.text).toContain(
-        "could not uniquely identify the new session",
-      );
+      const allSentTexts = [
+        ...ctx._replies.map((r: { text: string }) => r.text),
+        ...(ctx.api.sendMessage as ReturnType<typeof mock>).mock.calls.map(
+          (c: unknown[]) => c[1] as string,
+        ),
+      ];
+      expect(
+        allSentTexts.some((t) =>
+          t.includes("could not uniquely identify the new session"),
+        ),
+      ).toBe(true);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
