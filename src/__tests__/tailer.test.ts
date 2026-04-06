@@ -10,7 +10,12 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 // Import directly from source to avoid barrel export issues
-import { SessionTailer, findSessionJsonlPath, type TailEvent } from "../sessions/tailer";
+import {
+  SessionTailer,
+  findSessionJsonlPath,
+  getExpectedJsonlPath,
+  type TailEvent,
+} from "../sessions/tailer";
 
 // ============== parseLine ==============
 
@@ -254,9 +259,7 @@ describe("tailer: findSessionJsonlPath", () => {
       const projects = await readdir(projectsDir);
       for (const project of projects) {
         if (project.startsWith(".")) continue;
-        const files = await readdir(join(projectsDir, project)).catch(
-          () => [],
-        );
+        const files = await readdir(join(projectsDir, project)).catch(() => []);
         const jsonl = files.find((f: string) => f.endsWith(".jsonl"));
         if (jsonl) {
           realSessionId = jsonl.replace(".jsonl", "");
@@ -275,6 +278,27 @@ describe("tailer: findSessionJsonlPath", () => {
     const result = await findSessionJsonlPath(realSessionId);
     expect(result).not.toBeNull();
     expect(result!).toEndWith(`${realSessionId}.jsonl`);
+  });
+});
+
+// ============== getExpectedJsonlPath ==============
+
+describe("tailer: getExpectedJsonlPath", () => {
+  test("encodes a simple cwd by replacing slashes with dashes", () => {
+    const path = getExpectedJsonlPath("/Users/ali/Dev/athletiq", "abc-123");
+    expect(path).toEndWith(
+      "/.claude/projects/-Users-ali-Dev-athletiq/abc-123.jsonl",
+    );
+  });
+
+  test("encodes dots in the cwd as dashes (worktree paths)", () => {
+    const path = getExpectedJsonlPath(
+      "/Users/ali/Dev/claude-mobile-bridge/.claude/worktrees/reverent-neumann",
+      "f9523856",
+    );
+    expect(path).toEndWith(
+      "/.claude/projects/-Users-ali-Dev-claude-mobile-bridge--claude-worktrees-reverent-neumann/f9523856.jsonl",
+    );
   });
 });
 
@@ -324,13 +348,42 @@ describe("tailer: lifecycle", () => {
     });
     await appendFile(testFile, line + "\n");
 
-    // Wait for polling to pick it up
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Wait for polling to pick it up (poll interval is 2s)
+    await new Promise((resolve) => setTimeout(resolve, 2200));
 
     tailer.stop();
 
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0]!.type).toBe("text");
     expect(events[0]!.content).toBe("New content");
+  });
+
+  test("starts on a non-existent path and tails it once it appears", async () => {
+    const lateFile = join(tmpdir(), `tailer-late-${Date.now()}.jsonl`);
+    // Ensure the file does NOT exist when start() is called.
+    await rm(lateFile, { force: true });
+
+    const events: TailEvent[] = [];
+    const tailer = new SessionTailer(lateFile, (e) => events.push(e));
+    try {
+      await tailer.start();
+
+      // Create the file with one line after start.
+      const line = JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Late content" }] },
+      });
+      await writeFile(lateFile, line + "\n");
+
+      // Polling interval is 2s; wait long enough for it to fire.
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[0]!.type).toBe("text");
+      expect(events[0]!.content).toBe("Late content");
+    } finally {
+      tailer.stop();
+      await rm(lateFile, { force: true });
+    }
   });
 });

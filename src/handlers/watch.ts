@@ -17,6 +17,7 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
+  getExpectedJsonlPath,
   type TailEvent,
 } from "../sessions/tailer";
 import {
@@ -306,7 +307,7 @@ export async function handleWatch(ctx: Context): Promise<void> {
     "command",
   );
   if (!started) {
-    await ctx.reply("Could not start watching (no session ID or log file).");
+    await ctx.reply("Could not start watching (no session ID).");
   }
 }
 
@@ -325,19 +326,16 @@ export async function startWatchingSession(
     stopWatching(chatId, botApi, "replace");
   }
 
-  // Poll for session ID and JSONL — freshly spawned sessions need a moment
+  // Poll for session ID — freshly spawned sessions need a moment for the
+  // relay port file to land in /tmp.
   let sessionInfo: ReturnType<typeof getSession> = null;
-  let jsonlPath: string | null = null;
-  const watchDeadline = Date.now() + 15_000;
+  const watchDeadline = Date.now() + 6_000;
 
   while (Date.now() < watchDeadline) {
     await forceRefresh();
     sessionInfo = getSession(targetName);
-    if (sessionInfo?.id) {
-      jsonlPath = await findSessionJsonlPath(sessionInfo.id);
-      if (jsonlPath) break;
-    }
-    await Bun.sleep(2_000);
+    if (sessionInfo?.id) break;
+    await Bun.sleep(1_000);
   }
 
   if (!sessionInfo?.id) {
@@ -348,15 +346,12 @@ export async function startWatchingSession(
     return false;
   }
 
-  if (!jsonlPath) {
-    warn("watch: start failed, missing session log", {
-      chatId,
-      targetName,
-      sessionId: sessionInfo.id,
-      sessionDir: sessionInfo.dir,
-    });
-    return false;
-  }
+  // Resolve JSONL path. May not exist yet — claude doesn't write the file
+  // until the first prompt is submitted. Fall back to the expected path so
+  // the tailer can wait for the file to appear.
+  const jsonlPath =
+    (await findSessionJsonlPath(sessionInfo.id)) ??
+    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event);

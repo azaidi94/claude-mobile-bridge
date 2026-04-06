@@ -7,8 +7,10 @@
 
 import { watch, type FSWatcher } from "fs";
 import { stat } from "fs/promises";
+import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
+import { PROJECTS_DIR } from "./watcher";
 
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
@@ -46,10 +48,11 @@ export class SessionTailer {
   }
 
   /**
-   * Start tailing from current end of file.
+   * Start tailing the file. If the file doesn't exist yet (e.g. claude hasn't
+   * written its first message), poll until it appears, then tail from offset 0.
+   * If it does exist, start from EOF so we only see new events.
    */
   async start(): Promise<void> {
-    // Start from current EOF so we only see new events
     try {
       const s = await stat(this.filePath);
       this.offset = s.size;
@@ -57,7 +60,24 @@ export class SessionTailer {
       this.offset = 0;
     }
 
-    // Watch for file changes
+    this.tryWatchFile();
+
+    // Polling also picks up the file once it's created.
+    this.pollTimer = setInterval(() => {
+      if (this.stopped) return;
+      if (!this.watcher) this.tryWatchFile();
+      this.readNew();
+    }, POLL_INTERVAL_MS);
+
+    debug(`tailer: started at offset ${this.offset}`);
+  }
+
+  /**
+   * Set up fs.watch on the file. No-op if already watching, stopped, or the
+   * file doesn't exist yet — pollTimer will retry.
+   */
+  private tryWatchFile(): void {
+    if (this.watcher || this.stopped) return;
     try {
       this.watcher = watch(this.filePath, (event) => {
         if (this.stopped) return;
@@ -67,15 +87,12 @@ export class SessionTailer {
         }
       });
     } catch (err) {
-      warn(`tailer: fs.watch failed: ${err}`);
+      // ENOENT is expected — file may not exist yet, polling will retry.
+      // Warn on anything else (EMFILE, EACCES, etc.) so real failures surface.
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        warn(`tailer: fs.watch failed: ${err}`);
+      }
     }
-
-    // Backup polling
-    this.pollTimer = setInterval(() => {
-      if (!this.stopped) this.readNew();
-    }, POLL_INTERVAL_MS);
-
-    debug(`tailer: started at offset ${this.offset}`);
   }
 
   /**
@@ -233,17 +250,14 @@ export async function findSessionJsonlPath(
   sessionId: string,
 ): Promise<string | null> {
   const { readdir } = await import("fs/promises");
-  const { join } = await import("path");
-  const { homedir } = await import("os");
 
-  const projectsDir = join(homedir(), ".claude", "projects");
   const filename = `${sessionId}.jsonl`;
 
   try {
-    const projects = await readdir(projectsDir);
+    const projects = await readdir(PROJECTS_DIR);
     for (const project of projects) {
       if (project.startsWith(".")) continue;
-      const filePath = join(projectsDir, project, filename);
+      const filePath = join(PROJECTS_DIR, project, filename);
       const s = await stat(filePath).catch(() => null);
       if (s?.isFile()) return filePath;
     }
@@ -251,6 +265,17 @@ export async function findSessionJsonlPath(
     // PROJECTS_DIR doesn't exist
   }
   return null;
+}
+
+/**
+ * Compute the expected JSONL path for a session that may not yet exist on disk.
+ * Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`.
+ * Used to start a tailer before claude has written its first message — the
+ * tailer waits for the file to appear via polling + delayed fs.watch.
+ */
+export function getExpectedJsonlPath(cwd: string, sessionId: string): string {
+  const encoded = cwd.replace(/[/.]/g, "-");
+  return join(PROJECTS_DIR, encoded, `${sessionId}.jsonl`);
 }
 
 /**

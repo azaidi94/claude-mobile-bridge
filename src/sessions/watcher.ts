@@ -17,7 +17,7 @@ import type { PortFileData } from "../relay/discovery";
 
 const execAsync = promisify(exec);
 
-const PROJECTS_DIR = join(homedir(), ".claude", "projects");
+export const PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const ACTIVE_SESSION_FILE = join(
   tmpdir(),
   "claude-telegram-active-session.txt",
