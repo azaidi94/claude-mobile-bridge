@@ -184,6 +184,7 @@ const mcp = new Server(
       'Telegram messages arrive as <channel source="channel-relay" chat_id="..." request_id="..." ...>.',
       "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
       "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
+      "The reply tool call IS the response to a relay message. Do NOT also emit the same text (or a paraphrase) as terminal output afterward — that produces a duplicate. Terminal text after a relay reply should only appear if it conveys genuinely new info for the local user.",
     ].join("\n"),
   },
 );
