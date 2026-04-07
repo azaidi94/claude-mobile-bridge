@@ -27,6 +27,7 @@ export { handleVoice } from "./voice";
 export { handlePhoto } from "./photo";
 export { handleDocument } from "./document";
 export { handleCallback } from "./callback";
+export { handleUsage } from "./usage";
 export {
   handleWatch,
   handleUnwatch,

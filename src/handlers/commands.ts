@@ -145,6 +145,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/pwd - Show working directory\n` +
       `/cd &lt;path&gt; - Change directory\n` +
       `/ls [path] - List directory\n\n` +
+      `<b>Quota:</b>\n` +
+      `/usage - Show session &amp; weekly usage\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt active query\n` +
       `• Say "think" for extended reasoning\n` +

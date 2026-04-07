@@ -26,6 +26,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 | Control      | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
 | Live handoff | `/watch`, `/unwatch`                               |
 | Files        | `/pwd`, `/cd`, `/ls`                               |
+| Quota        | `/usage`                                           |
 
 ## Quick Start
 

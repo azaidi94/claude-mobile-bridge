@@ -168,6 +168,12 @@ mock.module("../handlers/watch", () => ({
   isWatching: mockIsWatching,
 }));
 
+const mockReadKeychainToken = mock(async (): Promise<string | null> => null);
+
+mock.module("../lib/keychain", () => ({
+  readKeychainToken: mockReadKeychainToken,
+}));
+
 // Mock session singleton
 const mockSessionState = {
   isRunning: false,
@@ -332,6 +338,8 @@ function resetMocks() {
   mockStopWatching.mockClear();
   mockIsWatching.mockClear();
   mockIsWatching.mockImplementation(() => false);
+  mockReadKeychainToken.mockClear();
+  mockReadKeychainToken.mockImplementation(async () => null);
 }
 
 // ============== /start Command Tests ==============
@@ -1841,5 +1849,152 @@ describe("commands: /kill", () => {
 
     expect(ctx._replies[0]?.text).toContain("No sessions");
     expect(ctx._replies[0]?.text).toContain("/new");
+  });
+});
+
+// ============== /usage Command Tests ==============
+
+describe("commands: /usage", () => {
+  let fetchSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(async () => {
+    resetMocks();
+    const usage = await import("../handlers/usage");
+    usage._resetUsageCache();
+    fetchSpy = spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  test("handleUsage returns unauthorized for non-allowed user", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    const ctx = createMockContext({ userId: 999999 });
+
+    await handleUsage(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+    expect(mockReadKeychainToken).not.toHaveBeenCalled();
+  });
+
+  test("handleUsage reports keychain miss", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => null);
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handleUsage(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("keychain");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("handleUsage renders usage on happy path", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => "fake-token");
+
+    const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const inFiveDays = new Date(
+      Date.now() + 5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    fetchSpy.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            five_hour: { utilization: 33, resets_at: inOneHour },
+            seven_day: { utilization: 23, resets_at: inFiveDays },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const ctx = createMockContext({ userId: 123456 });
+    await handleUsage(ctx as any);
+
+    const text = ctx._replies[0]?.text ?? "";
+    expect(text).toContain("Usage");
+    expect(text).toContain("Session (5h)");
+    expect(text).toContain("33.0%");
+    expect(text).toContain("Weekly (7d)");
+    expect(text).toContain("23.0%");
+    expect(text).toContain("resets in");
+    expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
+
+    // Verify Bearer token header sent
+    const call = fetchSpy.mock.calls[0];
+    const init = call?.[1] as RequestInit | undefined;
+    const headers = init?.headers as Record<string, string> | undefined;
+    expect(headers?.Authorization).toBe("Bearer fake-token");
+    expect(headers?.["anthropic-beta"]).toBe("oauth-2025-04-20");
+  });
+
+  test("handleUsage reports API error status", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => "fake-token");
+    fetchSpy.mockImplementation(
+      async () => new Response("nope", { status: 401 }),
+    );
+
+    const ctx = createMockContext({ userId: 123456 });
+    await handleUsage(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("401");
+  });
+
+  test("handleUsage reports 429 with friendly message", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => "fake-token");
+    fetchSpy.mockImplementation(
+      async () => new Response("rate limited", { status: 429 }),
+    );
+
+    const ctx = createMockContext({ userId: 123456 });
+    await handleUsage(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("rate-limiting");
+    expect(ctx._replies[0]?.text).not.toContain("429");
+  });
+
+  test("handleUsage caches successful responses", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => "fake-token");
+    fetchSpy.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            five_hour: {
+              utilization: 10,
+              resets_at: new Date(Date.now() + 3600_000).toISOString(),
+            },
+            seven_day: {
+              utilization: 20,
+              resets_at: new Date(Date.now() + 86400_000).toISOString(),
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const ctx1 = createMockContext({ userId: 123456 });
+    await handleUsage(ctx1 as any);
+    const ctx2 = createMockContext({ userId: 123456 });
+    await handleUsage(ctx2 as any);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(ctx2._replies[0]?.text).toContain("10.0%");
+  });
+
+  test("handleUsage reports fetch failure", async () => {
+    const { handleUsage } = await import("../handlers/usage");
+    mockReadKeychainToken.mockImplementation(async () => "fake-token");
+    fetchSpy.mockImplementation(async () => {
+      throw new Error("network down");
+    });
+
+    const ctx = createMockContext({ userId: 123456 });
+    await handleUsage(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("failed");
   });
 });

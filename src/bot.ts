@@ -38,6 +38,7 @@ import {
   handlePwd,
   handleCd,
   handleLs,
+  handleUsage,
   handleText,
   handleVoice,
   handlePhoto,
@@ -120,6 +121,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("pwd", handlePwd);
   bot.command("cd", handleCd);
   bot.command("ls", handleLs);
+  bot.command("usage", handleUsage);
 
   // Message handlers
   bot.on("message:text", handleText);
