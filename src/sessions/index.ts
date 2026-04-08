@@ -20,6 +20,7 @@ export {
 
 export {
   registerChatId,
+  removeChatId,
   loadChatIds,
   createNotificationHandler,
   getChatIds,

@@ -14,6 +14,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
 // Mock config before importing handlers - must use mock.module() for it to take effect
 mock.module("../config", () => ({
@@ -22,6 +23,7 @@ mock.module("../config", () => ({
   WORKING_DIR: "/tmp/test",
   OPENAI_API_KEY: "",
   CLAUDE_CLI_PATH: "/usr/local/bin/claude",
+  ...DESKTOP_SPAWN_CONFIG_MOCK,
   RATE_LIMIT_ENABLED: true,
   RATE_LIMIT_REQUESTS: 20,
   RATE_LIMIT_WINDOW: 60,

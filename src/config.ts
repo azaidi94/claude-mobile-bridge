@@ -67,6 +67,36 @@ function findClaudeCli(): string {
 
 export const CLAUDE_CLI_PATH = findClaudeCli();
 
+/** Set to `1` in tests so desktop spawn logic runs without macOS. */
+const DESKTOP_SPAWN_TEST =
+  process.env.TELEGRAM_BOT_DESKTOP_SPAWN_ANY_PLATFORM === "1";
+
+/** `/new` and `/sessions` → Resume open a local Terminal window (macOS only). */
+export function isDesktopClaudeSpawnSupported(): boolean {
+  return process.platform === "darwin" || DESKTOP_SPAWN_TEST;
+}
+
+/** App name for AppleScript: `Terminal` (default) or `iTerm2`. */
+export const DESKTOP_TERMINAL_APP = (
+  process.env.DESKTOP_TERMINAL_APP || "Terminal"
+).trim();
+
+/**
+ * Extra arguments passed to `claude` when opening a desktop session (channel relay).
+ * Override if your relay name differs.
+ */
+export const DESKTOP_CLAUDE_DEFAULT_ARGS =
+  process.env.DESKTOP_CLAUDE_ARGS?.trim() ||
+  "--channels server:channel-relay --dangerously-load-development-channels server:channel-relay";
+
+/**
+ * Optional shell command template for desktop spawn; `{dir}` is replaced with a
+ * single-quoted project path. If unset, the bot runs:
+ * `cd <dir> && exec <CLAUDE_CLI_PATH> <DESKTOP_CLAUDE_DEFAULT_ARGS>`.
+ */
+export const DESKTOP_CLAUDE_COMMAND_TEMPLATE =
+  process.env.DESKTOP_CLAUDE_COMMAND?.trim() || "";
+
 // ============== MCP Configuration ==============
 
 // MCP servers loaded from mcp-config.ts

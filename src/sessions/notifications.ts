@@ -67,10 +67,22 @@ export function registerChatId(chatId: number): void {
 }
 
 /**
+ * Remove a chat from notification targets (e.g. stale ID from disk).
+ */
+export function removeChatId(chatId: number): void {
+  if (chatIds.delete(chatId)) saveChatIds();
+}
+
+/**
  * Get all registered chat IDs.
  */
 export function getChatIds(): Set<number> {
   return chatIds;
+}
+
+function isTelegramChatNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b400\b/.test(msg) && /chat not found/i.test(msg);
 }
 
 /**
@@ -196,7 +208,14 @@ function broadcast(
         parse_mode: "HTML",
         reply_markup: replyMarkup,
       })
-      .catch((err) => warn(`notify send: ${err}`));
+      .catch((err) => {
+        if (isTelegramChatNotFoundError(err)) {
+          removeChatId(chatId);
+          info(`notify: removed unreachable chat_id=${chatId}`);
+          return;
+        }
+        warn(`notify send: ${err}`);
+      });
   }
 }
 

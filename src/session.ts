@@ -5,6 +5,7 @@
  * V1 supports full options (cwd, mcpServers, settingSources, etc.)
  */
 
+import { readFileSync } from "fs";
 import {
   query,
   type Options,
@@ -126,14 +127,37 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 // Available models
 export type ModelId = "claude-opus-4-6" | "opus" | "sonnet" | "haiku";
 
-export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
-  "claude-opus-4-6": "Opus 4.6",
+export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   opus: "Opus 4.6",
   sonnet: "Sonnet 4.6",
   haiku: "Haiku 4.5",
 };
 
-const DEFAULT_MODEL: ModelId = "claude-opus-4-6";
+function readClaudeSettingsModel(): ModelId | undefined {
+  try {
+    const settingsPath = `${process.env.HOME}/.claude/settings.json`;
+    const raw = readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw) as { model?: string };
+    const m = parsed.model;
+    if (!m) return undefined;
+    // Accept short aliases (opus/sonnet/haiku) and full model IDs
+    if (m in MODEL_DISPLAY_NAMES) return m as ModelId;
+    // Full ID like "claude-sonnet-4-6" — accepted even if not in display map
+    if (m.startsWith("claude-")) return m as ModelId;
+    warn(
+      `settings: unrecognised model "${m}" in ~/.claude/settings.json, ignoring`,
+    );
+  } catch {
+    // settings file missing or unreadable — not an error
+  }
+  return undefined;
+}
+
+const envModel = process.env.CLAUDE_MODEL as ModelId | undefined;
+const DEFAULT_MODEL: ModelId =
+  (envModel && envModel in MODEL_DISPLAY_NAMES ? envModel : undefined) ??
+  readClaudeSettingsModel() ??
+  "opus";
 
 class ClaudeSession {
   sessionId: string | null = null;
@@ -179,7 +203,7 @@ class ClaudeSession {
   }
 
   get modelDisplayName(): string {
-    return MODEL_DISPLAY_NAMES[this._model];
+    return MODEL_DISPLAY_NAMES[this._model] ?? this._model;
   }
 
   setModel(model: ModelId): void {
