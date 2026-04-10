@@ -6,7 +6,7 @@
  */
 
 import { watch, type FSWatcher } from "fs";
-import { stat } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
@@ -243,14 +243,17 @@ export class SessionTailer {
   }
 }
 
+/** Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`. */
+function projectDir(cwd: string): string {
+  return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"));
+}
+
 /**
  * Find the JSONL file path for a session ID.
  */
 export async function findSessionJsonlPath(
   sessionId: string,
 ): Promise<string | null> {
-  const { readdir } = await import("fs/promises");
-
   const filename = `${sessionId}.jsonl`;
 
   try {
@@ -276,9 +279,7 @@ export async function findSessionJsonlPath(
 export async function findNewestSessionInDir(
   cwd: string,
 ): Promise<string | null> {
-  const { readdir } = await import("fs/promises");
-  const encoded = cwd.replace(/[/.]/g, "-");
-  const dir = join(PROJECTS_DIR, encoded);
+  const dir = projectDir(cwd);
 
   try {
     const files = await readdir(dir);
@@ -301,13 +302,11 @@ export async function findNewestSessionInDir(
 
 /**
  * Compute the expected JSONL path for a session that may not yet exist on disk.
- * Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`.
  * Used to start a tailer before claude has written its first message — the
  * tailer waits for the file to appear via polling + delayed fs.watch.
  */
 export function getExpectedJsonlPath(cwd: string, sessionId: string): string {
-  const encoded = cwd.replace(/[/.]/g, "-");
-  return join(PROJECTS_DIR, encoded, `${sessionId}.jsonl`);
+  return join(projectDir(cwd), `${sessionId}.jsonl`);
 }
 
 /**
@@ -319,7 +318,6 @@ export async function getLastSessionMessage(
   maxLen = 300,
 ): Promise<{ role: "user" | "assistant"; text: string } | null> {
   try {
-    const { readFile } = await import("fs/promises");
     const raw = await readFile(jsonlPath, "utf-8");
     const lines = raw.split("\n").filter(Boolean);
 

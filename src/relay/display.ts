@@ -164,7 +164,7 @@ function deriveFilenameFromMarkdown(text: string): string {
   return "response.pdf";
 }
 
-function sendTextReply(botApi: Api, chatId: number, text: string): void {
+export function sendTextReply(botApi: Api, chatId: number, text: string): void {
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
     botApi.sendMessage(chatId, formatted, { parse_mode: "HTML" }).catch(() => {

@@ -34,7 +34,7 @@ import { info, debug, warn, elapsedMs } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
-import { sendFile, sendPdfReply } from "../relay/display";
+import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
 
 // ============== Shared Tail Display State ==============
@@ -379,15 +379,12 @@ export async function startWatchingSession(
   // Detect when the desktop session starts a new conversation (new JSONL, same dir).
   // refresh() diffs by name only, so an ID change won't surface as added/removed.
   watchState.idCheckInterval = setInterval(async () => {
+    // Use newest JSONL as source of truth (port file can be stale after /clear).
+    // Without this, reconnecting via JSONL scan would cause the stale port file
+    // ID to differ from the new watchState.sessionId, ping-ponging back.
+    const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
     const current = getSession(targetName);
-    let newId = current?.id;
-
-    // Port file retains stale session ID after /clear (MCP server isn't
-    // restarted); fall back to scanning for the newest JSONL file.
-    if (!newId || newId === watchState.sessionId) {
-      newId =
-        (await findNewestSessionInDir(watchState.sessionDir)) ?? undefined;
-    }
+    const newId = newestJsonl ?? current?.id;
 
     if (!newId || newId === watchState.sessionId) return;
     const newPath = await findSessionJsonlPath(newId);
@@ -430,13 +427,7 @@ export async function startWatchingSession(
       if (msg.send_as_pdf && msg.text) {
         sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
       } else if (msg.text) {
-        const formatted = convertMarkdownToHtml(msg.text);
-        botApi
-          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
-          .catch((err) => {
-            debug(`watch reply: ${err}`);
-            botApi.sendMessage(chatId, msg.text).catch(() => {});
-          });
+        sendTextReply(botApi, chatId, msg.text);
       }
 
       if (msg.files?.length) {
@@ -699,18 +690,11 @@ export function handleTailEvent(
         finalizeTextMessage(botApi, state);
       }
 
-      // Skip sending text if PDF is replacing it
       const ws = state as WatchState;
       if (ws.suppressRelayReplyText) {
         ws.suppressRelayReplyText = false;
       } else {
-        const formatted = convertMarkdownToHtml(event.content);
-        botApi
-          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
-          .catch((err) => {
-            debug(`tail relay_reply: ${err}`);
-            botApi.sendMessage(chatId, event.content).catch(() => {});
-          });
+        sendTextReply(botApi, chatId, event.content);
       }
 
       state.currentTextMsg = null;
