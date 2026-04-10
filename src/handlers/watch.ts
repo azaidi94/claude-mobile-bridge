@@ -130,6 +130,7 @@ export async function sendWatchRelay(
   username: string,
   text: string,
   opId?: string,
+  imagePath?: string,
 ): Promise<boolean> {
   const state = watches.get(chatId);
   if (!state) return false;
@@ -146,6 +147,7 @@ export async function sendWatchRelay(
     chat_id: String(chatId),
     user: username,
     text,
+    ...(imagePath ? { image_path: imagePath } : {}),
   });
   info("watch: relay queued", {
     opId,
@@ -657,6 +659,13 @@ export function handleTailEvent(
     }
 
     case "relay_reply": {
+      // Only RelayDisplayState initialises finalReplyReceived (to false);
+      // WatchState leaves it undefined. Setting it here lets wireRelayDisplay
+      // (TCP path) skip text delivery when the tailer wins the race.
+      if (state.finalReplyReceived !== undefined) {
+        state.finalReplyReceived = true;
+      }
+
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
