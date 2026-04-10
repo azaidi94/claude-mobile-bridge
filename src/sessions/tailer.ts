@@ -268,6 +268,38 @@ export async function findSessionJsonlPath(
 }
 
 /**
+ * Find the session ID with the most recently modified JSONL file for a project.
+ * Used to detect session changes when the port file has a stale session ID
+ * (e.g. after /clear on desktop — the MCP server isn't restarted so the port
+ * file keeps the old ID).
+ */
+export async function findNewestSessionInDir(
+  cwd: string,
+): Promise<string | null> {
+  const { readdir } = await import("fs/promises");
+  const encoded = cwd.replace(/[/.]/g, "-");
+  const dir = join(PROJECTS_DIR, encoded);
+
+  try {
+    const files = await readdir(dir);
+    let newest: { id: string; mtime: number } | null = null;
+
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const s = await stat(join(dir, file)).catch(() => null);
+      if (!s) continue;
+      if (!newest || s.mtimeMs > newest.mtime) {
+        newest = { id: file.slice(0, -6), mtime: s.mtimeMs };
+      }
+    }
+
+    return newest?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Compute the expected JSONL path for a session that may not yet exist on disk.
  * Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`.
  * Used to start a tailer before claude has written its first message — the

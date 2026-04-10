@@ -17,6 +17,7 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
+  findNewestSessionInDir,
   getExpectedJsonlPath,
   type TailEvent,
 } from "../sessions/tailer";
@@ -379,20 +380,29 @@ export async function startWatchingSession(
   // refresh() diffs by name only, so an ID change won't surface as added/removed.
   watchState.idCheckInterval = setInterval(async () => {
     const current = getSession(targetName);
-    if (!current?.id || current.id === watchState.sessionId) return;
-    const newPath = await findSessionJsonlPath(current.id);
+    let newId = current?.id;
+
+    // Port file retains stale session ID after /clear (MCP server isn't
+    // restarted); fall back to scanning for the newest JSONL file.
+    if (!newId || newId === watchState.sessionId) {
+      newId =
+        (await findNewestSessionInDir(watchState.sessionDir)) ?? undefined;
+    }
+
+    if (!newId || newId === watchState.sessionId) return;
+    const newPath = await findSessionJsonlPath(newId);
     if (!newPath) return;
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
       handleTailEvent(botApi, watchState, event),
     );
     watchState.tailer = newTailer;
-    watchState.sessionId = current.id;
+    watchState.sessionId = newId;
     await newTailer.start();
     info("watch: restarted tailer for new conversation", {
       chatId,
       sessionName: targetName,
-      sessionId: current.id,
+      sessionId: newId,
     });
     botApi
       .sendMessage(
@@ -403,7 +413,10 @@ export async function startWatchingSession(
       .catch(() => {});
   }, 5_000);
 
-  // Wire relay client for file attachments (tailer only captures text)
+  // Wire relay client for replies. The JSONL tailer normally handles text
+  // display, but if the tailer is stale (e.g. after /clear) the TCP path
+  // is the only way the reply reaches us. suppressRelayReplyText prevents
+  // the tailer from duplicating text that TCP already delivered.
   const relayClient = await getRelayClient({
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
@@ -412,10 +425,20 @@ export async function startWatchingSession(
   if (relayClient) {
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
+      watchState.suppressRelayReplyText = true;
+
       if (msg.send_as_pdf && msg.text) {
-        watchState.suppressRelayReplyText = true;
         sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+      } else if (msg.text) {
+        const formatted = convertMarkdownToHtml(msg.text);
+        botApi
+          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
+          .catch((err) => {
+            debug(`watch reply: ${err}`);
+            botApi.sendMessage(chatId, msg.text).catch(() => {});
+          });
       }
+
       if (msg.files?.length) {
         for (const filePath of msg.files) {
           sendFile(botApi, chatId, filePath).catch((err) =>
