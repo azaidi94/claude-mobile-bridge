@@ -15,6 +15,8 @@ mock.module("../sessions/watcher", () => ({
 
 import {
   registerChatId,
+  removeChatId,
+  getChatIds,
   createNotificationHandler,
   suppressDirNotifications,
 } from "../sessions/notifications";
@@ -104,5 +106,38 @@ describe("notifications: suppressDirNotifications", () => {
     await Bun.sleep(FLAP_BUFFER_MS + 200);
 
     expect(broadcastsContaining(sendMessage, "inflight").length).toBe(0);
+  });
+
+  test("broadcast drops chat id when Telegram returns chat not found", async () => {
+    const stale = 777_666_001;
+    const good = 777_666_002;
+    removeChatId(stale);
+    removeChatId(good);
+    registerChatId(stale);
+    registerChatId(good);
+
+    const sendMessage = mock((chatId: number) => {
+      if (chatId === stale) {
+        return Promise.reject(
+          new Error(
+            "Call to 'sendMessage' failed! (400: Bad Request: chat not found)",
+          ),
+        );
+      }
+      return Promise.resolve({ message_id: 1 });
+    });
+    const api = { sendMessage } as unknown as Api;
+    const handler = createNotificationHandler(api);
+    const session = makeSession("stale-drop", "/tmp/stale-drop-dir");
+
+    handler({ added: [session], removed: [] });
+    await Bun.sleep(FLAP_BUFFER_MS + 200);
+
+    expect(getChatIds().has(stale)).toBe(false);
+    expect(getChatIds().has(good)).toBe(true);
+    // Broadcast targets every registered chat (including TEST_CHAT_ID from beforeEach).
+    expect(broadcastsContaining(sendMessage, "stale-drop").length).toBe(3);
+
+    removeChatId(good);
   });
 });

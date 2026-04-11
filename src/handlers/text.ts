@@ -65,6 +65,11 @@ export async function handleText(ctx: Context): Promise<void> {
     messagePreview: truncate(message, 120),
   });
 
+  // Pass-through prefix: //cmd → forward /cmd directly to Claude (bypasses bot commands)
+  if (message.startsWith("//")) {
+    message = message.slice(1);
+  }
+
   // 1.5. Check for pending plan feedback
   if (pendingPlanFeedback.has(chatId)) {
     const requestId = pendingPlanFeedback.get(chatId)!;
@@ -234,7 +239,20 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.7. Check for active watch — relay message to desktop session
+  // 1.7. Check for active watch — relay message to desktop session.
+  // Slash commands are rejected: a relayed "/cmd" arrives at the desktop
+  // Claude as plain text (the CLI's slash-command processor only runs on
+  // stdin, not relay messages).
+  if (isWatching(chatId) && message.startsWith("/")) {
+    await ctx.reply(
+      "⚠️ Slash commands don't work during <code>/watch</code> — the desktop session receives text, not CLI commands.\n\n" +
+        "Use <code>/unwatch</code> first, then <code>//" +
+        message.slice(1) +
+        "</code>.",
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
   if (isWatching(chatId)) {
     const relayed = await sendWatchRelay(chatId, username, message, opId);
     if (relayed) {
@@ -313,43 +331,87 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 7.5. Try relay path — inject into running desktop session
-  const relayResult = await sendViaRelay(
-    ctx,
-    message,
-    username,
-    chatId,
-    undefined,
-    opId,
-  );
-  if (relayResult === "delivered") {
-    await auditLog(userId, username, "RELAY", message, "(via relay)");
-    info("request: completed", {
+  // Slash commands must run locally via the SDK (for <local-command-stdout> handling),
+  // not forwarded to a relay target that would treat them as plain text.
+  if (!message.startsWith("/")) {
+    const relayResult = await sendViaRelay(
+      ctx,
+      message,
+      username,
+      chatId,
+      undefined,
+      opId,
+    );
+    if (relayResult === "delivered") {
+      await auditLog(userId, username, "RELAY", message, "(via relay)");
+      info("request: completed", {
+        opId,
+        requestKind: "text",
+        chatId,
+        userId,
+        durationMs: elapsedMs(requestStartedAt),
+        path: "relay",
+      });
+      return;
+    }
+
+    warn("request: relay " + relayResult, {
       opId,
       requestKind: "text",
       chatId,
       userId,
       durationMs: elapsedMs(requestStartedAt),
-      path: "relay",
     });
+    if (relayResult === "failed") {
+      await ctx.reply(
+        "⚠️ Message was sent but the session stopped responding.\n" +
+          "It may still be processing. Check /status or try again.",
+      );
+    } else {
+      await ctx.reply(
+        "❌ No desktop session found.\n\n" +
+          "Use /new to spawn one, or /list to find existing sessions.",
+      );
+    }
     return;
   }
 
-  warn("request: relay " + relayResult, {
-    opId,
-    requestKind: "text",
-    chatId,
-    userId,
-    durationMs: elapsedMs(requestStartedAt),
-  });
-  if (relayResult === "failed") {
-    await ctx.reply(
-      "⚠️ Message was sent but the session stopped responding.\n" +
-        "It may still be processing. Check /status or try again.",
+  // 8. Slash command — run locally via SDK so <local-command-stdout> is handled
+  const typing = startTypingIndicator(ctx);
+  const state = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, state);
+  try {
+    const response = await session.sendMessageStreaming(
+      message,
+      username,
+      userId!,
+      statusCallback,
+      chatId!,
+      ctx,
+      "bypassPermissions",
+      { opId, requestKind: "slash_cmd" },
     );
-  } else {
-    await ctx.reply(
-      "❌ No desktop session found.\n\n" +
-        "Use /new to spawn one, or /list to find existing sessions.",
+    await auditLog(
+      userId,
+      username,
+      "SLASH_CMD",
+      message,
+      response || "(done)",
     );
+    info("request: completed", {
+      opId,
+      requestKind: "slash_cmd",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "local_sdk",
+    });
+  } catch (err) {
+    logError("slash cmd error", err);
+    await ctx.reply(
+      `❌ Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    typing.stop();
   }
 }

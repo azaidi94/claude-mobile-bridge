@@ -14,7 +14,11 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import * as fsPromises from "fs/promises";
 import { mkdtemp, rm } from "fs/promises";
+import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
+
+const realFsAccess = fsPromises.access.bind(fsPromises);
 
 // Mock config before importing handlers
 const MOCK_ALLOWED_USERS = [123456, 789012];
@@ -25,6 +29,7 @@ mock.module("../config", () => ({
   WORKING_DIR: "/tmp/test-working-dir",
   OPENAI_API_KEY: "",
   CLAUDE_CLI_PATH: "/usr/local/bin/claude",
+  ...DESKTOP_SPAWN_CONFIG_MOCK,
   MCP_SERVERS: {},
   ALLOWED_PATHS: ["/tmp"],
   SAFETY_PROMPT: "test prompt",
@@ -255,6 +260,7 @@ mock.module("../session", () => ({
     "claude-sonnet-4-5-20250514": "Sonnet 4.5",
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
+  getModelDisplayName: (m: string) => m,
 }));
 
 // Test helpers
@@ -783,19 +789,33 @@ describe("commands: /status", () => {
 
 describe("commands: /new", () => {
   beforeEach(resetMocks);
-  let bunWhichSpy: ReturnType<typeof spyOn> | null = null;
   let bunSpawnSyncSpy: ReturnType<typeof spyOn> | null = null;
   let bunSleepSpy: ReturnType<typeof spyOn> | null = null;
+  let fsAccessSpy: ReturnType<typeof spyOn> | null = null;
 
   beforeEach(() => {
-    bunWhichSpy = spyOn(Bun, "which").mockReturnValue("/usr/local/bin/cmux");
+    fsAccessSpy = spyOn(fsPromises, "access").mockImplementation(
+      async (path, mode?) => {
+        if (String(path) === "/usr/local/bin/claude") return undefined;
+        return realFsAccess(path, mode);
+      },
+    );
     bunSpawnSyncSpy = spyOn(Bun, "spawnSync").mockImplementation(
       (cmdOrOptions: any) => {
         const cmd = Array.isArray(cmdOrOptions)
           ? cmdOrOptions
           : cmdOrOptions?.cmd || [];
+        if (cmd[0] === "osascript") {
+          return {
+            stdout: Buffer.from(""),
+            stderr: Buffer.alloc(0),
+            success: true,
+            exitCode: 0,
+          } as any;
+        }
         return {
-          stdout: Buffer.from(cmd[1] === "new-workspace" ? "workspace:42" : ""),
+          stdout: Buffer.from(""),
+          stderr: Buffer.alloc(0),
           success: true,
           exitCode: 0,
         } as any;
@@ -805,7 +825,7 @@ describe("commands: /new", () => {
   });
 
   afterEach(() => {
-    bunWhichSpy?.mockRestore();
+    fsAccessSpy?.mockRestore();
     bunSpawnSyncSpy?.mockRestore();
     bunSleepSpy?.mockRestore();
   });
@@ -950,10 +970,17 @@ describe("commands: /new", () => {
 
       expect(mockStartWatchingSession).not.toHaveBeenCalled();
       expect(mockActiveSession).toBeNull();
+      // Spawn edits its initial "Waiting for relay…" status message in
+      // place for every terminal state, so the warning text may land on
+      // sendMessage, ctx.reply, *or* editMessageText depending on the
+      // path — check all three.
       const allSentTexts = [
         ...ctx._replies.map((r: { text: string }) => r.text),
         ...(ctx.api.sendMessage as ReturnType<typeof mock>).mock.calls.map(
           (c: unknown[]) => c[1] as string,
+        ),
+        ...(ctx.api.editMessageText as ReturnType<typeof mock>).mock.calls.map(
+          (c: unknown[]) => c[2] as string,
         ),
       ];
       expect(
@@ -964,6 +991,124 @@ describe("commands: /new", () => {
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ============== buildTerminalSpawnArgs (pure dispatch) ==============
+
+describe("commands: buildTerminalSpawnArgs", () => {
+  let bunWhichSpy: ReturnType<typeof spyOn> | null = null;
+
+  afterEach(() => {
+    bunWhichSpy?.mockRestore();
+    bunWhichSpy = null;
+  });
+
+  test("terminal → osascript do script", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs("terminal", "echo hi", "/tmp/proj");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv[0]).toBe("osascript");
+    expect(r.argv[1]).toBe("-e");
+    expect(r.argv[2]).toContain('tell application "Terminal" to do script');
+    expect(r.argv[2]).toContain("echo hi");
+  });
+
+  test("iterm2 → osascript tell application iTerm2", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs("iterm2", "echo hi", "/tmp/proj");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv[0]).toBe("osascript");
+    expect(r.argv[2]).toContain('tell application "iTerm2"');
+    expect(r.argv[2]).toContain("create window with default profile");
+    expect(r.argv[2]).toContain('write text "echo hi"');
+  });
+
+  test("iterm2 escapes AppleScript quotes and backslashes", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "iterm2",
+      'echo "hi" \\ there',
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    // Inside the osascript string, `"` → `\"` and `\` → `\\`
+    expect(r.argv[2]).toContain('echo \\"hi\\" \\\\ there');
+  });
+
+  test("ghostty → open -na Ghostty.app --args -e /bin/sh -c <cmd>", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "ghostty",
+      "cd /tmp && exec claude --flag",
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv).toEqual([
+      "open",
+      "-na",
+      "Ghostty.app",
+      "--args",
+      "-e",
+      "/bin/sh",
+      "-c",
+      "cd /tmp && exec claude --flag",
+    ]);
+  });
+
+  test("parseTerminalApp normalizes case, aliases, and unknowns", async () => {
+    const { parseTerminalApp } = await import("../config");
+    expect(parseTerminalApp("Terminal")).toBe("terminal");
+    expect(parseTerminalApp("iTerm")).toBe("iterm2");
+    expect(parseTerminalApp("iTerm2")).toBe("iterm2");
+    expect(parseTerminalApp("GHOSTTY")).toBe("ghostty");
+    expect(parseTerminalApp("Ghostty")).toBe("ghostty");
+    expect(parseTerminalApp("cmux")).toBe("cmux");
+    // Unknown falls back to terminal
+    expect(parseTerminalApp("kitty")).toBe("terminal");
+  });
+
+  test("cmux → new-workspace --cwd --command using Bun.which result", async () => {
+    bunWhichSpy = spyOn(Bun, "which").mockImplementation((name: string) =>
+      name === "cmux" ? "/opt/bin/cmux" : null,
+    );
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "cmux",
+      "cd /tmp/proj && exec claude",
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv).toEqual([
+      "/opt/bin/cmux",
+      "new-workspace",
+      "--cwd",
+      "/tmp/proj",
+      "--command",
+      "cd /tmp/proj && exec claude",
+    ]);
+  });
+
+  test("cmux passes --cwd and --command in order, preserving shellCommand verbatim", async () => {
+    bunWhichSpy = spyOn(Bun, "which").mockImplementation((name: string) =>
+      name === "cmux" ? "/opt/bin/cmux" : null,
+    );
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const shellCmd = "cd '/tmp/p' && exec /bin/claude --flag-1 --flag-2";
+    const r = buildTerminalSpawnArgs("cmux", shellCmd, "/tmp/p");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    const cwdIdx = r.argv.indexOf("--cwd");
+    const cmdIdx = r.argv.indexOf("--command");
+    expect(cwdIdx).toBeGreaterThan(-1);
+    expect(cmdIdx).toBeGreaterThan(cwdIdx);
+    expect(r.argv[cwdIdx + 1]).toBe("/tmp/p");
+    expect(r.argv[cmdIdx + 1]).toBe(shellCmd);
   });
 });
 
@@ -1106,18 +1251,23 @@ describe("commands: parsing", () => {
   });
 
   test("new command rejects non-existent path", async () => {
-    const { handleNew } = await import("../handlers/commands");
-    const whichSpy = spyOn(Bun, "which").mockReturnValue("/usr/local/bin/cmux");
-    const ctx = createMockContext({
-      userId: 123456,
-      messageText: "/new /nonexistent/path",
-    });
-
+    const accessSpy = spyOn(fsPromises, "access").mockImplementation(
+      async (path, mode?) => {
+        if (String(path) === "/usr/local/bin/claude") return undefined;
+        return realFsAccess(path, mode);
+      },
+    );
     try {
+      const { handleNew } = await import("../handlers/commands");
+      const ctx = createMockContext({
+        userId: 123456,
+        messageText: "/new /nonexistent/path",
+      });
+
       await handleNew(ctx as any);
       expect(ctx._replies[0]?.text).toContain("Path does not exist");
     } finally {
-      whichSpy.mockRestore();
+      accessSpy.mockRestore();
     }
   });
 
@@ -1698,7 +1848,7 @@ describe("commands: /kill", () => {
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
-  test("handleKill kills active session with SIGTERM", async () => {
+  test("handleKill with sessions shows kill picker", async () => {
     const { handleKill } = await import("../handlers/commands");
     mockSessions.push({
       name: "my-session",
@@ -1707,85 +1857,31 @@ describe("commands: /kill", () => {
       pid: 42,
       source: "desktop",
     });
-    mockActiveSession = {
-      name: "my-session",
-      info: {
-        dir: "/tmp/proj",
-        name: "my-session",
-        pid: 42,
-        source: "desktop",
-      },
-    };
-    mockGetSession.mockImplementation(
-      (name: string) => mockSessions.find((s) => s.name === name) || null,
-    );
     const ctx = createMockContext({ userId: 123456, messageText: "/kill" });
 
     await handleKill(ctx as any);
 
-    expect(processKillSpy).toHaveBeenCalledWith(42, "SIGTERM");
-    expect(mockRemoveSession).toHaveBeenCalledWith("my-session");
-    const killReply = ctx._replies.find((r: any) => r.text?.includes("Killed"));
-    expect(killReply?.text).toContain("my-session");
-    expect(killReply?.text).toContain("pid 42");
-  });
-
-  test("handleKill by name kills specific session", async () => {
-    const { handleKill } = await import("../handlers/commands");
-    mockSessions.push(
-      {
-        name: "session-a",
-        dir: "/tmp/a",
-        lastActivity: Date.now(),
-        pid: 100,
-        source: "desktop",
-      },
-      {
-        name: "session-b",
-        dir: "/tmp/b",
-        lastActivity: Date.now(),
-        pid: 200,
-        source: "desktop",
-      },
+    // /kill always shows a picker — never auto-kills
+    const pickerReply = ctx._replies.find((r: any) => r.options?.reply_markup);
+    expect(pickerReply).toBeDefined();
+    const buttons = (
+      pickerReply?.options?.reply_markup as any
+    )?.inline_keyboard?.flat();
+    const killButtons = buttons?.filter((b: any) =>
+      b.callback_data?.startsWith("kill:"),
     );
-    mockGetSession.mockImplementation(
-      (name: string) => mockSessions.find((s) => s.name === name) || null,
-    );
-    const ctx = createMockContext({
-      userId: 123456,
-      messageText: "/kill session-b",
-    });
-
-    await handleKill(ctx as any);
-
-    expect(processKillSpy).toHaveBeenCalledWith(200, "SIGTERM");
-    expect(mockRemoveSession).toHaveBeenCalledWith("session-b");
-    const killReply = ctx._replies.find((r: any) => r.text?.includes("Killed"));
-    expect(killReply?.text).toContain("session-b");
-  });
-
-  test("handleKill unknown name shows error", async () => {
-    const { handleKill } = await import("../handlers/commands");
-    mockGetSession.mockReturnValue(null);
-    const ctx = createMockContext({
-      userId: 123456,
-      messageText: "/kill nonexistent",
-    });
-
-    await handleKill(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("not found");
+    expect(killButtons?.length).toBeGreaterThanOrEqual(1);
     expect(processKillSpy).not.toHaveBeenCalled();
   });
 
-  test("handleKill with no active session and no sessions shows empty message", async () => {
+  test("handleKill with no sessions shows empty message", async () => {
     const { handleKill } = await import("../handlers/commands");
     mockActiveSession = null;
     const ctx = createMockContext({ userId: 123456, messageText: "/kill" });
 
     await handleKill(ctx as any);
 
-    expect(ctx._replies[0]?.text).toContain("No sessions to kill");
+    expect(ctx._replies[0]?.text).toContain("No active sessions");
   });
 
   test("handleKill with no active session shows kill picker", async () => {

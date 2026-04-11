@@ -57,7 +57,11 @@ export function isRelayProcess(pid: number): boolean {
   }
 }
 
-/** @deprecated Use isRelayProcess instead */
+/**
+ * Raw PID liveness check (signal 0). For relay discovery, prefer
+ * `isRelayProcess` — it also validates the process is actually channel-relay,
+ * so PID reuse can't produce false positives.
+ */
 export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);

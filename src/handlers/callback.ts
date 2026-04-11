@@ -6,7 +6,12 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
+import {
+  session,
+  MODEL_DISPLAY_NAMES,
+  getModelDisplayName,
+  type ModelId,
+} from "../session";
 import { ALLOWED_USERS } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized } from "../security";
@@ -34,9 +39,15 @@ import {
   killSession,
   sendPostKillSessionList,
   offlineSessionCache,
-  spawnCmuxSession,
+  spawnDesktopClaudeSession,
 } from "./commands";
 import { debug, error as logError, info } from "../logger";
+import {
+  getExecuteCommands,
+  startProcess,
+  stopProcess,
+  buildExecuteMenu,
+} from "./execute";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -73,7 +84,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     // Already on this model
     if (session.model === modelId) {
       await ctx.answerCallbackQuery({
-        text: `Already using ${MODEL_DISPLAY_NAMES[modelId]}`,
+        text: `Already using ${getModelDisplayName(modelId)}`,
       });
       return;
     }
@@ -90,14 +101,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
     ]);
 
     await ctx.editMessageText(
-      `🤖 <b>Model:</b> ${MODEL_DISPLAY_NAMES[modelId]}`,
+      `🤖 <b>Model:</b> ${getModelDisplayName(modelId)}`,
       {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: buttons },
       },
     );
     await ctx.answerCallbackQuery({
-      text: `Switched to ${MODEL_DISPLAY_NAMES[modelId]}`,
+      text: `Switched to ${getModelDisplayName(modelId)}`,
     });
 
     // Update pinned status with new model
@@ -285,7 +296,38 @@ export async function handleCallback(ctx: Context): Promise<void> {
     );
     await ctx.answerCallbackQuery();
 
-    await spawnCmuxSession(ctx.api, chatId, s.dir, userId);
+    await spawnDesktopClaudeSession(ctx.api, chatId, s.dir, userId);
+    return;
+  }
+
+  // Handle execute start/stop: execute:{start|stop}:{idx}
+  if (callbackData.startsWith("execute:")) {
+    const [, action, idxStr] = callbackData.split(":");
+    const idx = Number(idxStr);
+    const commands = getExecuteCommands();
+    const cmd = commands[idx];
+
+    if (!cmd || isNaN(idx)) {
+      await ctx.answerCallbackQuery({ text: "Command not found" });
+      return;
+    }
+
+    if (action === "start") {
+      startProcess(idx, cmd);
+      await ctx.answerCallbackQuery({ text: `▶ Started ${cmd.name}` });
+    } else {
+      stopProcess(idx);
+      await ctx.answerCallbackQuery({ text: `■ Stopped ${cmd.name}` });
+    }
+
+    // Refresh the menu in-place
+    const { text, keyboard } = buildExecuteMenu(commands);
+    await ctx
+      .editMessageText(text, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      })
+      .catch((err) => debug(`execute menu refresh: ${err}`));
     return;
   }
 

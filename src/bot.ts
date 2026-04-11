@@ -39,6 +39,7 @@ import {
   handleCd,
   handleLs,
   handleUsage,
+  handleExecute,
   handleText,
   handleVoice,
   handlePhoto,
@@ -122,6 +123,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("cd", handleCd);
   bot.command("ls", handleLs);
   bot.command("usage", handleUsage);
+  bot.command("execute", handleExecute);
 
   // Message handlers
   bot.on("message:text", handleText);

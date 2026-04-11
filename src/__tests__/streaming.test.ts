@@ -7,6 +7,7 @@
 
 import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
 import { unlink, writeFile } from "fs/promises";
+import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
 // Mock config before importing handlers - must include all exports to avoid conflicts
 mock.module("../config", () => ({
@@ -15,6 +16,7 @@ mock.module("../config", () => ({
   WORKING_DIR: "/tmp/test-working-dir",
   OPENAI_API_KEY: "",
   CLAUDE_CLI_PATH: "/usr/local/bin/claude",
+  ...DESKTOP_SPAWN_CONFIG_MOCK,
   MCP_SERVERS: {},
   ALLOWED_PATHS: ["/tmp"],
   SAFETY_PROMPT: "test prompt",

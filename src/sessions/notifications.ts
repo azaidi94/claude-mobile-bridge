@@ -39,14 +39,23 @@ const pending = new Map<string, PendingNotification>();
 const suppressedDirs = new Map<string, Timer>();
 
 /**
- * Suppress add/remove notifications for a session dir for KILL_SUPPRESS_MS.
- * Called by killSession to prevent spurious online/offline notifications while
- * the relay child winds down.
+ * Suppress add/remove notifications for a session dir.
+ *
+ * Called by killSession (default `KILL_SUPPRESS_MS`) to prevent spurious
+ * online/offline notifications while the relay child winds down.
+ *
+ * Also called by `spawnDesktopClaudeSession` with a longer window
+ * (~150s, just beyond the spawn detection deadline) so the background
+ * watcher's redundant "🟢 online" broadcast doesn't stack on top of the
+ * spawn flow's own status message.
  */
-export function suppressDirNotifications(dir: string): void {
+export function suppressDirNotifications(
+  dir: string,
+  durationMs: number = KILL_SUPPRESS_MS,
+): void {
   const existing = suppressedDirs.get(dir);
   if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => suppressedDirs.delete(dir), KILL_SUPPRESS_MS);
+  const timer = setTimeout(() => suppressedDirs.delete(dir), durationMs);
   suppressedDirs.set(dir, timer);
 
   // Also cancel any in-flight pending notification for this dir.
@@ -67,10 +76,22 @@ export function registerChatId(chatId: number): void {
 }
 
 /**
+ * Remove a chat from notification targets (e.g. stale ID from disk).
+ */
+export function removeChatId(chatId: number): void {
+  if (chatIds.delete(chatId)) saveChatIds();
+}
+
+/**
  * Get all registered chat IDs.
  */
 export function getChatIds(): Set<number> {
   return chatIds;
+}
+
+function isTelegramChatNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b400\b/.test(msg) && /chat not found/i.test(msg);
 }
 
 /**
@@ -196,7 +217,14 @@ function broadcast(
         parse_mode: "HTML",
         reply_markup: replyMarkup,
       })
-      .catch((err) => warn(`notify send: ${err}`));
+      .catch((err) => {
+        if (isTelegramChatNotFoundError(err)) {
+          removeChatId(chatId);
+          info(`notify: removed unreachable chat_id=${chatId}`);
+          return;
+        }
+        warn(`notify send: ${err}`);
+      });
   }
 }
 

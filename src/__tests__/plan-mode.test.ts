@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
+import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
 // Mock config before importing handlers
 const MOCK_ALLOWED_USERS = [123456, 789012];
@@ -16,6 +17,7 @@ mock.module("../config", () => ({
   WORKING_DIR: "/tmp/test-working-dir",
   OPENAI_API_KEY: "",
   CLAUDE_CLI_PATH: "/usr/local/bin/claude",
+  ...DESKTOP_SPAWN_CONFIG_MOCK,
   MCP_SERVERS: {},
   ALLOWED_PATHS: ["/tmp"],
   SAFETY_PROMPT: "test prompt",
@@ -199,6 +201,7 @@ mock.module("../session", () => ({
     "claude-sonnet-4-5-20250514": "Sonnet 4.5",
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
+  getModelDisplayName: (m: string) => m,
 }));
 
 // Mock security - must include all exports to avoid breaking other tests

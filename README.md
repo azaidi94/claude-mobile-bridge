@@ -68,13 +68,33 @@ claude mcp add -s user channel-relay -- bun run ~/Dev/claude-mobile-bridge/src/m
 claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay
 ```
 
+> **Development-channels prompt:** Claude Code will show a menu (“I am using this for local development” vs “Exit”). Choose **1** and press **Enter**. This is required by the CLI; Telegram/`/new` cannot automate it.
+
+### Remote use (you are not at the Mac)
+
+`/new` opens **Terminal on the machine running the bot**. If nobody can click through the dev-channels menu:
+
+1. **Leave a relay-enabled desktop session running** before you go (`/list` → use that session from Telegram). No Terminal prompt until you restart Claude.
+2. **Screen Sharing / VNC / Tailscale** to the Mac once to confirm the menu when you must spawn a new session.
+3. **Auto-confirm (headless-friendly):** use the bundled expect wrapper and point `.env` at it (requires `/usr/bin/expect`, standard on macOS):
+
+```bash
+# Absolute path to this repo on the Mac that runs the bot
+export DESKTOP_CLAUDE_COMMAND='/Users/you/claude-mobile-bridge/scripts/claude-relay-launch.sh {dir}'
+# If `claude` is not on PATH in Terminal.app, set one of:
+# export CLAUDE=/Users/you/.local/bin/claude
+# export CLAUDE_CLI_PATH=/Users/you/.local/bin/claude
+```
+
+The script answers **1** when it sees the “local development” line, then keeps Claude running. If Anthropic changes the prompt text, update the script or fall back to options 1–2.
+
 > **Tip:** Add a shell alias to avoid typing this each time:
 >
 > ```bash
 > alias cc='claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay'
 > ```
 >
-> `/new` uses this `cc` command inside `cmux`, so make sure the alias or an equivalent wrapper is available in the shell `cmux` starts.
+> `/new` runs `claude` with those flags in a new Terminal (or iTerm) window. Use `DESKTOP_CLAUDE_COMMAND` in `.env` if you prefer a custom shell line (see `.env.example`).
 
 **How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. If no relay-enabled desktop session is found, use `/new` to spawn one or `/list` to pick an existing session.
 
@@ -89,7 +109,7 @@ claude                    # Current directory
 claude --cwd ~/code/foo   # Specific directory
 ```
 
-Or spawn a relay-enabled desktop session directly from Telegram with `/new` (requires [cmux](https://cmux.dev)):
+Or spawn a relay-enabled desktop session from Telegram with `/new` (**macOS**):
 
 ```
 /new                      # CLAUDE_WORKING_DIR
@@ -99,14 +119,24 @@ Or spawn a relay-enabled desktop session directly from Telegram with `/new` (req
 
 > Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/new`.
 
-Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume spawns a new cmux session in that directory.
+`/new` opens a new window in **Terminal.app** by default. Pick a different
+terminal via `DESKTOP_TERMINAL_APP` in `.env`:
+
+| Value      | Launches                                                 |
+| ---------- | -------------------------------------------------------- |
+| `Terminal` | macOS Terminal.app (default)                             |
+| `iTerm2`   | iTerm2 via AppleScript                                   |
+| `Ghostty`  | Ghostty.app                                              |
+| `cmux`     | cmux.app workspace — must have the `cmux` CLI on `$PATH` |
+
+Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume opens Terminal in that directory and starts `claude` with the channel-relay flags (same as `/new`).
 
 ## Development
 
 ```bash
 bun run dev          # Run with file watching
 bun run typecheck    # TypeScript type checking
-bun test             # Run all tests
+bun run test         # Run all tests (isolated per-file to avoid state leaks)
 ```
 
 ## Running as a Service (macOS)

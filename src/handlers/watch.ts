@@ -68,6 +68,15 @@ interface WatchState extends TailDisplayState {
   relayCleanup?: () => void;
   /** Interval that detects when the desktop session starts a new conversation. */
   idCheckInterval?: Timer;
+  /**
+   * Spawn-initiated watches seed `sessionId` with the most-recent JSONL
+   * fallback (watcher.ts:347), because the freshly-launched claude process
+   * hasn't written its real JSONL yet. The first id-change in
+   * `idCheckInterval` is therefore the arrival of the real id, not a
+   * genuine conversation switch — suppress the "reconnected" broadcast
+   * once, then resume normal behavior.
+   */
+  suppressNextIdChangeNotice?: boolean;
 }
 
 // Active watches: chatId -> WatchState
@@ -372,6 +381,11 @@ export async function startWatchingSession(
     currentTextContent: "",
     lastTextUpdate: 0,
     segmentDone: true,
+    // Spawn-initiated watches: the seeded sessionId is almost certainly
+    // the watcher's stale-JSONL fallback for this dir. When the real id
+    // shows up (after the first user prompt) we restart the tailer but
+    // skip the "reconnected" broadcast — there's no prior conversation.
+    suppressNextIdChangeNotice: reason === "spawn",
   };
   watches.set(chatId, watchState);
   await tailer.start();
@@ -396,11 +410,15 @@ export async function startWatchingSession(
     watchState.tailer = newTailer;
     watchState.sessionId = newId;
     await newTailer.start();
+    const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
+    watchState.suppressNextIdChangeNotice = false;
     info("watch: restarted tailer for new conversation", {
       chatId,
       sessionName: targetName,
       sessionId: newId,
+      suppressedNotice: wasSpawnSeed,
     });
+    if (wasSpawnSeed) return;
     botApi
       .sendMessage(
         chatId,

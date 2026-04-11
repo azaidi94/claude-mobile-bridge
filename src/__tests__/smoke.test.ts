@@ -14,6 +14,7 @@ import {
   afterEach,
   spyOn,
 } from "bun:test";
+import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
 // Mock grammy before importing bot
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,6 +88,7 @@ mock.module("../config", () => ({
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
   BOT_DIR: "/tmp/test-bot-dir",
+  ...DESKTOP_SPAWN_CONFIG_MOCK,
 }));
 
 // Mock handlers to avoid complex dependencies
@@ -114,6 +116,7 @@ mock.module("../handlers", () => ({
   handleCd: mock(() => {}),
   handleLs: mock(() => {}),
   handleUsage: mock(() => {}),
+  handleExecute: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),

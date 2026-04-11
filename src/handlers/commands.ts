@@ -6,10 +6,21 @@
  */
 
 import { readdir, stat, access } from "fs/promises";
+import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
-import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
+import {
+  WORKING_DIR,
+  ALLOWED_USERS,
+  RESTART_FILE,
+  findClaudeCli,
+  isDesktopClaudeSpawnSupported,
+  DESKTOP_CLAUDE_DEFAULT_ARGS,
+  DESKTOP_CLAUDE_COMMAND_TEMPLATE,
+  DESKTOP_TERMINAL_APP,
+  type TerminalApp,
+} from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
@@ -64,21 +75,164 @@ export const offlineSessionCache = new Map<
 
 let offlineSessionGen = 0;
 
-const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
+function bashSingleQuotedPath(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
+function escapeAppleScriptDoubleQuoted(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+async function resolveClaudePathForSpawn(): Promise<string | null> {
+  const p = findClaudeCli();
+  try {
+    await access(p);
+    return p;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Resolve the cmux binary path.
- * Checks PATH first, then falls back to the macOS app bundle location.
+ * Shared preflight for /new, /sessions → Resume, and `spawnDesktopClaudeSession`.
+ * Replies with a user-facing error if desktop spawn can't run on this machine
+ * or Claude CLI isn't installed; returns the resolved claude path on success.
  */
-async function getCmuxBin(): Promise<string | null> {
+async function assertDesktopSpawnReady(
+  reply: (text: string) => Promise<unknown>,
+): Promise<string | null> {
+  if (!isDesktopClaudeSpawnSupported()) {
+    await reply(
+      "❌ <b>macOS required</b>\n\nDesktop Claude spawn opens Terminal / iTerm on the bot host.",
+    );
+    return null;
+  }
+  const claudePath = await resolveClaudePathForSpawn();
+  if (!claudePath) {
+    await reply(
+      "❌ Claude CLI not found. Install Claude Code or set <code>CLAUDE_CLI_PATH</code>.",
+    );
+    return null;
+  }
+  return claudePath;
+}
+
+/** Fallback path for the cmux CLI when it isn't on PATH (installed via cmux.app). */
+const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
+
+function resolveCmuxBin(): string | null {
   const onPath = Bun.which("cmux");
   if (onPath) return onPath;
   try {
-    await access(CMUX_APP_BIN);
+    statSync(CMUX_APP_BIN);
     return CMUX_APP_BIN;
   } catch {
     return null;
   }
+}
+
+function buildDesktopShellCommand(
+  explicitPath: string,
+  claudePath: string,
+): string {
+  if (DESKTOP_CLAUDE_COMMAND_TEMPLATE) {
+    return DESKTOP_CLAUDE_COMMAND_TEMPLATE.replace(
+      /\{dir\}/g,
+      bashSingleQuotedPath(explicitPath),
+    );
+  }
+  return `cd ${bashSingleQuotedPath(explicitPath)} && exec ${bashSingleQuotedPath(claudePath)} ${DESKTOP_CLAUDE_DEFAULT_ARGS}`;
+}
+
+/**
+ * Pure dispatch from a `TerminalApp` to the argv needed to spawn a new
+ * terminal window running `shellCommand` in `explicitPath`. Exported for
+ * unit tests — prod code should call `openMacOSTerminalWithCommand`.
+ */
+export function buildTerminalSpawnArgs(
+  terminalApp: TerminalApp,
+  shellCommand: string,
+  explicitPath: string,
+): { argv: string[] } | { error: string } {
+  switch (terminalApp) {
+    case "ghostty":
+      return {
+        argv: [
+          "open",
+          "-na",
+          "Ghostty.app",
+          "--args",
+          "-e",
+          "/bin/sh",
+          "-c",
+          shellCommand,
+        ],
+      };
+    case "cmux": {
+      const cmuxBin = resolveCmuxBin();
+      if (!cmuxBin) {
+        return {
+          error: "cmux CLI not found. Install cmux.app from https://cmux.dev",
+        };
+      }
+      return {
+        argv: [
+          cmuxBin,
+          "new-workspace",
+          "--cwd",
+          explicitPath,
+          "--command",
+          shellCommand,
+        ],
+      };
+    }
+    case "iterm2": {
+      const esc = escapeAppleScriptDoubleQuoted(shellCommand);
+      const script = [
+        `tell application "iTerm2"`,
+        `  activate`,
+        `  tell (create window with default profile)`,
+        `    tell current session of current tab of current window`,
+        `      write text "${esc}"`,
+        `    end tell`,
+        `  end tell`,
+        `end tell`,
+      ].join("\n");
+      return { argv: ["osascript", "-e", script] };
+    }
+    case "terminal":
+      return {
+        argv: [
+          "osascript",
+          "-e",
+          `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`,
+        ],
+      };
+  }
+}
+
+/**
+ * Open a desktop terminal with a shell command (macOS). Wraps
+ * `buildTerminalSpawnArgs` + `Bun.spawnSync` for the live call site.
+ */
+function openMacOSTerminalWithCommand(
+  shellCommand: string,
+  explicitPath: string,
+): {
+  ok: boolean;
+  stderr: string;
+} {
+  const built = buildTerminalSpawnArgs(
+    DESKTOP_TERMINAL_APP,
+    shellCommand,
+    explicitPath,
+  );
+  if ("error" in built) {
+    return { ok: false, stderr: built.error };
+  }
+  const r = Bun.spawnSync(built.argv);
+  const stderr = (r.stderr ?? Buffer.alloc(0)).toString().trim();
+  return { ok: r.exitCode === 0, stderr };
 }
 
 function relayIdentity(pf: {
@@ -89,6 +243,15 @@ function relayIdentity(pf: {
   if (pf.sessionId) return `session:${pf.sessionId}`;
   if (pf.ppid !== undefined) return `ppid:${pf.ppid}`;
   return `pid:${pf.pid}`;
+}
+
+/** Match relay port `cwd` to spawn target (symlinks / trailing slashes). */
+function tryRealpathSync(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p.replace(/\/+$/, "") || p;
+  }
 }
 
 /**
@@ -130,13 +293,13 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/list - Show all sessions\n` +
       `/switch &lt;name&gt; - Switch to session\n` +
       `/sessions - Browse offline sessions\n` +
-      `/new [path] - Spawn desktop session (cmux)\n\n` +
+      `/new [path] - Open desktop Claude (Terminal)\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +
       `/unwatch - Stop watching\n\n` +
       `<b>Control:</b>\n` +
       `/stop - Interrupt current query\n` +
-      `/kill [name] - Terminate session (SIGTERM)\n` +
+      `/kill - Terminate a session (pick from list)\n` +
       `/retry - Retry last message\n` +
       `/status - Show session details\n` +
       `/model - Switch model\n` +
@@ -147,8 +310,11 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/ls [path] - List directory\n\n` +
       `<b>Quota:</b>\n` +
       `/usage - Show session &amp; weekly usage\n\n` +
+      `<b>Scripts:</b>\n` +
+      `/execute - Start/stop configured scripts\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt active query\n` +
+      `• Prefix with <code>//</code> to forward slash commands to Claude (e.g. <code>//clear</code>, <code>//compact</code>)\n` +
       `• Say "think" for extended reasoning\n` +
       `• Send voice/photo/files directly\n` +
       `• Use /new to reset conversation`,
@@ -157,34 +323,72 @@ export async function handleHelp(ctx: Context): Promise<void> {
 }
 
 /**
- * Core cmux spawn logic — shared by /new command and sess_resume callback.
- *
- * Spawns a new cmux workspace in `explicitPath`, waits for the relay to come
- * online, identifies the new session, sets it as active, and starts watching.
- * All status messages are sent via `api.sendMessage(chatId, text)`.
+ * Opens a macOS Terminal (or iTerm) in `explicitPath` running Claude with relay
+ * flags, then waits for the channel relay and attaches watch — shared by /new and
+ * /sessions → Resume.
  */
-export async function spawnCmuxSession(
+export async function spawnDesktopClaudeSession(
   api: Context["api"],
   chatId: number,
   explicitPath: string,
   userId: number,
 ): Promise<void> {
-  const cmux = await getCmuxBin();
-  if (!cmux) {
-    await api.sendMessage(chatId, "❌ cmux not found. Install from cmux.dev");
-    return;
-  }
+  const claudePath = await assertDesktopSpawnReady((text) =>
+    api.sendMessage(chatId, text, { parse_mode: "HTML" }),
+  );
+  if (!claudePath) return;
 
   const opId = createOpId("spawn");
   const spawnStartedAt = Date.now();
   info("spawn: started", { opId, chatId, userId, explicitPath });
 
   try {
-    const beforeRelays = (await scanPortFiles(true)).filter(
-      (pf) => pf.cwd === explicitPath,
+    try {
+      await access(explicitPath);
+    } catch {
+      warn("spawn: cwd not found or inaccessible", {
+        opId,
+        chatId,
+        userId,
+        explicitPath,
+        durationMs: elapsedMs(spawnStartedAt),
+      });
+      await api.sendMessage(
+        chatId,
+        "❌ That project path is missing or not readable on the machine running the bot.\n\n" +
+          `<code>${escapeHtml(explicitPath)}</code>\n\n` +
+          "Paths must exist on the Mac where the bot runs.",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    const spawnCwd = tryRealpathSync(explicitPath);
+    info("spawn: canonical cwd", { opId, spawnCwd });
+
+    // Memoize realpath — `spawnCwd` is stable, but every port-file /
+    // session `cwd` we compare against would otherwise be re-canonicalized
+    // on every 2s poll iteration.
+    const realpathCache = new Map<string, string>();
+    const canonical = (p: string): string => {
+      const hit = realpathCache.get(p);
+      if (hit !== undefined) return hit;
+      const r = tryRealpathSync(p);
+      realpathCache.set(p, r);
+      return r;
+    };
+
+    const [initialPortFiles, initialSessions] = await Promise.all([
+      scanPortFiles(true),
+      Promise.resolve(getSessions()),
+    ]);
+    const beforeRelays = initialPortFiles.filter(
+      (pf) => canonical(pf.cwd) === spawnCwd,
     );
     const knownRelayIds = new Set(beforeRelays.map(relayIdentity));
-    const beforeSessions = getSessions().filter((s) => s.dir === explicitPath);
+    const beforeSessions = initialSessions.filter(
+      (s) => canonical(s.dir) === spawnCwd,
+    );
     const knownSessionIds = new Set(
       beforeSessions.map((s) => s.id).filter(Boolean),
     );
@@ -194,37 +398,53 @@ export async function spawnCmuxSession(
         .filter((pid): pid is number => pid !== undefined),
     );
 
-    const wsResult = Bun.spawnSync([
-      cmux,
-      "new-workspace",
-      "--cwd",
-      explicitPath,
-    ]);
-    const wsOutput = wsResult.stdout.toString().trim();
-    const wsMatch = wsOutput.match(/workspace:(\d+)/);
-    if (!wsMatch) {
-      warn("spawn: failed to create workspace", {
+    // Watcher would otherwise broadcast a redundant "🟢 online" for this
+    // dir — spawn flow edits its own status bubble once the relay appears.
+    // Suppression outlives the 120s poll deadline.
+    suppressDirNotifications(spawnCwd, 150_000);
+
+    const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
+    const term = openMacOSTerminalWithCommand(shellCmd, explicitPath);
+    if (!term.ok) {
+      warn("spawn: osascript failed", {
         opId,
         chatId,
         userId,
         explicitPath,
+        stderr: term.stderr.slice(0, 500),
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(chatId, "❌ Failed to create cmux workspace.");
+      await api.sendMessage(
+        chatId,
+        "❌ Could not open Terminal.\n\n" +
+          `<code>${escapeHtml(term.stderr || "osascript failed")}</code>`,
+        { parse_mode: "HTML" },
+      );
       return;
     }
-    const workspaceId = `workspace:${wsMatch[1]}`;
 
-    await Bun.sleep(1000);
-    Bun.spawnSync([cmux, "send", "--workspace", workspaceId, "cc\n"]);
+    // setWorkingDir is deferred to the success branch — osascript can
+    // report success even if Terminal silently fails to launch
+    // (Accessibility denied, profile issue), so we only commit the dir
+    // after a port file confirms a live claude in it.
+    const statusMsg = await api.sendMessage(
+      chatId,
+      "⏳ Terminal opened — starting Claude.\n\n" +
+        "<b>At the Mac:</b> if you see the development-channels menu, choose <b>1</b> (local development) and press Enter.\n\n" +
+        "<b>Remote only:</b> set <code>DESKTOP_CLAUDE_COMMAND</code> to <code>…/scripts/claude-relay-launch.sh {dir}</code> (see README) so <code>expect</code> can send that for you.\n\n" +
+        `Once the relay connects, <code>/pwd</code> and <code>/ls</code> will switch to this folder.\n\nWaiting for relay…`,
+      { parse_mode: "HTML" },
+    );
+    const editStatus = (text: string): Promise<unknown> =>
+      api
+        .editMessageText(chatId, statusMsg.message_id, text, {
+          parse_mode: "HTML",
+        })
+        .catch(() => {});
 
-    // Accept dev channels prompt
-    await Bun.sleep(5000);
-    Bun.spawnSync([cmux, "send-key", "--workspace", workspaceId, "Enter"]);
+    await Bun.sleep(4000);
 
-    await api.sendMessage(chatId, "⏳ Waiting for Claude to start...");
-
-    const deadline = Date.now() + 20_000;
+    const deadline = Date.now() + 120_000;
     let spawnedRelay: Awaited<ReturnType<typeof scanPortFiles>>[number] | null =
       null;
     while (Date.now() < deadline) {
@@ -232,7 +452,8 @@ export async function spawnCmuxSession(
       const portFiles = await scanPortFiles(true);
       const newRelays = portFiles.filter(
         (pf) =>
-          pf.cwd === explicitPath && !knownRelayIds.has(relayIdentity(pf)),
+          canonical(pf.cwd) === spawnCwd &&
+          !knownRelayIds.has(relayIdentity(pf)),
       );
       if (newRelays.length > 1) {
         warn("spawn: ambiguous new relays", {
@@ -243,8 +464,7 @@ export async function spawnCmuxSession(
           durationMs: elapsedMs(spawnStartedAt),
           candidateCount: newRelays.length,
         });
-        await api.sendMessage(
-          chatId,
+        await editStatus(
           "⚠️ Session spawned, but multiple new relays appeared.\n" +
             "Use /list to pick the right session.",
         );
@@ -264,16 +484,15 @@ export async function spawnCmuxSession(
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
-        chatId,
-        "⚠️ Session spawned but relay not detected yet. Check cmux and try /list.",
+      await editStatus(
+        "⚠️ Relay not detected in time (~2 min). In Terminal: finish login, approve dev channels, and ensure MCP <code>channel-relay</code> is registered for that shell. Then <code>/list</code> or <code>/watch</code>.",
       );
       return;
     }
 
     await forceRefresh();
     const sessions = getSessions();
-    const dirSessions = sessions.filter((s) => s.dir === explicitPath);
+    const dirSessions = sessions.filter((s) => canonical(s.dir) === spawnCwd);
     let spawned =
       (spawnedRelay.sessionId
         ? dirSessions.find((s) => s.id === spawnedRelay?.sessionId)
@@ -298,8 +517,14 @@ export async function spawnCmuxSession(
     }
 
     if (spawned) {
+      // Relay confirmed live — now safe to update working dir, activate
+      // the session, and start watching.
+      session.setWorkingDir(spawnCwd);
       setActiveSession(spawned.name);
       startWatchingSession(api, chatId, spawned.name, "spawn").catch(() => {});
+      await editStatus(
+        `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
+      );
       info("spawn: completed", {
         opId,
         chatId,
@@ -317,8 +542,7 @@ export async function spawnCmuxSession(
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
-        chatId,
+      await editStatus(
         "⚠️ Session spawned, but could not uniquely identify the new session.\n" +
           "Use /list to find it.",
       );
@@ -339,7 +563,7 @@ export async function spawnCmuxSession(
 }
 
 /**
- * /new [path] - Spawn a desktop Claude session in cmux.
+ * /new [path] - Open Terminal (or iTerm) with Claude in the project directory.
  */
 export async function handleNew(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -352,15 +576,10 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  if (!(await getCmuxBin())) {
-    await ctx.reply(
-      "❌ <b>cmux required</b>\n\n" +
-        "<code>/new</code> opens a desktop Claude terminal via cmux.\n" +
-        'Install from: <a href="https://cmux.dev">cmux.dev</a>',
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
+  const ready = await assertDesktopSpawnReady((t) =>
+    ctx.reply(t, { parse_mode: "HTML" }),
+  );
+  if (!ready) return;
 
   const text = ctx.message?.text || "";
   const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
@@ -385,7 +604,7 @@ export async function handleNew(ctx: Context): Promise<void> {
     },
   );
 
-  await spawnCmuxSession(ctx.api, chatId, explicitPath, userId!);
+  await spawnDesktopClaudeSession(ctx.api, chatId, explicitPath, userId!);
 }
 
 /**
@@ -520,33 +739,9 @@ export async function handleKill(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  const text = ctx.message?.text || "";
-  const targetName = text.split(/\s+/).slice(1).join(" ").trim();
-
-  // Resolve target: explicit name > active session
-  const resolvedName = targetName || getActiveSession()?.name;
-
-  if (resolvedName) {
-    const target = getSession(resolvedName);
-    if (!target) {
-      await ctx.reply(`❌ Session "${escapeHtml(resolvedName)}" not found.`, {
-        parse_mode: "HTML",
-      });
-      return;
-    }
-    const { pid } = await killSession(target, chatId, ctx.api);
-    const pidStr = pid ? ` (pid ${pid})` : "";
-    await ctx.reply(`💀 Killed <b>${escapeHtml(resolvedName)}</b>${pidStr}`, {
-      parse_mode: "HTML",
-    });
-    await sendPostKillSessionList(ctx, chatId, "switch");
-    return;
-  }
-
-  // No name and no active session — show kill picker
   const sessions = getSessions();
   if (sessions.length === 0) {
-    await ctx.reply("No sessions to kill.");
+    await ctx.reply("No active sessions.");
     return;
   }
   await sendPostKillSessionList(ctx, chatId, "kill");
@@ -892,15 +1087,10 @@ export async function handleSessions(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  if (!(await getCmuxBin())) {
-    await ctx.reply(
-      "❌ <b>cmux required</b>\n\n" +
-        "<code>/sessions</code> resumes sessions via cmux.\n" +
-        'Install from: <a href="https://cmux.dev">cmux.dev</a>',
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
+  const ready = await assertDesktopSpawnReady((t) =>
+    ctx.reply(t, { parse_mode: "HTML" }),
+  );
+  if (!ready) return;
 
   const allSessions = await listOfflineSessions();
 

@@ -5,6 +5,7 @@
  * V1 supports full options (cwd, mcpServers, settingSources, etc.)
  */
 
+import { readFileSync } from "fs";
 import {
   query,
   type Options,
@@ -121,19 +122,55 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 }
 
 /**
- * Manages Claude Code sessions using the Agent SDK V1.
+ * Model identifiers accepted from the /model picker, CLAUDE_MODEL env var,
+ * and ~/.claude/settings.json. Short aliases map to display labels via
+ * MODEL_DISPLAY_NAMES; full Anthropic IDs pass through to the CLI as-is.
  */
-// Available models
-export type ModelId = "claude-opus-4-6" | "opus" | "sonnet" | "haiku";
+type ShortModelId = "opus" | "sonnet" | "haiku";
+export type ModelId = ShortModelId | `claude-${string}`;
 
-export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
-  "claude-opus-4-6": "Opus 4.6",
+export const MODEL_DISPLAY_NAMES = {
   opus: "Opus 4.6",
   sonnet: "Sonnet 4.6",
   haiku: "Haiku 4.5",
-};
+} as const satisfies Record<ShortModelId, string>;
 
-const DEFAULT_MODEL: ModelId = "claude-opus-4-6";
+/** Safe display name for any ModelId — short alias or full claude-* ID. */
+export function getModelDisplayName(m: ModelId): string {
+  return m in MODEL_DISPLAY_NAMES ? MODEL_DISPLAY_NAMES[m as ShortModelId] : m;
+}
+
+function readClaudeSettingsModel(): ModelId | undefined {
+  try {
+    const settingsPath = `${process.env.HOME}/.claude/settings.json`;
+    const raw = readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw) as { model?: string };
+    const m = parsed.model;
+    if (!m) return undefined;
+    // Accept short aliases (opus/sonnet/haiku) and full model IDs
+    if (m in MODEL_DISPLAY_NAMES) return m as ModelId;
+    // Full ID like "claude-sonnet-4-6" — accepted even if not in display map
+    if (m.startsWith("claude-")) return m as ModelId;
+    warn(
+      `settings: unrecognised model "${m}" in ~/.claude/settings.json, ignoring`,
+    );
+  } catch {
+    // settings file missing or unreadable — not an error
+  }
+  return undefined;
+}
+
+function isAcceptableModelId(m: string): boolean {
+  return m in MODEL_DISPLAY_NAMES || m.startsWith("claude-");
+}
+
+const envModel = process.env.CLAUDE_MODEL?.trim() || undefined;
+const DEFAULT_MODEL: ModelId =
+  (envModel && isAcceptableModelId(envModel)
+    ? (envModel as ModelId)
+    : undefined) ??
+  readClaudeSettingsModel() ??
+  "opus";
 
 class ClaudeSession {
   sessionId: string | null = null;
@@ -179,7 +216,7 @@ class ClaudeSession {
   }
 
   get modelDisplayName(): string {
-    return MODEL_DISPLAY_NAMES[this._model];
+    return getModelDisplayName(this._model);
   }
 
   setModel(model: ModelId): void {

@@ -8,7 +8,7 @@ import { homedir } from "os";
 import { resolve, dirname } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
-import { info, debug, error as logError } from "./logger";
+import { debug, warn, error as logError } from "./logger";
 
 // ============== Environment Setup ==============
 
@@ -53,7 +53,7 @@ export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 // ============== Claude CLI Path ==============
 
 // Auto-detect from PATH, or use environment override
-function findClaudeCli(): string {
+export function findClaudeCli(): string {
   const envPath = process.env.CLAUDE_CLI_PATH;
   if (envPath) return envPath;
 
@@ -66,6 +66,65 @@ function findClaudeCli(): string {
 }
 
 export const CLAUDE_CLI_PATH = findClaudeCli();
+
+/** Set to `1` in tests so desktop spawn logic runs without macOS. */
+const DESKTOP_SPAWN_TEST =
+  process.env.TELEGRAM_BOT_DESKTOP_SPAWN_ANY_PLATFORM === "1";
+
+/** `/new` and `/sessions` → Resume open a local Terminal window (macOS only). */
+export function isDesktopClaudeSpawnSupported(): boolean {
+  return process.platform === "darwin" || DESKTOP_SPAWN_TEST;
+}
+
+/**
+ * Desktop terminal used by `/new` and `/sessions` → Resume.
+ *   - `terminal` (default) — macOS Terminal.app via AppleScript
+ *   - `iterm2`             — iTerm2 via AppleScript
+ *   - `ghostty`            — Ghostty.app via `open -na --args -e`
+ *   - `cmux`               — cmux.app via `cmux new-workspace` (must be running)
+ */
+export type TerminalApp = "terminal" | "iterm2" | "ghostty" | "cmux";
+
+export function parseTerminalApp(raw: string): TerminalApp {
+  const v = raw.trim().toLowerCase();
+  if (v === "iterm" || v === "iterm2") return "iterm2";
+  if (v === "ghostty") return "ghostty";
+  if (v === "cmux") return "cmux";
+  if (v === "" || v === "terminal") return "terminal";
+  warn(
+    `config: unknown DESKTOP_TERMINAL_APP "${raw}", falling back to Terminal`,
+  );
+  return "terminal";
+}
+
+export const DESKTOP_TERMINAL_APP: TerminalApp = parseTerminalApp(
+  process.env.DESKTOP_TERMINAL_APP || "Terminal",
+);
+
+/**
+ * Extra arguments passed to `claude` when opening a desktop session (channel relay).
+ * Override if your relay name differs.
+ *
+ * NB: only pass `--dangerously-load-development-channels` — passing the extra
+ * `--channels server:channel-relay` flag causes Claude Code to also try
+ * registering the channel via the *approved* allowlist path, producing a
+ * "not on the approved channels allowlist" warning AND listing the channel
+ * twice in the UI. The dangerous flag alone both approves and starts listening.
+ *
+ * `--dangerously-skip-permissions` is included so headless /new sessions
+ * (no human at the Mac) don't block on per-tool approval prompts.
+ */
+export const DESKTOP_CLAUDE_DEFAULT_ARGS =
+  process.env.DESKTOP_CLAUDE_ARGS?.trim() ||
+  "--dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay";
+
+/**
+ * Optional shell command template for desktop spawn; `{dir}` is replaced with a
+ * single-quoted project path. If unset, the bot runs:
+ * `cd <dir> && exec <CLAUDE_CLI_PATH> <DESKTOP_CLAUDE_DEFAULT_ARGS>`.
+ */
+export const DESKTOP_CLAUDE_COMMAND_TEMPLATE =
+  process.env.DESKTOP_CLAUDE_COMMAND?.trim() || "";
 
 // ============== MCP Configuration ==============
 

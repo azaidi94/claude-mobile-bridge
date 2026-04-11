@@ -73,6 +73,9 @@ export async function sendViaRelay(
     const jsonlPath = await findSessionJsonlPath(sessionId);
     if (jsonlPath) {
       tailer = new SessionTailer(jsonlPath, (event) => {
+        // TCP relay (wireRelayDisplay) owns the final reply; skip relay_reply
+        // from the tailer to avoid sending the same message twice.
+        if (event.type === "relay_reply") return;
         handleTailEvent(ctx.api, displayState, event);
       });
       await tailer.start();

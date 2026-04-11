@@ -84,7 +84,7 @@ await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
   { command: "switch", description: "Switch to session" },
   { command: "sessions", description: "Browse offline sessions" },
-  { command: "new", description: "Spawn desktop session (cmux)" },
+  { command: "new", description: "Open desktop Claude (Terminal)" },
   { command: "watch", description: "Watch a desktop session live" },
   { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },
@@ -92,6 +92,8 @@ await bot.api.setMyCommands([
   { command: "retry", description: "Retry last message" },
   { command: "status", description: "Show session details" },
   { command: "model", description: "Show/switch model" },
+  { command: "usage", description: "Claude Code quota stats" },
+  { command: "execute", description: "Start/stop configured scripts" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);
