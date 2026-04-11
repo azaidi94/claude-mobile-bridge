@@ -62,15 +62,20 @@ export function wireRelayDisplay(
   const scopeChatId = String(state.chatId);
 
   const onReply = (msg: RelayReply) => {
+    // If the JSONL tailer already handled this reply, skip text delivery
+    // but still do cleanup and file handling.
+    const alreadyHandled = state.finalReplyReceived;
     state.finalReplyReceived = true;
     const chatId = Number(msg.chat_id) || state.chatId;
 
     cleanupProgressMessages(botApi, state);
 
-    if (msg.send_as_pdf) {
-      sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
-    } else {
-      sendTextReply(botApi, chatId, msg.text);
+    if (!alreadyHandled) {
+      if (msg.send_as_pdf) {
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+      } else {
+        sendTextReply(botApi, chatId, msg.text);
+      }
     }
 
     if (msg.files?.length) {
@@ -159,7 +164,7 @@ function deriveFilenameFromMarkdown(text: string): string {
   return "response.pdf";
 }
 
-function sendTextReply(botApi: Api, chatId: number, text: string): void {
+export function sendTextReply(botApi: Api, chatId: number, text: string): void {
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
     botApi.sendMessage(chatId, formatted, { parse_mode: "HTML" }).catch(() => {

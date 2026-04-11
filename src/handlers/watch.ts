@@ -17,6 +17,7 @@ import { escapeHtml, convertMarkdownToHtml } from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
+  findNewestSessionInDir,
   getExpectedJsonlPath,
   type TailEvent,
 } from "../sessions/tailer";
@@ -33,7 +34,7 @@ import { info, debug, warn, elapsedMs } from "../logger";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
-import { sendFile, sendPdfReply } from "../relay/display";
+import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
 
 // ============== Shared Tail Display State ==============
@@ -139,6 +140,7 @@ export async function sendWatchRelay(
   username: string,
   text: string,
   opId?: string,
+  imagePath?: string,
 ): Promise<boolean> {
   const state = watches.get(chatId);
   if (!state) return false;
@@ -155,6 +157,7 @@ export async function sendWatchRelay(
     chat_id: String(chatId),
     user: username,
     text,
+    ...(imagePath ? { image_path: imagePath } : {}),
   });
   info("watch: relay queued", {
     opId,
@@ -390,23 +393,29 @@ export async function startWatchingSession(
   // Detect when the desktop session starts a new conversation (new JSONL, same dir).
   // refresh() diffs by name only, so an ID change won't surface as added/removed.
   watchState.idCheckInterval = setInterval(async () => {
+    // Use newest JSONL as source of truth (port file can be stale after /clear).
+    // Without this, reconnecting via JSONL scan would cause the stale port file
+    // ID to differ from the new watchState.sessionId, ping-ponging back.
+    const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
     const current = getSession(targetName);
-    if (!current?.id || current.id === watchState.sessionId) return;
-    const newPath = await findSessionJsonlPath(current.id);
+    const newId = newestJsonl ?? current?.id;
+
+    if (!newId || newId === watchState.sessionId) return;
+    const newPath = await findSessionJsonlPath(newId);
     if (!newPath) return;
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
       handleTailEvent(botApi, watchState, event),
     );
     watchState.tailer = newTailer;
-    watchState.sessionId = current.id;
+    watchState.sessionId = newId;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
     watchState.suppressNextIdChangeNotice = false;
     info("watch: restarted tailer for new conversation", {
       chatId,
       sessionName: targetName,
-      sessionId: current.id,
+      sessionId: newId,
       suppressedNotice: wasSpawnSeed,
     });
     if (wasSpawnSeed) return;
@@ -419,7 +428,10 @@ export async function startWatchingSession(
       .catch(() => {});
   }, 5_000);
 
-  // Wire relay client for file attachments (tailer only captures text)
+  // Wire relay client for replies. The JSONL tailer normally handles text
+  // display, but if the tailer is stale (e.g. after /clear) the TCP path
+  // is the only way the reply reaches us. suppressRelayReplyText prevents
+  // the tailer from duplicating text that TCP already delivered.
   const relayClient = await getRelayClient({
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
@@ -428,10 +440,14 @@ export async function startWatchingSession(
   if (relayClient) {
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
+      watchState.suppressRelayReplyText = true;
+
       if (msg.send_as_pdf && msg.text) {
-        watchState.suppressRelayReplyText = true;
         sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+      } else if (msg.text) {
+        sendTextReply(botApi, chatId, msg.text);
       }
+
       if (msg.files?.length) {
         for (const filePath of msg.files) {
           sendFile(botApi, chatId, filePath).catch((err) =>
@@ -675,6 +691,13 @@ export function handleTailEvent(
     }
 
     case "relay_reply": {
+      // Only RelayDisplayState initialises finalReplyReceived (to false);
+      // WatchState leaves it undefined. Setting it here lets wireRelayDisplay
+      // (TCP path) skip text delivery when the tailer wins the race.
+      if (state.finalReplyReceived !== undefined) {
+        state.finalReplyReceived = true;
+      }
+
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
@@ -685,18 +708,11 @@ export function handleTailEvent(
         finalizeTextMessage(botApi, state);
       }
 
-      // Skip sending text if PDF is replacing it
       const ws = state as WatchState;
       if (ws.suppressRelayReplyText) {
         ws.suppressRelayReplyText = false;
       } else {
-        const formatted = convertMarkdownToHtml(event.content);
-        botApi
-          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
-          .catch((err) => {
-            debug(`tail relay_reply: ${err}`);
-            botApi.sendMessage(chatId, event.content).catch(() => {});
-          });
+        sendTextReply(botApi, chatId, event.content);
       }
 
       state.currentTextMsg = null;

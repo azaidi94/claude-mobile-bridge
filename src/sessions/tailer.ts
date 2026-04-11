@@ -6,7 +6,7 @@
  */
 
 import { watch, type FSWatcher } from "fs";
-import { stat } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
@@ -243,14 +243,17 @@ export class SessionTailer {
   }
 }
 
+/** Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`. */
+function projectDir(cwd: string): string {
+  return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"));
+}
+
 /**
  * Find the JSONL file path for a session ID.
  */
 export async function findSessionJsonlPath(
   sessionId: string,
 ): Promise<string | null> {
-  const { readdir } = await import("fs/promises");
-
   const filename = `${sessionId}.jsonl`;
 
   try {
@@ -268,14 +271,42 @@ export async function findSessionJsonlPath(
 }
 
 /**
+ * Find the session ID with the most recently modified JSONL file for a project.
+ * Used to detect session changes when the port file has a stale session ID
+ * (e.g. after /clear on desktop — the MCP server isn't restarted so the port
+ * file keeps the old ID).
+ */
+export async function findNewestSessionInDir(
+  cwd: string,
+): Promise<string | null> {
+  const dir = projectDir(cwd);
+
+  try {
+    const files = await readdir(dir);
+    let newest: { id: string; mtime: number } | null = null;
+
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const s = await stat(join(dir, file)).catch(() => null);
+      if (!s) continue;
+      if (!newest || s.mtimeMs > newest.mtime) {
+        newest = { id: file.slice(0, -6), mtime: s.mtimeMs };
+      }
+    }
+
+    return newest?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Compute the expected JSONL path for a session that may not yet exist on disk.
- * Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`.
  * Used to start a tailer before claude has written its first message — the
  * tailer waits for the file to appear via polling + delayed fs.watch.
  */
 export function getExpectedJsonlPath(cwd: string, sessionId: string): string {
-  const encoded = cwd.replace(/[/.]/g, "-");
-  return join(PROJECTS_DIR, encoded, `${sessionId}.jsonl`);
+  return join(projectDir(cwd), `${sessionId}.jsonl`);
 }
 
 /**
@@ -287,7 +318,6 @@ export async function getLastSessionMessage(
   maxLen = 300,
 ): Promise<{ role: "user" | "assistant"; text: string } | null> {
   try {
-    const { readFile } = await import("fs/promises");
     const raw = await readFile(jsonlPath, "utf-8");
     const lines = raw.split("\n").filter(Boolean);
 

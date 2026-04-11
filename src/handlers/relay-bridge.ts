@@ -12,7 +12,7 @@ import {
   wireRelayDisplay,
   cleanupProgressMessages,
 } from "../relay";
-import { handleTailEvent } from "./watch";
+import { handleTailEvent, isWatching, sendWatchRelay } from "./watch";
 import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
 import { getActiveSession } from "../sessions";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
@@ -29,6 +29,19 @@ export async function sendViaRelay(
   imagePath?: string,
   opId?: string,
 ): Promise<RelayResult> {
+  // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
+  // route through sendWatchRelay to avoid the duplicate display path.
+  if (isWatching(chatId)) {
+    const relayed = await sendWatchRelay(
+      chatId,
+      username,
+      message,
+      opId,
+      imagePath,
+    );
+    if (relayed) return "delivered";
+  }
+
   const active = getActiveSession();
   const sessionId = active?.info.id || session.sessionId;
   const sessionDir = session.workingDir || active?.info.dir;
