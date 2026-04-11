@@ -76,7 +76,14 @@ export function isDesktopClaudeSpawnSupported(): boolean {
   return process.platform === "darwin" || DESKTOP_SPAWN_TEST;
 }
 
-/** App name for AppleScript: `Terminal` (default) or `iTerm2`. */
+/**
+ * Desktop terminal used by `/new` and `/sessions` → Resume.
+ * Accepted values (case-insensitive):
+ *   - `Terminal` (default) — macOS Terminal.app via AppleScript
+ *   - `iTerm` / `iTerm2`   — iTerm2 via AppleScript
+ *   - `Ghostty`            — Ghostty.app via `open -na --args -e`
+ *   - `cmux`               — cmux.app via `cmux new-workspace` (must be running)
+ */
 export const DESKTOP_TERMINAL_APP = (
   process.env.DESKTOP_TERMINAL_APP || "Terminal"
 ).trim();

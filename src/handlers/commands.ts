@@ -6,7 +6,7 @@
  */
 
 import { readdir, stat, access } from "fs/promises";
-import { realpathSync } from "fs";
+import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
@@ -91,6 +91,20 @@ async function resolveClaudePathForSpawn(): Promise<string | null> {
   }
 }
 
+/** Fallback path for the cmux CLI when it isn't on PATH (installed via cmux.app). */
+const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
+
+function resolveCmuxBin(): string | null {
+  const onPath = Bun.which("cmux");
+  if (onPath) return onPath;
+  try {
+    statSync(CMUX_APP_BIN);
+    return CMUX_APP_BIN;
+  } catch {
+    return null;
+  }
+}
+
 function buildDesktopShellCommand(
   explicitPath: string,
   claudePath: string,
@@ -105,13 +119,64 @@ function buildDesktopShellCommand(
 }
 
 /**
- * Open Terminal or iTerm2 with a shell command (macOS AppleScript).
+ * Pure dispatch: map a `DESKTOP_TERMINAL_APP` value to the argv needed to
+ * spawn a new terminal window running `shellCommand` in `explicitPath`.
+ *
+ * Returns `{ argv }` on success, or `{ error }` if the terminal is
+ * unavailable (e.g. cmux CLI missing). Exported for unit tests — prod code
+ * should call `openMacOSTerminalWithCommand`.
+ *
+ * Dispatches on the (case-insensitive) app name:
+ * - `terminal` (default) / `iterm` / `iterm2` → AppleScript via `osascript`
+ * - `ghostty` → `open -na Ghostty.app --args -e /bin/sh -c <cmd>`
+ * - `cmux`    → `<cmuxBin> new-workspace --cwd <dir> --command <cmd>`
+ *
+ * For `ghostty` and `cmux`, the shellCommand is passed as a separate argv
+ * (no AppleScript escaping needed). cmux's `--command` types the text into
+ * the new workspace's shell + presses Enter — same shape as iTerm's
+ * `write text` and Terminal's `do script`.
  */
-function openMacOSTerminalWithCommand(shellCommand: string): {
-  ok: boolean;
-  stderr: string;
-} {
-  const app = DESKTOP_TERMINAL_APP.toLowerCase();
+export function buildTerminalSpawnArgs(
+  terminalApp: string,
+  shellCommand: string,
+  explicitPath: string,
+): { argv: string[] } | { error: string } {
+  const app = terminalApp.toLowerCase();
+
+  if (app === "ghostty") {
+    return {
+      argv: [
+        "open",
+        "-na",
+        "Ghostty.app",
+        "--args",
+        "-e",
+        "/bin/sh",
+        "-c",
+        shellCommand,
+      ],
+    };
+  }
+
+  if (app === "cmux") {
+    const cmuxBin = resolveCmuxBin();
+    if (!cmuxBin) {
+      return {
+        error: "cmux CLI not found. Install cmux.app from https://cmux.dev",
+      };
+    }
+    return {
+      argv: [
+        cmuxBin,
+        "new-workspace",
+        "--cwd",
+        explicitPath,
+        "--command",
+        shellCommand,
+      ],
+    };
+  }
+
   let script: string;
   if (app === "iterm" || app === "iterm2") {
     const esc = escapeAppleScriptDoubleQuoted(shellCommand);
@@ -128,7 +193,29 @@ function openMacOSTerminalWithCommand(shellCommand: string): {
   } else {
     script = `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`;
   }
-  const r = Bun.spawnSync(["osascript", "-e", script]);
+  return { argv: ["osascript", "-e", script] };
+}
+
+/**
+ * Open a desktop terminal with a shell command (macOS). Wraps
+ * `buildTerminalSpawnArgs` + `Bun.spawnSync` for the live call site.
+ */
+function openMacOSTerminalWithCommand(
+  shellCommand: string,
+  explicitPath: string,
+): {
+  ok: boolean;
+  stderr: string;
+} {
+  const built = buildTerminalSpawnArgs(
+    DESKTOP_TERMINAL_APP,
+    shellCommand,
+    explicitPath,
+  );
+  if ("error" in built) {
+    return { ok: false, stderr: built.error };
+  }
+  const r = Bun.spawnSync(built.argv);
   const stderr = (r.stderr ?? Buffer.alloc(0)).toString().trim();
   return { ok: r.exitCode === 0, stderr };
 }
@@ -301,7 +388,7 @@ export async function spawnDesktopClaudeSession(
     suppressDirNotifications(spawnCwd, 150_000);
 
     const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
-    const term = openMacOSTerminalWithCommand(shellCmd);
+    const term = openMacOSTerminalWithCommand(shellCmd, explicitPath);
     if (!term.ok) {
       warn("spawn: osascript failed", {
         opId,

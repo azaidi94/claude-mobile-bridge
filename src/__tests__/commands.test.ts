@@ -994,6 +994,138 @@ describe("commands: /new", () => {
   });
 });
 
+// ============== buildTerminalSpawnArgs (pure dispatch) ==============
+
+describe("commands: buildTerminalSpawnArgs", () => {
+  let bunWhichSpy: ReturnType<typeof spyOn> | null = null;
+
+  afterEach(() => {
+    bunWhichSpy?.mockRestore();
+    bunWhichSpy = null;
+  });
+
+  test("Terminal (default) → osascript do script", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs("Terminal", "echo hi", "/tmp/proj");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv[0]).toBe("osascript");
+    expect(r.argv[1]).toBe("-e");
+    expect(r.argv[2]).toContain('tell application "Terminal" to do script');
+    expect(r.argv[2]).toContain("echo hi");
+  });
+
+  test("unknown app name falls back to Terminal.app", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs("kitty", "echo hi", "/tmp/proj");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv[0]).toBe("osascript");
+    expect(r.argv[2]).toContain('tell application "Terminal"');
+  });
+
+  test("iTerm → osascript tell application iTerm2", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs("iTerm", "echo hi", "/tmp/proj");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv[0]).toBe("osascript");
+    expect(r.argv[2]).toContain('tell application "iTerm2"');
+    expect(r.argv[2]).toContain("create window with default profile");
+    expect(r.argv[2]).toContain('write text "echo hi"');
+  });
+
+  test("iTerm2 alias resolves the same as iTerm", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const a = buildTerminalSpawnArgs("iTerm", "echo hi", "/tmp/proj");
+    const b = buildTerminalSpawnArgs("iTerm2", "echo hi", "/tmp/proj");
+    expect(a).toEqual(b);
+  });
+
+  test("iTerm2 escapes AppleScript quotes and backslashes", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "iterm2",
+      'echo "hi" \\ there',
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    // Inside the osascript string, `"` → `\"` and `\` → `\\`
+    expect(r.argv[2]).toContain('echo \\"hi\\" \\\\ there');
+  });
+
+  test("ghostty → open -na Ghostty.app --args -e /bin/sh -c <cmd>", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "ghostty",
+      "cd /tmp && exec claude --flag",
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv).toEqual([
+      "open",
+      "-na",
+      "Ghostty.app",
+      "--args",
+      "-e",
+      "/bin/sh",
+      "-c",
+      "cd /tmp && exec claude --flag",
+    ]);
+  });
+
+  test("ghostty is case-insensitive (GHOSTTY, Ghostty)", async () => {
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const upper = buildTerminalSpawnArgs("GHOSTTY", "echo hi", "/tmp/proj");
+    const mixed = buildTerminalSpawnArgs("Ghostty", "echo hi", "/tmp/proj");
+    expect(upper).toEqual(mixed);
+    expect("argv" in upper).toBe(true);
+    if (!("argv" in upper)) return;
+    expect(upper.argv[2]).toBe("Ghostty.app");
+  });
+
+  test("cmux → new-workspace --cwd --command using Bun.which result", async () => {
+    bunWhichSpy = spyOn(Bun, "which").mockImplementation((name: string) =>
+      name === "cmux" ? "/opt/bin/cmux" : null,
+    );
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const r = buildTerminalSpawnArgs(
+      "cmux",
+      "cd /tmp/proj && exec claude",
+      "/tmp/proj",
+    );
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    expect(r.argv).toEqual([
+      "/opt/bin/cmux",
+      "new-workspace",
+      "--cwd",
+      "/tmp/proj",
+      "--command",
+      "cd /tmp/proj && exec claude",
+    ]);
+  });
+
+  test("cmux passes --cwd and --command in order, preserving shellCommand verbatim", async () => {
+    bunWhichSpy = spyOn(Bun, "which").mockImplementation((name: string) =>
+      name === "cmux" ? "/opt/bin/cmux" : null,
+    );
+    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
+    const shellCmd = "cd '/tmp/p' && exec /bin/claude --flag-1 --flag-2";
+    const r = buildTerminalSpawnArgs("cmux", shellCmd, "/tmp/p");
+    expect("argv" in r).toBe(true);
+    if (!("argv" in r)) return;
+    const cwdIdx = r.argv.indexOf("--cwd");
+    const cmdIdx = r.argv.indexOf("--command");
+    expect(cwdIdx).toBeGreaterThan(-1);
+    expect(cmdIdx).toBeGreaterThan(cwdIdx);
+    expect(r.argv[cwdIdx + 1]).toBe("/tmp/p");
+    expect(r.argv[cmdIdx + 1]).toBe(shellCmd);
+  });
+});
+
 // ============== /stop Command Tests ==============
 
 describe("commands: /stop", () => {
