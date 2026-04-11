@@ -294,6 +294,12 @@ export async function spawnDesktopClaudeSession(
         .filter((pid): pid is number => pid !== undefined),
     );
 
+    // Suppress the background watcher's redundant "🟢 online" broadcast for
+    // this dir during the whole spawn window — the spawn flow edits its own
+    // status message in place once the relay appears. 150s is slightly more
+    // than the 120s deadline below so the suppression outlives it.
+    suppressDirNotifications(spawnCwd, 150_000);
+
     const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
     const term = openMacOSTerminalWithCommand(shellCmd);
     if (!term.ok) {
@@ -316,7 +322,11 @@ export async function spawnDesktopClaudeSession(
 
     session.setWorkingDir(spawnCwd);
 
-    await api.sendMessage(
+    // Send the initial "Waiting for relay…" status and remember its
+    // message_id so every terminal state (success / timeout / ambiguous /
+    // unresolved) can edit this bubble in place instead of stacking new
+    // messages on top of a stale "Waiting…" banner.
+    const statusMsg = await api.sendMessage(
       chatId,
       "⏳ Terminal opened — starting Claude.\n\n" +
         "<b>At the Mac:</b> if you see the development-channels menu, choose <b>1</b> (local development) and press Enter.\n\n" +
@@ -324,6 +334,12 @@ export async function spawnDesktopClaudeSession(
         `<code>/pwd</code> and <code>/ls</code> now use this folder until you switch sessions.\n\nWaiting for relay…`,
       { parse_mode: "HTML" },
     );
+    const editStatus = (text: string): Promise<unknown> =>
+      api
+        .editMessageText(chatId, statusMsg.message_id, text, {
+          parse_mode: "HTML",
+        })
+        .catch(() => {});
 
     await Bun.sleep(4000);
 
@@ -347,8 +363,7 @@ export async function spawnDesktopClaudeSession(
           durationMs: elapsedMs(spawnStartedAt),
           candidateCount: newRelays.length,
         });
-        await api.sendMessage(
-          chatId,
+        await editStatus(
           "⚠️ Session spawned, but multiple new relays appeared.\n" +
             "Use /list to pick the right session.",
         );
@@ -368,10 +383,8 @@ export async function spawnDesktopClaudeSession(
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
-        chatId,
+      await editStatus(
         "⚠️ Relay not detected in time (~2 min). In Terminal: finish login, approve dev channels, and ensure MCP <code>channel-relay</code> is registered for that shell. Then <code>/list</code> or <code>/watch</code>.",
-        { parse_mode: "HTML" },
       );
       return;
     }
@@ -407,6 +420,9 @@ export async function spawnDesktopClaudeSession(
     if (spawned) {
       setActiveSession(spawned.name);
       startWatchingSession(api, chatId, spawned.name, "spawn").catch(() => {});
+      await editStatus(
+        `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
+      );
       info("spawn: completed", {
         opId,
         chatId,
@@ -424,8 +440,7 @@ export async function spawnDesktopClaudeSession(
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
-        chatId,
+      await editStatus(
         "⚠️ Session spawned, but could not uniquely identify the new session.\n" +
           "Use /list to find it.",
       );

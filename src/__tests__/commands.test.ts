@@ -969,10 +969,17 @@ describe("commands: /new", () => {
 
       expect(mockStartWatchingSession).not.toHaveBeenCalled();
       expect(mockActiveSession).toBeNull();
+      // Spawn edits its initial "Waiting for relay…" status message in
+      // place for every terminal state, so the warning text may land on
+      // sendMessage, ctx.reply, *or* editMessageText depending on the
+      // path — check all three.
       const allSentTexts = [
         ...ctx._replies.map((r: { text: string }) => r.text),
         ...(ctx.api.sendMessage as ReturnType<typeof mock>).mock.calls.map(
           (c: unknown[]) => c[1] as string,
+        ),
+        ...(ctx.api.editMessageText as ReturnType<typeof mock>).mock.calls.map(
+          (c: unknown[]) => c[2] as string,
         ),
       ];
       expect(
