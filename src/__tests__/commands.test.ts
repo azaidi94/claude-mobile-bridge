@@ -1004,9 +1004,9 @@ describe("commands: buildTerminalSpawnArgs", () => {
     bunWhichSpy = null;
   });
 
-  test("Terminal (default) → osascript do script", async () => {
+  test("terminal → osascript do script", async () => {
     const { buildTerminalSpawnArgs } = await import("../handlers/commands");
-    const r = buildTerminalSpawnArgs("Terminal", "echo hi", "/tmp/proj");
+    const r = buildTerminalSpawnArgs("terminal", "echo hi", "/tmp/proj");
     expect("argv" in r).toBe(true);
     if (!("argv" in r)) return;
     expect(r.argv[0]).toBe("osascript");
@@ -1015,18 +1015,9 @@ describe("commands: buildTerminalSpawnArgs", () => {
     expect(r.argv[2]).toContain("echo hi");
   });
 
-  test("unknown app name falls back to Terminal.app", async () => {
+  test("iterm2 → osascript tell application iTerm2", async () => {
     const { buildTerminalSpawnArgs } = await import("../handlers/commands");
-    const r = buildTerminalSpawnArgs("kitty", "echo hi", "/tmp/proj");
-    expect("argv" in r).toBe(true);
-    if (!("argv" in r)) return;
-    expect(r.argv[0]).toBe("osascript");
-    expect(r.argv[2]).toContain('tell application "Terminal"');
-  });
-
-  test("iTerm → osascript tell application iTerm2", async () => {
-    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
-    const r = buildTerminalSpawnArgs("iTerm", "echo hi", "/tmp/proj");
+    const r = buildTerminalSpawnArgs("iterm2", "echo hi", "/tmp/proj");
     expect("argv" in r).toBe(true);
     if (!("argv" in r)) return;
     expect(r.argv[0]).toBe("osascript");
@@ -1035,14 +1026,7 @@ describe("commands: buildTerminalSpawnArgs", () => {
     expect(r.argv[2]).toContain('write text "echo hi"');
   });
 
-  test("iTerm2 alias resolves the same as iTerm", async () => {
-    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
-    const a = buildTerminalSpawnArgs("iTerm", "echo hi", "/tmp/proj");
-    const b = buildTerminalSpawnArgs("iTerm2", "echo hi", "/tmp/proj");
-    expect(a).toEqual(b);
-  });
-
-  test("iTerm2 escapes AppleScript quotes and backslashes", async () => {
+  test("iterm2 escapes AppleScript quotes and backslashes", async () => {
     const { buildTerminalSpawnArgs } = await import("../handlers/commands");
     const r = buildTerminalSpawnArgs(
       "iterm2",
@@ -1076,14 +1060,16 @@ describe("commands: buildTerminalSpawnArgs", () => {
     ]);
   });
 
-  test("ghostty is case-insensitive (GHOSTTY, Ghostty)", async () => {
-    const { buildTerminalSpawnArgs } = await import("../handlers/commands");
-    const upper = buildTerminalSpawnArgs("GHOSTTY", "echo hi", "/tmp/proj");
-    const mixed = buildTerminalSpawnArgs("Ghostty", "echo hi", "/tmp/proj");
-    expect(upper).toEqual(mixed);
-    expect("argv" in upper).toBe(true);
-    if (!("argv" in upper)) return;
-    expect(upper.argv[2]).toBe("Ghostty.app");
+  test("parseTerminalApp normalizes case, aliases, and unknowns", async () => {
+    const { parseTerminalApp } = await import("../config");
+    expect(parseTerminalApp("Terminal")).toBe("terminal");
+    expect(parseTerminalApp("iTerm")).toBe("iterm2");
+    expect(parseTerminalApp("iTerm2")).toBe("iterm2");
+    expect(parseTerminalApp("GHOSTTY")).toBe("ghostty");
+    expect(parseTerminalApp("Ghostty")).toBe("ghostty");
+    expect(parseTerminalApp("cmux")).toBe("cmux");
+    // Unknown falls back to terminal
+    expect(parseTerminalApp("kitty")).toBe("terminal");
   });
 
   test("cmux → new-workspace --cwd --command using Bun.which result", async () => {

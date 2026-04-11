@@ -7,13 +7,13 @@
 
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { spawn } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import { resolve } from "path";
 import { escapeHtml } from "../formatting";
 import { info, warn } from "../logger";
 import { isAuthorized } from "../security";
 import { ALLOWED_USERS } from "../config";
+import { isProcessAlive } from "../relay/discovery";
 
 export interface ExecuteCommand {
   name: string;
@@ -35,17 +35,38 @@ function getCommandsFile(): string {
   );
 }
 
+// Cache parsed commands by file mtime — handleExecute and every callback
+// refresh would otherwise re-read+re-parse the JSON on each invocation.
+let cached: {
+  mtimeMs: number;
+  path: string;
+  commands: ExecuteCommand[];
+} | null = null;
+
 export function getExecuteCommands(): ExecuteCommand[] {
   const file = getCommandsFile();
-  if (!existsSync(file)) return [];
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(file).mtimeMs;
+  } catch {
+    cached = null;
+    return [];
+  }
+  if (cached && cached.path === file && cached.mtimeMs === mtimeMs) {
+    return cached.commands;
+  }
   try {
     const raw = JSON.parse(readFileSync(file, "utf-8"));
-    if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (e): e is ExecuteCommand =>
-        typeof e?.name === "string" && typeof e?.script === "string",
-    );
+    const commands = Array.isArray(raw)
+      ? raw.filter(
+          (e): e is ExecuteCommand =>
+            typeof e?.name === "string" && typeof e?.script === "string",
+        )
+      : [];
+    cached = { mtimeMs, path: file, commands };
+    return commands;
   } catch {
+    cached = { mtimeMs, path: file, commands: [] };
     return [];
   }
 }
@@ -53,32 +74,26 @@ export function getExecuteCommands(): ExecuteCommand[] {
 export function isProcessRunning(idx: number): boolean {
   const proc = runningProcesses.get(idx);
   if (!proc) return false;
-  try {
-    process.kill(proc.pid, 0); // signal 0 = liveness check
-    return true;
-  } catch {
-    runningProcesses.delete(idx); // process died on its own
-    return false;
-  }
+  if (isProcessAlive(proc.pid)) return true;
+  runningProcesses.delete(idx);
+  return false;
 }
 
 export function startProcess(idx: number, cmd: ExecuteCommand): boolean {
   if (isProcessRunning(idx)) return false;
-  const child = spawn("bash", [cmd.script], {
-    detached: true,
-    stdio: "ignore",
+  const child = Bun.spawn(["bash", cmd.script], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
   });
-  if (!child.pid) {
+  const pid = child.pid;
+  if (!pid) {
     warn("execute: spawn returned no PID", { name: cmd.name });
     return false;
   }
-  child.unref(); // let it outlive this process
-  runningProcesses.set(idx, { pid: child.pid, name: cmd.name });
-  info("execute: started", {
-    name: cmd.name,
-    pid: child.pid,
-    script: cmd.script,
-  });
+  child.unref();
+  runningProcesses.set(idx, { pid, name: cmd.name });
+  info("execute: started", { name: cmd.name, pid, script: cmd.script });
   return true;
 }
 

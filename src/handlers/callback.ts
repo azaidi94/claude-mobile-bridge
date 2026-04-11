@@ -327,7 +327,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
         parse_mode: "HTML",
         reply_markup: keyboard,
       })
-      .catch(() => {});
+      .catch((err) => debug(`execute menu refresh: ${err}`));
     return;
   }
 

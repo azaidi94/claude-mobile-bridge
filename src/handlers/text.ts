@@ -239,12 +239,11 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.7. Check for active watch — relay message to desktop session
+  // 1.7. Check for active watch — relay message to desktop session.
+  // Slash commands are rejected: a relayed "/cmd" arrives at the desktop
+  // Claude as plain text (the CLI's slash-command processor only runs on
+  // stdin, not relay messages).
   if (isWatching(chatId) && message.startsWith("/")) {
-    // Slash commands can't be forwarded to the relay (the desktop Claude session
-    // receives them as plain text, bypassing the CLI's slash-command processor).
-    // Running them via the bot's local SDK session would target a different
-    // conversation context. Tell the user to /unwatch first.
     await ctx.reply(
       "⚠️ Slash commands don't work during <code>/watch</code> — the desktop session receives text, not CLI commands.\n\n" +
         "Use <code>/unwatch</code> first, then <code>//" +

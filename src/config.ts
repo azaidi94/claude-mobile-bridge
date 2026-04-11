@@ -8,7 +8,7 @@ import { homedir } from "os";
 import { resolve, dirname } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
-import { info, debug, error as logError } from "./logger";
+import { debug, warn, error as logError } from "./logger";
 
 // ============== Environment Setup ==============
 
@@ -53,7 +53,7 @@ export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 // ============== Claude CLI Path ==============
 
 // Auto-detect from PATH, or use environment override
-function findClaudeCli(): string {
+export function findClaudeCli(): string {
   const envPath = process.env.CLAUDE_CLI_PATH;
   if (envPath) return envPath;
 
@@ -78,15 +78,28 @@ export function isDesktopClaudeSpawnSupported(): boolean {
 
 /**
  * Desktop terminal used by `/new` and `/sessions` → Resume.
- * Accepted values (case-insensitive):
- *   - `Terminal` (default) — macOS Terminal.app via AppleScript
- *   - `iTerm` / `iTerm2`   — iTerm2 via AppleScript
- *   - `Ghostty`            — Ghostty.app via `open -na --args -e`
+ *   - `terminal` (default) — macOS Terminal.app via AppleScript
+ *   - `iterm2`             — iTerm2 via AppleScript
+ *   - `ghostty`            — Ghostty.app via `open -na --args -e`
  *   - `cmux`               — cmux.app via `cmux new-workspace` (must be running)
  */
-export const DESKTOP_TERMINAL_APP = (
-  process.env.DESKTOP_TERMINAL_APP || "Terminal"
-).trim();
+export type TerminalApp = "terminal" | "iterm2" | "ghostty" | "cmux";
+
+export function parseTerminalApp(raw: string): TerminalApp {
+  const v = raw.trim().toLowerCase();
+  if (v === "iterm" || v === "iterm2") return "iterm2";
+  if (v === "ghostty") return "ghostty";
+  if (v === "cmux") return "cmux";
+  if (v === "" || v === "terminal") return "terminal";
+  warn(
+    `config: unknown DESKTOP_TERMINAL_APP "${raw}", falling back to Terminal`,
+  );
+  return "terminal";
+}
+
+export const DESKTOP_TERMINAL_APP: TerminalApp = parseTerminalApp(
+  process.env.DESKTOP_TERMINAL_APP || "Terminal",
+);
 
 /**
  * Extra arguments passed to `claude` when opening a desktop session (channel relay).

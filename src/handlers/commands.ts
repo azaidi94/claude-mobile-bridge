@@ -14,11 +14,12 @@ import {
   WORKING_DIR,
   ALLOWED_USERS,
   RESTART_FILE,
-  CLAUDE_CLI_PATH,
+  findClaudeCli,
   isDesktopClaudeSpawnSupported,
   DESKTOP_CLAUDE_DEFAULT_ARGS,
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
   DESKTOP_TERMINAL_APP,
+  type TerminalApp,
 } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
@@ -83,12 +84,37 @@ function escapeAppleScriptDoubleQuoted(s: string): string {
 }
 
 async function resolveClaudePathForSpawn(): Promise<string | null> {
+  const p = findClaudeCli();
   try {
-    await access(CLAUDE_CLI_PATH);
-    return CLAUDE_CLI_PATH;
+    await access(p);
+    return p;
   } catch {
-    return Bun.which("claude");
+    return null;
   }
+}
+
+/**
+ * Shared preflight for /new, /sessions → Resume, and `spawnDesktopClaudeSession`.
+ * Replies with a user-facing error if desktop spawn can't run on this machine
+ * or Claude CLI isn't installed; returns the resolved claude path on success.
+ */
+async function assertDesktopSpawnReady(
+  reply: (text: string) => Promise<unknown>,
+): Promise<string | null> {
+  if (!isDesktopClaudeSpawnSupported()) {
+    await reply(
+      "❌ <b>macOS required</b>\n\nDesktop Claude spawn opens Terminal / iTerm on the bot host.",
+    );
+    return null;
+  }
+  const claudePath = await resolveClaudePathForSpawn();
+  if (!claudePath) {
+    await reply(
+      "❌ Claude CLI not found. Install Claude Code or set <code>CLAUDE_CLI_PATH</code>.",
+    );
+    return null;
+  }
+  return claudePath;
 }
 
 /** Fallback path for the cmux CLI when it isn't on PATH (installed via cmux.app). */
@@ -119,81 +145,70 @@ function buildDesktopShellCommand(
 }
 
 /**
- * Pure dispatch: map a `DESKTOP_TERMINAL_APP` value to the argv needed to
- * spawn a new terminal window running `shellCommand` in `explicitPath`.
- *
- * Returns `{ argv }` on success, or `{ error }` if the terminal is
- * unavailable (e.g. cmux CLI missing). Exported for unit tests — prod code
- * should call `openMacOSTerminalWithCommand`.
- *
- * Dispatches on the (case-insensitive) app name:
- * - `terminal` (default) / `iterm` / `iterm2` → AppleScript via `osascript`
- * - `ghostty` → `open -na Ghostty.app --args -e /bin/sh -c <cmd>`
- * - `cmux`    → `<cmuxBin> new-workspace --cwd <dir> --command <cmd>`
- *
- * For `ghostty` and `cmux`, the shellCommand is passed as a separate argv
- * (no AppleScript escaping needed). cmux's `--command` types the text into
- * the new workspace's shell + presses Enter — same shape as iTerm's
- * `write text` and Terminal's `do script`.
+ * Pure dispatch from a `TerminalApp` to the argv needed to spawn a new
+ * terminal window running `shellCommand` in `explicitPath`. Exported for
+ * unit tests — prod code should call `openMacOSTerminalWithCommand`.
  */
 export function buildTerminalSpawnArgs(
-  terminalApp: string,
+  terminalApp: TerminalApp,
   shellCommand: string,
   explicitPath: string,
 ): { argv: string[] } | { error: string } {
-  const app = terminalApp.toLowerCase();
-
-  if (app === "ghostty") {
-    return {
-      argv: [
-        "open",
-        "-na",
-        "Ghostty.app",
-        "--args",
-        "-e",
-        "/bin/sh",
-        "-c",
-        shellCommand,
-      ],
-    };
-  }
-
-  if (app === "cmux") {
-    const cmuxBin = resolveCmuxBin();
-    if (!cmuxBin) {
+  switch (terminalApp) {
+    case "ghostty":
       return {
-        error: "cmux CLI not found. Install cmux.app from https://cmux.dev",
+        argv: [
+          "open",
+          "-na",
+          "Ghostty.app",
+          "--args",
+          "-e",
+          "/bin/sh",
+          "-c",
+          shellCommand,
+        ],
+      };
+    case "cmux": {
+      const cmuxBin = resolveCmuxBin();
+      if (!cmuxBin) {
+        return {
+          error: "cmux CLI not found. Install cmux.app from https://cmux.dev",
+        };
+      }
+      return {
+        argv: [
+          cmuxBin,
+          "new-workspace",
+          "--cwd",
+          explicitPath,
+          "--command",
+          shellCommand,
+        ],
       };
     }
-    return {
-      argv: [
-        cmuxBin,
-        "new-workspace",
-        "--cwd",
-        explicitPath,
-        "--command",
-        shellCommand,
-      ],
-    };
+    case "iterm2": {
+      const esc = escapeAppleScriptDoubleQuoted(shellCommand);
+      const script = [
+        `tell application "iTerm2"`,
+        `  activate`,
+        `  tell (create window with default profile)`,
+        `    tell current session of current tab of current window`,
+        `      write text "${esc}"`,
+        `    end tell`,
+        `  end tell`,
+        `end tell`,
+      ].join("\n");
+      return { argv: ["osascript", "-e", script] };
+    }
+    case "terminal":
+      return {
+        argv: [
+          "osascript",
+          "-e",
+          `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`,
+        ],
+      };
   }
-
-  let script: string;
-  if (app === "iterm" || app === "iterm2") {
-    const esc = escapeAppleScriptDoubleQuoted(shellCommand);
-    script = [
-      `tell application "iTerm2"`,
-      `  activate`,
-      `  tell (create window with default profile)`,
-      `    tell current session of current tab of current window`,
-      `      write text "${esc}"`,
-      `    end tell`,
-      `  end tell`,
-      `end tell`,
-    ].join("\n");
-  } else {
-    script = `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`;
-  }
-  return { argv: ["osascript", "-e", script] };
 }
 
 /**
@@ -318,24 +333,10 @@ export async function spawnDesktopClaudeSession(
   explicitPath: string,
   userId: number,
 ): Promise<void> {
-  if (!isDesktopClaudeSpawnSupported()) {
-    await api.sendMessage(
-      chatId,
-      "❌ Desktop Claude spawn only works on <b>macOS</b> (opens Terminal / iTerm).",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-
-  const claudePath = await resolveClaudePathForSpawn();
-  if (!claudePath) {
-    await api.sendMessage(
-      chatId,
-      "❌ Claude CLI not found. Install Claude Code or set <code>CLAUDE_CLI_PATH</code>.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
+  const claudePath = await assertDesktopSpawnReady((text) =>
+    api.sendMessage(chatId, text, { parse_mode: "HTML" }),
+  );
+  if (!claudePath) return;
 
   const opId = createOpId("spawn");
   const spawnStartedAt = Date.now();
@@ -365,12 +366,28 @@ export async function spawnDesktopClaudeSession(
     const spawnCwd = tryRealpathSync(explicitPath);
     info("spawn: canonical cwd", { opId, spawnCwd });
 
-    const beforeRelays = (await scanPortFiles(true)).filter(
-      (pf) => tryRealpathSync(pf.cwd) === spawnCwd,
+    // Memoize realpath — `spawnCwd` is stable, but every port-file /
+    // session `cwd` we compare against would otherwise be re-canonicalized
+    // on every 2s poll iteration.
+    const realpathCache = new Map<string, string>();
+    const canonical = (p: string): string => {
+      const hit = realpathCache.get(p);
+      if (hit !== undefined) return hit;
+      const r = tryRealpathSync(p);
+      realpathCache.set(p, r);
+      return r;
+    };
+
+    const [initialPortFiles, initialSessions] = await Promise.all([
+      scanPortFiles(true),
+      Promise.resolve(getSessions()),
+    ]);
+    const beforeRelays = initialPortFiles.filter(
+      (pf) => canonical(pf.cwd) === spawnCwd,
     );
     const knownRelayIds = new Set(beforeRelays.map(relayIdentity));
-    const beforeSessions = getSessions().filter(
-      (s) => tryRealpathSync(s.dir) === spawnCwd,
+    const beforeSessions = initialSessions.filter(
+      (s) => canonical(s.dir) === spawnCwd,
     );
     const knownSessionIds = new Set(
       beforeSessions.map((s) => s.id).filter(Boolean),
@@ -381,10 +398,9 @@ export async function spawnDesktopClaudeSession(
         .filter((pid): pid is number => pid !== undefined),
     );
 
-    // Suppress the background watcher's redundant "🟢 online" broadcast for
-    // this dir during the whole spawn window — the spawn flow edits its own
-    // status message in place once the relay appears. 150s is slightly more
-    // than the 120s deadline below so the suppression outlives it.
+    // Watcher would otherwise broadcast a redundant "🟢 online" for this
+    // dir — spawn flow edits its own status bubble once the relay appears.
+    // Suppression outlives the 120s poll deadline.
     suppressDirNotifications(spawnCwd, 150_000);
 
     const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
@@ -407,16 +423,10 @@ export async function spawnDesktopClaudeSession(
       return;
     }
 
-    // Send the initial "Waiting for relay…" status and remember its
-    // message_id so every terminal state (success / timeout / ambiguous /
-    // unresolved) can edit this bubble in place instead of stacking new
-    // messages on top of a stale "Waiting…" banner.
-    //
-    // NB: we do NOT call session.setWorkingDir here. osascript can report
-    // success even if Terminal silently fails to launch (Accessibility
-    // denied, profile issue, etc.), so the working dir only gets updated
-    // in the success branch below — after the relay port file confirms a
-    // live claude process in that directory.
+    // setWorkingDir is deferred to the success branch — osascript can
+    // report success even if Terminal silently fails to launch
+    // (Accessibility denied, profile issue), so we only commit the dir
+    // after a port file confirms a live claude in it.
     const statusMsg = await api.sendMessage(
       chatId,
       "⏳ Terminal opened — starting Claude.\n\n" +
@@ -442,7 +452,7 @@ export async function spawnDesktopClaudeSession(
       const portFiles = await scanPortFiles(true);
       const newRelays = portFiles.filter(
         (pf) =>
-          tryRealpathSync(pf.cwd) === spawnCwd &&
+          canonical(pf.cwd) === spawnCwd &&
           !knownRelayIds.has(relayIdentity(pf)),
       );
       if (newRelays.length > 1) {
@@ -482,9 +492,7 @@ export async function spawnDesktopClaudeSession(
 
     await forceRefresh();
     const sessions = getSessions();
-    const dirSessions = sessions.filter(
-      (s) => tryRealpathSync(s.dir) === spawnCwd,
-    );
+    const dirSessions = sessions.filter((s) => canonical(s.dir) === spawnCwd);
     let spawned =
       (spawnedRelay.sessionId
         ? dirSessions.find((s) => s.id === spawnedRelay?.sessionId)
@@ -568,21 +576,10 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  if (!isDesktopClaudeSpawnSupported()) {
-    await ctx.reply(
-      "❌ <b>macOS required</b>\n\n<code>/new</code> opens Terminal or iTerm on this machine.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-
-  if (!(await resolveClaudePathForSpawn())) {
-    await ctx.reply(
-      "❌ Claude CLI not found. Install Claude Code or set <code>CLAUDE_CLI_PATH</code>.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
+  const ready = await assertDesktopSpawnReady((t) =>
+    ctx.reply(t, { parse_mode: "HTML" }),
+  );
+  if (!ready) return;
 
   const text = ctx.message?.text || "";
   const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
@@ -1090,21 +1087,10 @@ export async function handleSessions(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  if (!isDesktopClaudeSpawnSupported()) {
-    await ctx.reply(
-      "❌ <b>macOS required</b>\n\n<code>/sessions</code> → Resume opens Terminal on this machine.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-
-  if (!(await resolveClaudePathForSpawn())) {
-    await ctx.reply(
-      "❌ Claude CLI not found. Install Claude Code or set <code>CLAUDE_CLI_PATH</code>.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
+  const ready = await assertDesktopSpawnReady((t) =>
+    ctx.reply(t, { parse_mode: "HTML" }),
+  );
+  if (!ready) return;
 
   const allSessions = await listOfflineSessions();
 
