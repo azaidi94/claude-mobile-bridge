@@ -67,7 +67,7 @@ claude mcp add -s user channel-relay -- bun run ~/Dev/claude-mobile-bridge/src/m
 2. Start Claude with the relay channel. You need these flags **every time** you launch a session:
 
 ```bash
-claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay
+claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay
 ```
 
 > **Development-channels prompt:** Claude Code will show a menu (“I am using this for local development” vs “Exit”). Choose **1** and press **Enter**. This is required by the CLI; Telegram/`/new` cannot automate it.
@@ -93,7 +93,7 @@ The script answers **1** when it sees the “local development” line, then kee
 > **Tip:** Add a shell alias to avoid typing this each time:
 >
 > ```bash
-> alias cc='claude --channels server:channel-relay --dangerously-load-development-channels server:channel-relay'
+> alias cc='claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay'
 > ```
 >
 > `/new` runs `claude` with those flags in a new Terminal (or iTerm) window. Use `DESKTOP_CLAUDE_COMMAND` in `.env` if you prefer a custom shell line (see `.env.example`).
