@@ -27,6 +27,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 | Live handoff | `/watch`, `/unwatch`                               |
 | Files        | `/pwd`, `/cd`, `/ls`                               |
 | Quota        | `/usage`                                           |
+| Scripts      | `/execute`                                         |
 
 ## Quick Start
 
@@ -130,6 +131,23 @@ terminal via `DESKTOP_TERMINAL_APP` in `.env`:
 | `cmux`     | cmux.app workspace — must have the `cmux` CLI on `$PATH` |
 
 Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume opens Terminal in that directory and starts `claude` with the channel-relay flags (same as `/new`).
+
+## Shell Scripts (`/execute`)
+
+`/execute` shows inline Start/Stop buttons for any shell scripts listed in `execute-commands.json` — handy for toggling a VPN, port-forward, or other long-running helper from your phone. Copy the example and edit:
+
+```bash
+cp execute-commands.example.json execute-commands.json
+```
+
+```json
+[
+  { "name": "VPN", "script": "/absolute/path/to/connect-vpn.sh" },
+  { "name": "Tunnel", "script": "/absolute/path/to/tunnel.sh" }
+]
+```
+
+Scripts run detached; Start/Stop liveness is tracked by PID. Override the config location with `EXECUTE_COMMANDS_FILE` in `.env`.
 
 ## Development
 
