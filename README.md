@@ -109,7 +109,7 @@ claude                    # Current directory
 claude --cwd ~/code/foo   # Specific directory
 ```
 
-Or spawn a relay-enabled desktop session from Telegram with `/new` (**macOS** — opens **Terminal** or **iTerm2**):
+Or spawn a relay-enabled desktop session from Telegram with `/new` (**macOS**):
 
 ```
 /new                      # CLAUDE_WORKING_DIR
@@ -119,6 +119,16 @@ Or spawn a relay-enabled desktop session from Telegram with `/new` (**macOS** �
 
 > Set `CLAUDE_WORKING_DIR` in `.env` to use relative paths with `/new`.
 
+`/new` opens a new window in **Terminal.app** by default. Pick a different
+terminal via `DESKTOP_TERMINAL_APP` in `.env`:
+
+| Value      | Launches                                                 |
+| ---------- | -------------------------------------------------------- |
+| `Terminal` | macOS Terminal.app (default)                             |
+| `iTerm2`   | iTerm2 via AppleScript                                   |
+| `Ghostty`  | Ghostty.app                                              |
+| `cmux`     | cmux.app workspace — must have the `cmux` CLI on `$PATH` |
+
 Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume opens Terminal in that directory and starts `claude` with the channel-relay flags (same as `/new`).
 
 ## Development
@@ -126,7 +136,7 @@ Resume an offline session (one with JSONL history but no live process) with `/se
 ```bash
 bun run dev          # Run with file watching
 bun run typecheck    # TypeScript type checking
-bun test             # Run all tests
+bun run test         # Run all tests (isolated per-file to avoid state leaks)
 ```
 
 ## Running as a Service (macOS)
