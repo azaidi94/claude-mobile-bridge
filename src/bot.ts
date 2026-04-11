@@ -40,6 +40,7 @@ import {
   handleLs,
   handleUsage,
   handleExecute,
+  handleSettings,
   handleText,
   handleVoice,
   handlePhoto,
@@ -124,6 +125,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("ls", handleLs);
   bot.command("usage", handleUsage);
   bot.command("execute", handleExecute);
+  bot.command("settings", handleSettings);
 
   // Message handlers
   bot.on("message:text", handleText);

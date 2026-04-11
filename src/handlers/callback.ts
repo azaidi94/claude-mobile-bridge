@@ -41,6 +41,18 @@ import {
   offlineSessionCache,
   spawnDesktopClaudeSession,
 } from "./commands";
+import {
+  pendingSettingsInput,
+  rerenderSettingsPanel,
+  TERMINAL_LABELS,
+} from "./settings";
+import {
+  saveSetting,
+  getTerminal,
+  getWorkingDir,
+  getOverrides,
+} from "../settings";
+import type { TerminalApp } from "../config";
 import { debug, error as logError, info } from "../logger";
 import {
   getExecuteCommands,
@@ -573,6 +585,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  // Settings panel callbacks: set:<action>[:<field>[:<value>]]
+  if (callbackData.startsWith("set:")) {
+    await handleSettingsCallback(ctx, chatId, callbackData);
+    return;
+  }
+
   // 6. Parse callback data: askuser:{request_id}:{option_index}
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
@@ -710,4 +728,158 @@ export async function handleCallback(ctx: Context): Promise<void> {
   } finally {
     typing.stop();
   }
+}
+
+async function handleSettingsCallback(
+  ctx: Context,
+  chatId: number,
+  data: string,
+): Promise<void> {
+  const parts = data.split(":");
+  const action = parts[1];
+
+  if (action === "edit") {
+    const field = parts[2];
+    if (field === "terminal") {
+      const current = getTerminal();
+      const choices: TerminalApp[] = ["terminal", "iterm2", "ghostty", "cmux"];
+      const rows = choices.map((c) => [
+        {
+          text: c === current ? `✓ ${TERMINAL_LABELS[c]}` : TERMINAL_LABELS[c]!,
+          callback_data: `set:pick:terminal:${c}`,
+        },
+      ]);
+      rows.push([
+        { text: "↺ Reset to default", callback_data: "set:reset:terminal" },
+        { text: "← Back", callback_data: "set:back" },
+      ]);
+      await ctx.editMessageText("🖥 <b>Select terminal:</b>", {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: rows },
+      });
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    if (field === "workdir") {
+      pendingSettingsInput.set(chatId, "workdir");
+      await ctx.editMessageText(
+        `📁 <b>Reply with absolute path</b> (or <code>/cancel</code>):\n\nCurrent: <code>${escapeHtml(
+          getWorkingDir(),
+        )}</code>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "↺ Reset to default",
+                  callback_data: "set:reset:workdir",
+                },
+                { text: "← Cancel", callback_data: "set:back" },
+              ],
+            ],
+          },
+        },
+      );
+      await ctx.answerCallbackQuery({ text: "Reply with new path" });
+      return;
+    }
+
+    if (field === "autowatch") {
+      // Cycle: default(undefined) → off(false) → on(true) → default
+      const current = getOverrides().autoWatchOnSpawn;
+      let next: boolean | undefined;
+      if (current === undefined) next = false;
+      else if (current === false) next = true;
+      else next = undefined;
+      await saveSetting({ autoWatchOnSpawn: next });
+      await rerenderSettingsPanel(ctx);
+      const label = next === undefined ? "default (on)" : next ? "on" : "off";
+      await ctx.answerCallbackQuery({ text: `Auto-watch: ${label}` });
+      return;
+    }
+
+    if (field === "model") {
+      const current = session.model;
+      const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
+      const rows = models.map(([id, name]) => [
+        {
+          text: id === current ? `✓ ${name}` : name,
+          callback_data: `set:pick:model:${id}`,
+        },
+      ]);
+      rows.push([
+        { text: "↺ Reset to default", callback_data: "set:reset:model" },
+        { text: "← Back", callback_data: "set:back" },
+      ]);
+      await ctx.editMessageText(
+        `🤖 <b>Model:</b> ${session.modelDisplayName}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: rows },
+        },
+      );
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "Unknown field" });
+    return;
+  }
+
+  if (action === "pick") {
+    const field = parts[2];
+    const value = parts[3];
+    if (!field || !value) {
+      await ctx.answerCallbackQuery({ text: "Bad payload" });
+      return;
+    }
+    if (field === "terminal") {
+      await saveSetting({ terminal: value as TerminalApp });
+      await rerenderSettingsPanel(ctx);
+      await ctx.answerCallbackQuery({ text: `Terminal: ${value}` });
+      return;
+    }
+    if (field === "model") {
+      // setModel() writes to settings AND updates the running session.
+      session.setModel(value as ModelId);
+      await rerenderSettingsPanel(ctx);
+      await ctx.answerCallbackQuery({ text: `Model: ${value}` });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: "Unknown field" });
+    return;
+  }
+
+  if (action === "reset") {
+    const field = parts[2];
+    if (field === "terminal") {
+      await saveSetting({ terminal: undefined });
+    } else if (field === "workdir") {
+      await saveSetting({ workingDir: undefined });
+      pendingSettingsInput.delete(chatId);
+    } else if (field === "autowatch") {
+      await saveSetting({ autoWatchOnSpawn: undefined });
+    } else if (field === "model") {
+      // Clearing the override only affects next restart; the live session
+      // keeps whatever model it last had.
+      await saveSetting({ defaultModel: undefined });
+    } else {
+      await ctx.answerCallbackQuery({ text: "Unknown field" });
+      return;
+    }
+    await rerenderSettingsPanel(ctx);
+    await ctx.answerCallbackQuery({ text: `Reset ${field}` });
+    return;
+  }
+
+  if (action === "back") {
+    pendingSettingsInput.delete(chatId);
+    await rerenderSettingsPanel(ctx);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  await ctx.answerCallbackQuery({ text: "Unknown action" });
 }

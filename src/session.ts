@@ -23,8 +23,8 @@ import {
   TEMP_PATHS,
   THINKING_DEEP_KEYWORDS,
   THINKING_KEYWORDS,
-  WORKING_DIR,
 } from "./config";
+import { getWorkingDir, getDefaultModelSetting, saveSetting } from "./settings";
 import { formatToolStatus } from "./formatting";
 import {
   checkPendingAskUserRequests,
@@ -165,10 +165,16 @@ function isAcceptableModelId(m: string): boolean {
 }
 
 const envModel = process.env.CLAUDE_MODEL?.trim() || undefined;
+const settingsModel = getDefaultModelSetting();
+
+function pickAcceptableModel(m: string | undefined): ModelId | undefined {
+  if (m && isAcceptableModelId(m)) return m as ModelId;
+  return undefined;
+}
+
 const DEFAULT_MODEL: ModelId =
-  (envModel && isAcceptableModelId(envModel)
-    ? (envModel as ModelId)
-    : undefined) ??
+  pickAcceptableModel(settingsModel) ??
+  pickAcceptableModel(envModel) ??
   readClaudeSettingsModel() ??
   "opus";
 
@@ -187,7 +193,7 @@ class ClaudeSession {
   private _model: ModelId = DEFAULT_MODEL;
 
   // Multi-session support
-  private _workingDir: string = WORKING_DIR;
+  private _workingDir: string = getWorkingDir();
   private _sessionName: string | null = null;
 
   private abortController: AbortController | null = null;
@@ -222,6 +228,9 @@ class ClaudeSession {
   setModel(model: ModelId): void {
     this._model = model;
     info(`model: ${model}`);
+    saveSetting({ defaultModel: model }).catch(() => {
+      // non-fatal; runtime already updated
+    });
   }
 
   get isActive(): boolean {
@@ -799,7 +808,7 @@ class ClaudeSession {
     this.sessionId = null;
     this.lastActivity = null;
     this._sessionName = null;
-    this._workingDir = WORKING_DIR;
+    this._workingDir = getWorkingDir();
     info("session cleared");
   }
 

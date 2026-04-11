@@ -28,6 +28,7 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 | Files        | `/pwd`, `/cd`, `/ls`                               |
 | Quota        | `/usage`                                           |
 | Scripts      | `/execute`                                         |
+| Settings     | `/settings`                                        |
 
 ## Quick Start
 
@@ -148,6 +149,19 @@ cp execute-commands.example.json execute-commands.json
 ```
 
 Scripts run detached; Start/Stop liveness is tracked by PID. Override the config location with `EXECUTE_COMMANDS_FILE` in `.env`.
+
+## Settings (`/settings`)
+
+`/settings` opens a persistent settings panel with tap-to-edit fields:
+
+| Field          | Effect                                             |
+| -------------- | -------------------------------------------------- |
+| 🖥 Terminal    | Terminal used by `/new` and `/sessions → Resume`   |
+| 📁 Working dir | Default project dir for `/new` (when no arg given) |
+| 👁 Auto-watch  | Whether `/new` auto-attaches a watch after spawn   |
+| 🤖 Model       | Default model — shares state with `/model`         |
+
+Values live in `~/.claude-mobile-bridge/settings.json` and override the matching `.env` values. Tap **↺ Reset to default** on any sub-menu to drop the override and fall back to the env value. Auto-watch cycles `default → off → on → default` on each tap.
 
 ## Development
 

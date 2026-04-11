@@ -47,6 +47,16 @@ mock.module("../config", () => ({
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
 }));
 
+mock.module("../settings", () => ({
+  getWorkingDir: () => "/tmp/test-working-dir",
+  getTerminal: () => "terminal" as const,
+  getAutoWatchOnSpawn: () => true,
+  getDefaultModelSetting: () => undefined,
+  getOverrides: () => ({}),
+  saveSetting: mock(() => Promise.resolve()),
+  _reloadForTests: mock(() => {}),
+}));
+
 // Mock sessions module
 mock.module("../sessions", () => ({
   getSessions: mock(() => []),

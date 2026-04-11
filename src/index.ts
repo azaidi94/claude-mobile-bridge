@@ -5,12 +5,8 @@
  */
 
 import { run } from "@grammyjs/runner";
-import {
-  TELEGRAM_TOKEN,
-  WORKING_DIR,
-  ALLOWED_USERS,
-  RESTART_FILE,
-} from "./config";
+import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
+import { getWorkingDir } from "./settings";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
   startWatcher,
@@ -44,7 +40,7 @@ process.on("unhandledRejection", (reason) => {
 // ============== Startup ==============
 
 info(
-  `cwd: ${WORKING_DIR} (${ALLOWED_USERS.length} user${ALLOWED_USERS.length !== 1 ? "s" : ""})`,
+  `cwd: ${getWorkingDir()} (${ALLOWED_USERS.length} user${ALLOWED_USERS.length !== 1 ? "s" : ""})`,
 );
 
 // Load persisted chat IDs and pinned message IDs
@@ -94,6 +90,7 @@ await bot.api.setMyCommands([
   { command: "model", description: "Show/switch model" },
   { command: "usage", description: "Claude Code quota stats" },
   { command: "execute", description: "Start/stop configured scripts" },
+  { command: "settings", description: "Persistent settings panel" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);

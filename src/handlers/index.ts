@@ -29,6 +29,7 @@ export { handleDocument } from "./document";
 export { handleCallback } from "./callback";
 export { handleUsage } from "./usage";
 export { handleExecute } from "./execute";
+export { handleSettings, pendingSettingsInput } from "./settings";
 export {
   handleWatch,
   handleUnwatch,

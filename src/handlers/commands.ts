@@ -11,16 +11,15 @@ import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import {
-  WORKING_DIR,
   ALLOWED_USERS,
   RESTART_FILE,
   findClaudeCli,
   isDesktopClaudeSpawnSupported,
   DESKTOP_CLAUDE_DEFAULT_ARGS,
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
-  DESKTOP_TERMINAL_APP,
   type TerminalApp,
 } from "../config";
+import { getWorkingDir, getTerminal, getAutoWatchOnSpawn } from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
@@ -223,7 +222,7 @@ function openMacOSTerminalWithCommand(
   stderr: string;
 } {
   const built = buildTerminalSpawnArgs(
-    DESKTOP_TERMINAL_APP,
+    getTerminal(),
     shellCommand,
     explicitPath,
   );
@@ -312,6 +311,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/usage - Show session &amp; weekly usage\n\n` +
       `<b>Scripts:</b>\n` +
       `/execute - Start/stop configured scripts\n\n` +
+      `<b>Settings:</b>\n` +
+      `/settings - Persistent settings panel\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt active query\n` +
       `• Prefix with <code>//</code> to forward slash commands to Claude (e.g. <code>//clear</code>, <code>//compact</code>)\n` +
@@ -521,7 +522,11 @@ export async function spawnDesktopClaudeSession(
       // the session, and start watching.
       session.setWorkingDir(spawnCwd);
       setActiveSession(spawned.name);
-      startWatchingSession(api, chatId, spawned.name, "spawn").catch(() => {});
+      if (getAutoWatchOnSpawn()) {
+        startWatchingSession(api, chatId, spawned.name, "spawn").catch(
+          () => {},
+        );
+      }
       await editStatus(
         `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
       );
@@ -583,7 +588,9 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   const text = ctx.message?.text || "";
   const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
-  const explicitPath = rawPath ? resolve(WORKING_DIR, rawPath) : WORKING_DIR;
+  const explicitPath = rawPath
+    ? resolve(getWorkingDir(), rawPath)
+    : getWorkingDir();
 
   try {
     const s = await stat(explicitPath);
@@ -814,7 +821,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const dir = (
     session.workingDir ||
     activeSession?.info.dir ||
-    WORKING_DIR
+    getWorkingDir()
   ).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
@@ -1182,7 +1189,7 @@ export async function handlePwd(ctx: Context): Promise<void> {
     return;
   }
 
-  const dir = session.workingDir || WORKING_DIR;
+  const dir = session.workingDir || getWorkingDir();
   await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
     parse_mode: "HTML",
   });
@@ -1215,7 +1222,7 @@ export async function handleCd(ctx: Context): Promise<void> {
   }
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
-  const targetPath = resolve(session.workingDir || WORKING_DIR, rawPath);
+  const targetPath = resolve(session.workingDir || getWorkingDir(), rawPath);
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {
@@ -1264,8 +1271,8 @@ export async function handleLs(ctx: Context): Promise<void> {
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
   const targetPath = rawPath
-    ? resolve(session.workingDir || WORKING_DIR, rawPath)
-    : session.workingDir || WORKING_DIR;
+    ? resolve(session.workingDir || getWorkingDir(), rawPath)
+    : session.workingDir || getWorkingDir();
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {

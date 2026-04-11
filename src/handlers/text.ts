@@ -34,6 +34,11 @@ import {
   truncate,
 } from "../logger";
 import { sendViaRelay } from "./relay-bridge";
+import { isAbsolute } from "path";
+import { stat } from "fs/promises";
+import { pendingSettingsInput } from "./settings";
+import { saveSetting } from "../settings";
+import { escapeHtml } from "../formatting";
 
 /**
  * Handle incoming text messages.
@@ -68,6 +73,39 @@ export async function handleText(ctx: Context): Promise<void> {
   // Pass-through prefix: //cmd → forward /cmd directly to Claude (bypasses bot commands)
   if (message.startsWith("//")) {
     message = message.slice(1);
+  }
+
+  // 1.4. Check for pending settings input (working dir entry)
+  if (pendingSettingsInput.has(chatId)) {
+    const field = pendingSettingsInput.get(chatId)!;
+    if (message.trim() === "/cancel") {
+      pendingSettingsInput.delete(chatId);
+      await ctx.reply("✖ Cancelled.");
+      return;
+    }
+    if (field === "workdir") {
+      const path = message.trim();
+      if (!isAbsolute(path)) {
+        await ctx.reply("❌ Path must be absolute (start with /).");
+        return;
+      }
+      try {
+        const s = await stat(path);
+        if (!s.isDirectory()) {
+          await ctx.reply("❌ Not a directory.");
+          return;
+        }
+      } catch {
+        await ctx.reply("❌ Path does not exist.");
+        return;
+      }
+      await saveSetting({ workingDir: path });
+      pendingSettingsInput.delete(chatId);
+      await ctx.reply(`✅ Working dir set:\n<code>${escapeHtml(path)}</code>`, {
+        parse_mode: "HTML",
+      });
+      return;
+    }
   }
 
   // 1.5. Check for pending plan feedback

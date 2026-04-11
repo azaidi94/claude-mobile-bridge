@@ -91,6 +91,16 @@ mock.module("../config", () => ({
   ...DESKTOP_SPAWN_CONFIG_MOCK,
 }));
 
+mock.module("../settings", () => ({
+  getWorkingDir: () => "/tmp/test-working-dir",
+  getTerminal: () => "terminal" as const,
+  getAutoWatchOnSpawn: () => true,
+  getDefaultModelSetting: () => undefined,
+  getOverrides: () => ({}),
+  saveSetting: mock(() => Promise.resolve()),
+  _reloadForTests: mock(() => {}),
+}));
+
 // Mock handlers to avoid complex dependencies
 mock.module("../handlers", () => ({
   handleStart: mock(() => {}),
@@ -117,6 +127,7 @@ mock.module("../handlers", () => ({
   handleLs: mock(() => {}),
   handleUsage: mock(() => {}),
   handleExecute: mock(() => {}),
+  handleSettings: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),

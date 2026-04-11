@@ -5,7 +5,17 @@
  * notifySessionOffline, and the new isWatching status format.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, mock } from "bun:test";
+
+mock.module("../settings", () => ({
+  getWorkingDir: () => "/tmp/test-working-dir",
+  getTerminal: () => "terminal" as const,
+  getAutoWatchOnSpawn: () => true,
+  getDefaultModelSetting: () => undefined,
+  getOverrides: () => ({}),
+  saveSetting: mock(() => Promise.resolve()),
+  _reloadForTests: mock(() => {}),
+}));
 
 // Import directly from source to avoid barrel export issues
 import {
