@@ -84,10 +84,19 @@ export const DESKTOP_TERMINAL_APP = (
 /**
  * Extra arguments passed to `claude` when opening a desktop session (channel relay).
  * Override if your relay name differs.
+ *
+ * NB: only pass `--dangerously-load-development-channels` — passing the extra
+ * `--channels server:channel-relay` flag causes Claude Code to also try
+ * registering the channel via the *approved* allowlist path, producing a
+ * "not on the approved channels allowlist" warning AND listing the channel
+ * twice in the UI. The dangerous flag alone both approves and starts listening.
+ *
+ * `--dangerously-skip-permissions` is included so headless /new sessions
+ * (no human at the Mac) don't block on per-tool approval prompts.
  */
 export const DESKTOP_CLAUDE_DEFAULT_ARGS =
   process.env.DESKTOP_CLAUDE_ARGS?.trim() ||
-  "--channels server:channel-relay --dangerously-load-development-channels server:channel-relay";
+  "--dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay";
 
 /**
  * Optional shell command template for desktop spawn; `{dir}` is replaced with a

@@ -32,7 +32,12 @@ if [[ -z "$CLAUDE_BIN" || ! -x "$CLAUDE_BIN" ]]; then
   exit 1
 fi
 
-RELAY_ARGS="${CLAUDE_RELAY_ARGS:---channels server:channel-relay --dangerously-load-development-channels server:channel-relay}"
+#   NB: do NOT pass `--channels server:channel-relay` — that adds the entry
+#   to the *regular* approved-channels list (which requires prior allowlist
+#   approval), producing a "not on the approved channels allowlist" warning
+#   AND listing the channel twice in the UI. `--dangerously-load-development-channels`
+#   alone is sufficient to both approve and listen on the channel.
+RELAY_ARGS="${CLAUDE_RELAY_ARGS:---dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay}"
 
 QUOTE_DIR=$(printf %q "$DIR")
 QUOTE_BIN=$(printf %q "$CLAUDE_BIN")
@@ -48,7 +53,10 @@ fi
 # Write the expect script to a temp file so that expect's stdin remains the
 # real terminal pty (not the heredoc). This lets `interact` hand control back
 # to the user after startup prompts are answered, keeping the terminal usable.
-EXPECT_SCRIPT=$(mktemp /tmp/claude-relay-XXXXXX.exp)
+# NB: BSD mktemp (macOS) only substitutes the X's when they're at the very
+# end of the template — a `.exp` suffix makes mktemp create a literal
+# `XXXXXX.exp` file, which collides on the second run. Keep X's at the end.
+EXPECT_SCRIPT=$(mktemp /tmp/claude-relay-XXXXXX)
 trap 'rm -f "$EXPECT_SCRIPT"' EXIT
 
 cat > "$EXPECT_SCRIPT" <<'EXPECT'
@@ -84,4 +92,6 @@ expect {
 }
 EXPECT
 
-exec /usr/bin/expect "$EXPECT_SCRIPT"
+# Don't `exec` expect — that replaces this shell and the EXIT trap never
+# fires, leaving stale temp files in /tmp until the next reboot.
+/usr/bin/expect "$EXPECT_SCRIPT"
