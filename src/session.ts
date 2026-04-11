@@ -124,14 +124,31 @@ function getTextFromMessage(msg: SDKMessage): string | null {
 /**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
-// Available models
-export type ModelId = "claude-opus-4-6" | "opus" | "sonnet" | "haiku";
+/**
+ * Model identifiers we accept from the /model picker, CLAUDE_MODEL env var,
+ * and ~/.claude/settings.json. Short aliases map to display labels via
+ * MODEL_DISPLAY_NAMES; full Anthropic IDs (template-literal branch) are
+ * passed through to the Claude CLI as-is and display using the raw string.
+ */
+type ShortModelId = "opus" | "sonnet" | "haiku";
+export type ModelId = ShortModelId | `claude-${string}`;
 
-export const MODEL_DISPLAY_NAMES: Record<string, string> = {
+/**
+ * Display labels for the short aliases. Narrow typed on purpose —
+ * full model IDs (e.g. "claude-sonnet-4-6") aren't enumerable, so
+ * `getModelDisplayName()` below falls back to the raw ID for those.
+ * Use the helper everywhere instead of indexing this map directly.
+ */
+export const MODEL_DISPLAY_NAMES = {
   opus: "Opus 4.6",
   sonnet: "Sonnet 4.6",
   haiku: "Haiku 4.5",
-};
+} as const satisfies Record<ShortModelId, string>;
+
+/** Safe display name for any ModelId — short alias or full claude-* ID. */
+export function getModelDisplayName(m: ModelId): string {
+  return m in MODEL_DISPLAY_NAMES ? MODEL_DISPLAY_NAMES[m as ShortModelId] : m;
+}
 
 function readClaudeSettingsModel(): ModelId | undefined {
   try {
@@ -153,9 +170,22 @@ function readClaudeSettingsModel(): ModelId | undefined {
   return undefined;
 }
 
-const envModel = process.env.CLAUDE_MODEL as ModelId | undefined;
+/**
+ * A valid ModelId is either a short alias present in MODEL_DISPLAY_NAMES
+ * (opus/sonnet/haiku) OR a full Anthropic model ID prefixed with "claude-"
+ * (e.g. "claude-sonnet-4-6"). Both forms are accepted everywhere and the
+ * Claude CLI itself handles the resolution. The short-alias map is only
+ * used for the /model picker's display labels.
+ */
+function isAcceptableModelId(m: string): boolean {
+  return m in MODEL_DISPLAY_NAMES || m.startsWith("claude-");
+}
+
+const envModel = process.env.CLAUDE_MODEL?.trim() || undefined;
 const DEFAULT_MODEL: ModelId =
-  (envModel && envModel in MODEL_DISPLAY_NAMES ? envModel : undefined) ??
+  (envModel && isAcceptableModelId(envModel)
+    ? (envModel as ModelId)
+    : undefined) ??
   readClaudeSettingsModel() ??
   "opus";
 
@@ -203,7 +233,7 @@ class ClaudeSession {
   }
 
   get modelDisplayName(): string {
-    return MODEL_DISPLAY_NAMES[this._model] ?? this._model;
+    return getModelDisplayName(this._model);
   }
 
   setModel(model: ModelId): void {

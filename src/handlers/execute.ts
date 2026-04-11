@@ -12,6 +12,8 @@ import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { escapeHtml } from "../formatting";
 import { info, warn } from "../logger";
+import { isAuthorized } from "../security";
+import { ALLOWED_USERS } from "../config";
 
 export interface ExecuteCommand {
   name: string;
@@ -112,13 +114,22 @@ export function buildExecuteMenu(commands: ExecuteCommand[]): {
 }
 
 export async function handleExecute(ctx: Context): Promise<void> {
+  // /execute lists configured shell scripts and starts/stops them from
+  // callback buttons. The callback path is already auth-gated at
+  // callback.ts:65, but rendering the menu leaks command names and script
+  // existence to unauthorized users — guard here too.
+  if (!isAuthorized(ctx.from?.id, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
   const commands = getExecuteCommands();
 
   if (commands.length === 0) {
     const file = getCommandsFile();
     await ctx.reply(
       "No execute commands configured.\n\n" +
-        `Create <code>${escapeHtml(file)}</code>:\n` +
+        `Copy <code>execute-commands.example.json</code> → <code>${escapeHtml(file)}</code> and edit:\n` +
         `<pre>[{"name": "VPN", "script": "/path/to/script.sh"}]</pre>`,
       { parse_mode: "HTML" },
     );

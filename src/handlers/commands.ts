@@ -320,18 +320,22 @@ export async function spawnDesktopClaudeSession(
       return;
     }
 
-    session.setWorkingDir(spawnCwd);
-
     // Send the initial "Waiting for relay…" status and remember its
     // message_id so every terminal state (success / timeout / ambiguous /
     // unresolved) can edit this bubble in place instead of stacking new
     // messages on top of a stale "Waiting…" banner.
+    //
+    // NB: we do NOT call session.setWorkingDir here. osascript can report
+    // success even if Terminal silently fails to launch (Accessibility
+    // denied, profile issue, etc.), so the working dir only gets updated
+    // in the success branch below — after the relay port file confirms a
+    // live claude process in that directory.
     const statusMsg = await api.sendMessage(
       chatId,
       "⏳ Terminal opened — starting Claude.\n\n" +
         "<b>At the Mac:</b> if you see the development-channels menu, choose <b>1</b> (local development) and press Enter.\n\n" +
         "<b>Remote only:</b> set <code>DESKTOP_CLAUDE_COMMAND</code> to <code>…/scripts/claude-relay-launch.sh {dir}</code> (see README) so <code>expect</code> can send that for you.\n\n" +
-        `<code>/pwd</code> and <code>/ls</code> now use this folder until you switch sessions.\n\nWaiting for relay…`,
+        `Once the relay connects, <code>/pwd</code> and <code>/ls</code> will switch to this folder.\n\nWaiting for relay…`,
       { parse_mode: "HTML" },
     );
     const editStatus = (text: string): Promise<unknown> =>
@@ -418,6 +422,9 @@ export async function spawnDesktopClaudeSession(
     }
 
     if (spawned) {
+      // Relay confirmed live — now safe to update working dir, activate
+      // the session, and start watching.
+      session.setWorkingDir(spawnCwd);
       setActiveSession(spawned.name);
       startWatchingSession(api, chatId, spawned.name, "spawn").catch(() => {});
       await editStatus(

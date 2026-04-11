@@ -6,7 +6,12 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
+import {
+  session,
+  MODEL_DISPLAY_NAMES,
+  getModelDisplayName,
+  type ModelId,
+} from "../session";
 import { ALLOWED_USERS } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized } from "../security";
@@ -79,7 +84,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     // Already on this model
     if (session.model === modelId) {
       await ctx.answerCallbackQuery({
-        text: `Already using ${MODEL_DISPLAY_NAMES[modelId]}`,
+        text: `Already using ${getModelDisplayName(modelId)}`,
       });
       return;
     }
@@ -96,14 +101,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
     ]);
 
     await ctx.editMessageText(
-      `🤖 <b>Model:</b> ${MODEL_DISPLAY_NAMES[modelId]}`,
+      `🤖 <b>Model:</b> ${getModelDisplayName(modelId)}`,
       {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: buttons },
       },
     );
     await ctx.answerCallbackQuery({
-      text: `Switched to ${MODEL_DISPLAY_NAMES[modelId]}`,
+      text: `Switched to ${getModelDisplayName(modelId)}`,
     });
 
     // Update pinned status with new model

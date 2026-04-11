@@ -201,6 +201,7 @@ mock.module("../session", () => ({
     "claude-sonnet-4-5-20250514": "Sonnet 4.5",
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
+  getModelDisplayName: (m: string) => m,
 }));
 
 // Mock security - must include all exports to avoid breaking other tests
