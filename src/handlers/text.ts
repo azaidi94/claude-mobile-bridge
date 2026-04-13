@@ -70,11 +70,6 @@ export async function handleText(ctx: Context): Promise<void> {
     messagePreview: truncate(message, 120),
   });
 
-  // Pass-through prefix: //cmd → forward /cmd directly to Claude (bypasses bot commands)
-  if (message.startsWith("//")) {
-    message = message.slice(1);
-  }
-
   // 1.4. Check for pending settings input (working dir entry)
   if (pendingSettingsInput.has(chatId)) {
     const field = pendingSettingsInput.get(chatId)!;
@@ -278,19 +273,6 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 1.7. Check for active watch — relay message to desktop session.
-  // Slash commands are rejected: a relayed "/cmd" arrives at the desktop
-  // Claude as plain text (the CLI's slash-command processor only runs on
-  // stdin, not relay messages).
-  if (isWatching(chatId) && message.startsWith("/")) {
-    await ctx.reply(
-      "⚠️ Slash commands don't work during <code>/watch</code> — the desktop session receives text, not CLI commands.\n\n" +
-        "Use <code>/unwatch</code> first, then <code>//" +
-        message.slice(1) +
-        "</code>.",
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
   if (isWatching(chatId)) {
     const relayed = await sendWatchRelay(chatId, username, message, opId);
     if (relayed) {

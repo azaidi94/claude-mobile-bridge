@@ -315,7 +315,6 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/settings - Persistent settings panel\n\n` +
       `<b>Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt active query\n` +
-      `• Prefix with <code>//</code> to forward slash commands to Claude (e.g. <code>//clear</code>, <code>//compact</code>)\n` +
       `• Say "think" for extended reasoning\n` +
       `• Send voice/photo/files directly\n` +
       `• Use /new to reset conversation`,
