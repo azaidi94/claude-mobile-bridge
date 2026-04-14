@@ -12,6 +12,8 @@ import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
+import { getTopicsEnabled } from "../settings";
+import type { TopicManager } from "../topics";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
 const FLAP_BUFFER_MS = 2_000;
@@ -140,6 +142,7 @@ export function setSessionOfflineCallback(
  */
 export function createNotificationHandler(
   botApi: Api,
+  topicManager?: TopicManager,
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
     for (const session of diff.added) {
@@ -157,10 +160,19 @@ export function createNotificationHandler(
       }
       const timer = setTimeout(() => {
         pending.delete(session.dir);
+        if (topicManager && getTopicsEnabled()) {
+          topicManager
+            .createTopic(session.name, session.dir, session.id)
+            .catch((err) =>
+              warn(`notify: topic create failed for ${session.name}: ${err}`),
+            );
+        }
         broadcast(
           botApi,
           `🟢 <b>${escHtml(session.name)}</b> online\n<code>${escHtml(session.dir)}</code>`,
-          new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
+          getTopicsEnabled()
+            ? undefined
+            : new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
         );
       }, FLAP_BUFFER_MS);
       pending.set(session.dir, {
@@ -191,6 +203,16 @@ export function createNotificationHandler(
 
         // Notify watch handler for resume flow
         onSessionOfflineCallback?.(botApi, session.dir);
+
+        if (topicManager && getTopicsEnabled()) {
+          topicManager
+            .updateTopicStatus(session.name, false)
+            .catch((err) =>
+              warn(
+                `notify: topic status update failed for ${session.name}: ${err}`,
+              ),
+            );
+        }
 
         let msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
         if (wasActive) msg += "\n⚠️ was active session";
