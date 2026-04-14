@@ -11,6 +11,8 @@ import {
   removeTopicMapping,
 } from "./topic-store";
 import { warn } from "../logger";
+import { session } from "../session";
+import { getSession } from "../sessions";
 import type { TopicMapping } from "../types";
 
 /**
@@ -40,6 +42,18 @@ export function isSessionTopic(
     topicId: mapping.topicId,
     mapping,
   };
+}
+
+/**
+ * Resolve topic context and load the session.
+ * Returns threadId if in a session topic, undefined otherwise.
+ */
+export function loadTopicSession(ctx: Context): number | undefined {
+  const topicCtx = isSessionTopic(ctx);
+  if (!topicCtx) return undefined;
+  const si = getSession(topicCtx.sessionName);
+  if (si) session.loadFromRegistry(si);
+  return topicCtx.topicId;
 }
 
 /**

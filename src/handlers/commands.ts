@@ -630,17 +630,9 @@ export async function spawnDesktopClaudeSession(
 
       // Create topic for the new session
       if (_topicManager) {
-        const topicId = await _topicManager.createTopic(spawned.name, spawnCwd);
-        if (topicId) {
-          await api.sendMessage(
-            chatId,
-            `🟢 Session started in <code>${escapeHtml(spawnCwd)}</code>`,
-            {
-              parse_mode: "HTML",
-              message_thread_id: topicId,
-            },
-          );
-        }
+        await _topicManager
+          .createTopic(spawned.name, spawnCwd, spawned.id)
+          .catch((err) => warn(`spawn: topic creation failed: ${err}`));
       }
 
       info("spawn: completed", {

@@ -21,7 +21,7 @@ import {
   info,
   warn,
 } from "../logger";
-import { isSessionTopic } from "../topics";
+import { loadTopicSession } from "../topics";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -146,8 +146,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
-  const topicCtx = isSessionTopic(ctx);
-  const threadId = topicCtx?.topicId;
+  const threadId = loadTopicSession(ctx);
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
   info("request: started", {

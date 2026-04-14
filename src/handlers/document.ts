@@ -21,7 +21,7 @@ import {
   info,
   warn,
 } from "../logger";
-import { isSessionTopic } from "../topics";
+import { loadTopicSession } from "../topics";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -520,8 +520,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  const topicCtx = isSessionTopic(ctx);
-  const threadId = topicCtx?.topicId;
+  const threadId = loadTopicSession(ctx);
 
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {

@@ -14,6 +14,7 @@ export {
 export {
   isGeneralTopic,
   isSessionTopic,
+  loadTopicSession,
   getThreadId,
   getThreadIdFromCallback,
   safeSendInThread,

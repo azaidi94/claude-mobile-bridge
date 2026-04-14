@@ -17,7 +17,7 @@ import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
 import { getActiveSession } from "../sessions";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
-import { isSessionTopic } from "../topics";
+import { loadTopicSession } from "../topics";
 
 /**
  * Handle incoming voice messages.
@@ -38,8 +38,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  const topicCtx = isSessionTopic(ctx);
-  const threadId = topicCtx?.topicId;
+  const threadId = loadTopicSession(ctx);
 
   const opId = createOpId("voice");
   const requestStartedAt = Date.now();

@@ -43,8 +43,28 @@ export class TopicManager {
   ): Promise<number | undefined> {
     const existing = getTopicBySession(sessionName);
     if (existing) {
-      debug(`topic-manager: topic already exists for ${sessionName}`);
-      return existing.topicId;
+      // Verify the topic still exists in Telegram
+      try {
+        await this.api.sendMessage(
+          this.chatId,
+          `🟢 <b>${sessionName}</b> online`,
+          { parse_mode: "HTML", message_thread_id: existing.topicId },
+        );
+        updateTopicMapping(sessionName, { isOnline: true, sessionId });
+        debug(
+          `topic-manager: reusing topic ${existing.topicId} for ${sessionName}`,
+        );
+        return existing.topicId;
+      } catch (err) {
+        if (String(err).includes("message thread not found")) {
+          warn(
+            `topic-manager: stale topic ${existing.topicId} for ${sessionName}, recreating`,
+          );
+          removeTopicMapping(sessionName);
+        } else {
+          throw err;
+        }
+      }
     }
 
     try {
