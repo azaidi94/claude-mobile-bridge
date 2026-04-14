@@ -60,6 +60,7 @@ export interface BotOptions {
  */
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
+  let forumGroupDetected = false;
 
   // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
@@ -91,13 +92,28 @@ export function createBot(options: BotOptions): Bot {
       registerChatId(ctx.chat.id);
 
       // Detect group chats with forum topics — notify caller
+      // is_forum may not be on the message update, so also check via getChat()
       if (
-        isNew &&
+        !forumGroupDetected &&
         ctx.chat.type === "supergroup" &&
-        (ctx.chat as any).is_forum &&
         options.onForumGroupDetected
       ) {
-        options.onForumGroupDetected(ctx.chat.id);
+        const isForum = (ctx.chat as any).is_forum;
+        if (isForum) {
+          forumGroupDetected = true;
+          options.onForumGroupDetected(ctx.chat.id);
+        } else {
+          // is_forum might not be in the update — check via API
+          bot.api
+            .getChat(ctx.chat.id)
+            .then((chat) => {
+              if ((chat as any).is_forum && !forumGroupDetected) {
+                forumGroupDetected = true;
+                options.onForumGroupDetected!(ctx.chat!.id);
+              }
+            })
+            .catch(() => {});
+        }
       }
 
       // Create pinned status for new chats

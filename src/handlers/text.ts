@@ -74,6 +74,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // Topic routing — resolve session from topic context
   let threadId: number | undefined;
+  let topicSessionInfo: { id?: string; dir: string; pid?: number } | undefined;
 
   if (getTopicsEnabled()) {
     const topicCtx = isSessionTopic(ctx);
@@ -81,9 +82,10 @@ export async function handleText(ctx: Context): Promise<void> {
     if (topicCtx) {
       // In a session topic — load that session
       threadId = topicCtx.topicId;
-      const sessionInfo = getSession(topicCtx.sessionName);
-      if (sessionInfo) {
-        session.loadFromRegistry(sessionInfo);
+      const si = getSession(topicCtx.sessionName);
+      if (si) {
+        session.loadFromRegistry(si);
+        topicSessionInfo = { id: si.id, dir: si.dir, pid: si.pid };
       }
       // Ensure the watch uses this topic's thread for responses
       if (isWatching(chatId)) {
@@ -328,11 +330,24 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 1.7. Check for active watch — relay message to desktop session.
-  // In topic mode, skip watch relay — use normal relay path which has correct
-  // session context from topic routing. Watch relay is keyed by chatId (group),
-  // not per-topic, so it would send to the wrong session.
-  if (isWatching(chatId) && !threadId) {
-    const relayed = await sendWatchRelay(chatId, username, message, opId);
+  // In topic mode, pass session override so the relay targets the correct session
+  // (topic routing loaded the right session above, but the watch may point elsewhere).
+  if (isWatching(chatId)) {
+    const sessionOverride = topicSessionInfo
+      ? {
+          sessionId: topicSessionInfo.id || "",
+          sessionDir: topicSessionInfo.dir,
+          sessionPid: topicSessionInfo.pid,
+        }
+      : undefined;
+    const relayed = await sendWatchRelay(
+      chatId,
+      username,
+      message,
+      opId,
+      undefined,
+      sessionOverride,
+    );
     if (relayed) {
       ctx
         .replyWithChatAction("typing", { message_thread_id: threadId })

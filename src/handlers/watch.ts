@@ -164,15 +164,22 @@ export async function sendWatchRelay(
   text: string,
   opId?: string,
   imagePath?: string,
+  /** Override session target (for topic mode where watch may point at a different session). */
+  sessionOverride?: {
+    sessionId: string;
+    sessionDir: string;
+    sessionPid?: number;
+  },
 ): Promise<boolean> {
   const state = watches.get(chatId);
   if (!state) return false;
   const startedAt = Date.now();
 
+  const target = sessionOverride || state;
   const client = await getRelayClient({
-    sessionId: state.sessionId,
-    sessionDir: state.sessionDir,
-    claudePid: state.sessionPid,
+    sessionId: target.sessionId,
+    sessionDir: target.sessionDir,
+    claudePid: target.sessionPid,
   });
   if (!client) return false;
 
@@ -328,16 +335,17 @@ export async function startAutoWatch(
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
       watchState.suppressRelayReplyText = true;
+      const tid = watchState.threadId;
 
       if (msg.send_as_pdf && msg.text) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text);
+        sendTextReply(botApi, chatId, msg.text, tid);
       }
 
       if (msg.files?.length) {
         for (const filePath of msg.files) {
-          sendFile(botApi, chatId, filePath).catch((err) =>
+          sendFile(botApi, chatId, filePath, tid).catch((err) =>
             warn(`auto-watch file: ${err}`),
           );
         }
@@ -587,16 +595,17 @@ export async function startWatchingSession(
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
       watchState.suppressRelayReplyText = true;
+      const tid = watchState.threadId;
 
       if (msg.send_as_pdf && msg.text) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text);
+        sendTextReply(botApi, chatId, msg.text, tid);
       }
 
       if (msg.files?.length) {
         for (const filePath of msg.files) {
-          sendFile(botApi, chatId, filePath).catch((err) =>
+          sendFile(botApi, chatId, filePath, tid).catch((err) =>
             warn(`watch file: ${err}`),
           );
         }
