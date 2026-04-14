@@ -4,9 +4,14 @@
  * and provides threadId injection for send methods.
  */
 
-import type { Context } from "grammy";
+import type { Api, Context } from "grammy";
 import { getTopicsEnabled } from "../settings";
-import { getTopicBySession, getSessionByTopic } from "./topic-store";
+import {
+  getTopicBySession,
+  getSessionByTopic,
+  removeTopicMapping,
+} from "./topic-store";
+import { warn } from "../logger";
 import type { TopicMapping } from "../types";
 
 /**
@@ -54,4 +59,31 @@ export function getThreadIdFromCallback(ctx: Context): number | undefined {
   const msg = ctx.callbackQuery?.message;
   if (!msg) return undefined;
   return (msg as any).message_thread_id ?? undefined;
+}
+
+/**
+ * Send a message with threadId, falling back to no thread on 400 errors.
+ * Removes stale topic mapping if thread not found.
+ */
+export async function safeSendInThread(
+  api: Api,
+  chatId: number,
+  text: string,
+  threadId: number | undefined,
+  opts?: Record<string, unknown>,
+): Promise<any> {
+  try {
+    return await api.sendMessage(chatId, text, {
+      ...opts,
+      message_thread_id: threadId,
+    });
+  } catch (err) {
+    if (threadId && String(err).includes("message thread not found")) {
+      warn(`topic-router: stale thread ${threadId}, removing mapping`);
+      const mapping = getSessionByTopic(threadId);
+      if (mapping) removeTopicMapping(mapping.sessionName);
+      return await api.sendMessage(chatId, text, opts);
+    }
+    throw err;
+  }
 }

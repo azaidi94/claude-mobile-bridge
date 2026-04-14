@@ -14,6 +14,7 @@ import {
 } from "./topic-store";
 import { getTopicsEnabled } from "../settings";
 import { info, warn, debug } from "../logger";
+import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 
 interface ReconcileSession {
   name: string;
@@ -71,6 +72,21 @@ export class TopicManager {
       });
 
       info(`topic-manager: created topic ${topicId} for ${sessionName}`);
+
+      // Best-effort: show recent history in the new topic
+      try {
+        const history = await getRecentHistory(sessionId, 3, sessionDir);
+        if (history.length > 0) {
+          const formatted = formatHistoryMessage(history);
+          await this.api.sendMessage(this.chatId, formatted, {
+            parse_mode: "HTML",
+            message_thread_id: topicId,
+          });
+        }
+      } catch {
+        // History is best-effort — don't fail topic creation
+      }
+
       return topicId;
     } catch (err) {
       warn(`topic-manager: createForumTopic failed for ${sessionName}: ${err}`);

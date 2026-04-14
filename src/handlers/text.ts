@@ -38,7 +38,7 @@ import { isAbsolute } from "path";
 import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
 import { getTopicsEnabled, saveSetting } from "../settings";
-import { isGeneralTopic, isSessionTopic } from "../topics";
+import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 
@@ -377,6 +377,12 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
+    if (getTopicsEnabled()) {
+      const topicCtx = isSessionTopic(ctx);
+      if (topicCtx) {
+        updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
+      }
+    }
     session.sessionId = null;
     await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");

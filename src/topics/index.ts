@@ -16,6 +16,7 @@ export {
   isSessionTopic,
   getThreadId,
   getThreadIdFromCallback,
+  safeSendInThread,
 } from "./topic-router";
 
 export { TopicManager } from "./topic-manager";
