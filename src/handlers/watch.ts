@@ -174,6 +174,14 @@ export async function sendWatchRelay(
  * Stop watching for a chat and clean up.
  * If botApi is provided, flushes any pending text message before stopping.
  */
+function cleanupWatch(chatId: number, state: WatchState): void {
+  state.tailer.stop();
+  state.relayCleanup?.();
+  if (state.idCheckInterval) clearInterval(state.idCheckInterval);
+  stopWatchTyping(chatId);
+  watches.delete(chatId);
+}
+
 export function stopWatching(
   chatId: number,
   botApi?: Api,
@@ -185,11 +193,7 @@ export function stopWatching(
     if (botApi && state.currentTextMsg && !state.segmentDone) {
       finalizeTextMessage(botApi, state);
     }
-    state.tailer.stop();
-    state.relayCleanup?.();
-    if (state.idCheckInterval) clearInterval(state.idCheckInterval);
-    stopWatchTyping(chatId);
-    watches.delete(chatId);
+    cleanupWatch(chatId, state);
     info("watch: stopped", {
       chatId,
       sessionName: state.sessionName,
@@ -208,9 +212,7 @@ export function stopWatching(
 export function notifySessionOffline(botApi: Api, sessionDir: string): void {
   for (const [chatId, state] of watches) {
     if (state.sessionDir === sessionDir) {
-      state.tailer.stop();
-      stopWatchTyping(chatId);
-      watches.delete(chatId);
+      cleanupWatch(chatId, state);
 
       // Load session for resume
       const sessionInfo = getSession(state.sessionName);
@@ -393,6 +395,7 @@ export async function startWatchingSession(
   // Detect when the desktop session starts a new conversation (new JSONL, same dir).
   // refresh() diffs by name only, so an ID change won't surface as added/removed.
   watchState.idCheckInterval = setInterval(async () => {
+    if (!watches.has(chatId)) return;
     // Use newest JSONL as source of truth (port file can be stale after /clear).
     // Without this, reconnecting via JSONL scan would cause the stale port file
     // ID to differ from the new watchState.sessionId, ping-ponging back.
@@ -422,7 +425,7 @@ export async function startWatchingSession(
     botApi
       .sendMessage(
         chatId,
-        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation — reconnected.`,
+        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
         { parse_mode: "HTML" },
       )
       .catch(() => {});
