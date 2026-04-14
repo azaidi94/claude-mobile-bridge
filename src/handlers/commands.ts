@@ -85,8 +85,9 @@ export function setTopicManager(tm: TopicManager): void {
 }
 
 /** Whether a forum group has been detected and topic routing is active. */
-export function hasTopicManager(): boolean {
-  return _topicManager !== null;
+/** True when topics are active AND the message is from the forum group. */
+export function isTopicChat(ctx: Context): boolean {
+  return _topicManager !== null && ctx.chat?.type === "supergroup";
 }
 
 /**
@@ -97,7 +98,7 @@ async function showSessionPicker(
   ctx: Context,
   action: string,
 ): Promise<boolean> {
-  if (!_topicManager || !isGeneralTopic(ctx)) return false;
+  if (!isTopicChat(ctx) || !isGeneralTopic(ctx)) return false;
 
   const sessions = getSessions();
   if (sessions.length === 0) {
@@ -328,7 +329,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
     return;
   }
 
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     const topicHelp = [
       "<b>📱 Claude Mobile Bridge v2</b>",
       "",
@@ -718,7 +719,7 @@ export async function handleStop(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -856,7 +857,7 @@ export async function handleKill(ctx: Context): Promise<void> {
   if (!chatId) return;
 
   // Topic context: kill the topic's session directly, show picker in General
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -892,7 +893,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -997,7 +998,7 @@ export async function handleModel(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -1112,7 +1113,7 @@ export async function handleList(ctx: Context): Promise<void> {
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     // Topic mode: show sessions as status list (user navigates by opening topics)
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i]!;
@@ -1181,7 +1182,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (_topicManager) {
+  if (isTopicChat(ctx)) {
     await ctx.reply(
       "ℹ️ /switch is not needed with topics. Just open a session topic.",
     );

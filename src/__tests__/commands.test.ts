@@ -301,6 +301,7 @@ function createMockContext(
     chatId: number;
     messageText: string;
     threadId: number;
+    chatType: string;
   }> = {},
 ) {
   const {
@@ -309,6 +310,7 @@ function createMockContext(
     chatId = 789,
     messageText = "/test",
     threadId,
+    chatType = "private",
   } = overrides;
 
   const replies: Array<{ text: string; options?: Record<string, unknown> }> =
@@ -319,7 +321,7 @@ function createMockContext(
 
   return {
     from: { id: userId, username },
-    chat: { id: chatId },
+    chat: { id: chatId, type: chatType },
     message: {
       text: messageText,
       message_id: 1,
@@ -2007,6 +2009,7 @@ describe("commands: /kill", () => {
       userId: 123456,
       messageText: "/kill",
       threadId: 42,
+      chatType: "supergroup",
     });
 
     await handleKill(ctx as any);

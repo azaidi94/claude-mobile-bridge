@@ -22,7 +22,7 @@ export {
   handleCd,
   handleLs,
   setTopicManager,
-  hasTopicManager,
+  isTopicChat,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";
