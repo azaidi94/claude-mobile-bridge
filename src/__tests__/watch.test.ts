@@ -15,6 +15,8 @@ mock.module("../settings", () => ({
   getOverrides: () => ({}),
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
+  getTopicsEnabled: () => true,
+  getEnablePinnedStatus: () => true,
 }));
 
 // Import directly from source to avoid barrel export issues

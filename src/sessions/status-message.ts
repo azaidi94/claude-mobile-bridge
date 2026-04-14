@@ -10,6 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { Api } from "grammy";
 import { info, warn, debug } from "../logger";
+import { getEnablePinnedStatus } from "../settings";
 
 /**
  * Get current git branch for a directory.
@@ -31,8 +32,12 @@ export async function getGitBranch(cwd: string): Promise<string | null> {
 
 const STATUS_FILE = join(tmpdir(), "claude-telegram-pinned-messages.json");
 
-// Map of chatId -> pinnedMessageId
-const pinnedMessageIds = new Map<number, number>();
+// Map of key -> pinnedMessageId (key = "chatId" or "chatId:topicId")
+const pinnedMessageIds = new Map<string, number>();
+
+function pinnedKey(chatId: number, topicId?: number): string {
+  return topicId ? `${chatId}:${topicId}` : `${chatId}`;
+}
 
 /**
  * Load pinned message IDs from disk.
@@ -42,7 +47,7 @@ export async function loadPinnedMessageIds(): Promise<void> {
     const data = await readFile(STATUS_FILE, "utf-8");
     const parsed: Record<string, number> = JSON.parse(data);
     for (const [k, v] of Object.entries(parsed)) {
-      pinnedMessageIds.set(Number(k), v);
+      pinnedMessageIds.set(k, v);
     }
     debug(`status: loaded ${pinnedMessageIds.size} pinned msg(s)`);
   } catch {
@@ -62,25 +67,32 @@ async function savePinnedMessageIds(): Promise<void> {
 }
 
 /**
- * Get pinned message ID for a chat.
+ * Get pinned message ID for a chat (optionally per-topic).
  */
-export function getPinnedMessageId(chatId: number): number | undefined {
-  return pinnedMessageIds.get(chatId);
+export function getPinnedMessageId(
+  chatId: number,
+  topicId?: number,
+): number | undefined {
+  return pinnedMessageIds.get(pinnedKey(chatId, topicId));
 }
 
 /**
- * Set pinned message ID for a chat.
+ * Set pinned message ID for a chat (optionally per-topic).
  */
-export function setPinnedMessageId(chatId: number, messageId: number): void {
-  pinnedMessageIds.set(chatId, messageId);
+export function setPinnedMessageId(
+  chatId: number,
+  messageId: number,
+  topicId?: number,
+): void {
+  pinnedMessageIds.set(pinnedKey(chatId, topicId), messageId);
   savePinnedMessageIds();
 }
 
 /**
- * Clear pinned message ID for a chat.
+ * Clear pinned message ID for a chat (optionally per-topic).
  */
-export function clearPinnedMessageId(chatId: number): void {
-  pinnedMessageIds.delete(chatId);
+export function clearPinnedMessageId(chatId: number, topicId?: number): void {
+  pinnedMessageIds.delete(pinnedKey(chatId, topicId));
   savePinnedMessageIds();
 }
 
@@ -117,34 +129,40 @@ export async function updatePinnedStatus(
   api: Api,
   chatId: number,
   status: StatusInfo,
+  topicId?: number,
 ): Promise<void> {
+  if (!getEnablePinnedStatus()) return;
+
+  const key = pinnedKey(chatId, topicId);
   const text = formatStatusMessage(status);
-  const existingId = pinnedMessageIds.get(chatId);
+  const existingId = pinnedMessageIds.get(key);
 
   if (existingId) {
     // Try to edit existing message
     try {
       await api.editMessageText(chatId, existingId, text);
-      debug(`status: updated ${chatId}`);
+      debug(`status: updated ${key}`);
       return;
     } catch (err) {
       // Message was deleted or unavailable - create new one
-      debug(`status: recreating for ${chatId}: ${err}`);
-      pinnedMessageIds.delete(chatId);
+      debug(`status: recreating for ${key}: ${err}`);
+      pinnedMessageIds.delete(key);
     }
   }
 
   // Create new message and pin it
   try {
-    const msg = await api.sendMessage(chatId, text);
+    const msg = await api.sendMessage(chatId, text, {
+      message_thread_id: topicId,
+    });
     await api.pinChatMessage(chatId, msg.message_id, {
       disable_notification: true,
     });
-    pinnedMessageIds.set(chatId, msg.message_id);
+    pinnedMessageIds.set(key, msg.message_id);
     await savePinnedMessageIds();
-    info(`status: pinned ${chatId}`);
+    info(`status: pinned ${key}`);
   } catch (err) {
-    warn(`status: pin failed ${chatId}: ${err}`);
+    warn(`status: pin failed ${key}: ${err}`);
   }
 }
 
@@ -154,18 +172,20 @@ export async function updatePinnedStatus(
 export async function removePinnedStatus(
   api: Api,
   chatId: number,
+  topicId?: number,
 ): Promise<void> {
-  const existingId = pinnedMessageIds.get(chatId);
+  const key = pinnedKey(chatId, topicId);
+  const existingId = pinnedMessageIds.get(key);
   if (!existingId) return;
 
   try {
     await api.unpinChatMessage(chatId, existingId);
     await api.deleteMessage(chatId, existingId);
-    debug(`status: removed ${chatId}`);
+    debug(`status: removed ${key}`);
   } catch (err) {
-    debug(`status: remove failed ${chatId}: ${err}`);
+    debug(`status: remove failed ${key}: ${err}`);
   }
 
-  pinnedMessageIds.delete(chatId);
+  pinnedMessageIds.delete(key);
   await savePinnedMessageIds();
 }
