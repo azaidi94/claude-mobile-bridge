@@ -23,7 +23,7 @@ import {
 } from "./streaming";
 import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
-import { isWatching, sendWatchRelay } from "./watch";
+import { isWatching, sendWatchRelay, setWatchThreadId } from "./watch";
 import {
   createOpId,
   debug,
@@ -84,6 +84,10 @@ export async function handleText(ctx: Context): Promise<void> {
       const sessionInfo = getSession(topicCtx.sessionName);
       if (sessionInfo) {
         session.loadFromRegistry(sessionInfo);
+      }
+      // Ensure the watch uses this topic's thread for responses
+      if (isWatching(chatId)) {
+        setWatchThreadId(chatId, threadId);
       }
     } else if (isGeneralTopic(ctx)) {
       // Free text in General — nudge to use a topic

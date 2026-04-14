@@ -206,11 +206,9 @@ export function createNotificationHandler(
 
         if (topicManager && getTopicsEnabled()) {
           topicManager
-            .updateTopicStatus(session.name, false)
+            .deleteTopic(session.name)
             .catch((err) =>
-              warn(
-                `notify: topic status update failed for ${session.name}: ${err}`,
-              ),
+              warn(`notify: topic delete failed for ${session.name}: ${err}`),
             );
         }
 

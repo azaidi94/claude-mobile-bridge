@@ -141,6 +141,20 @@ export function isWatching(chatId: number): boolean {
 }
 
 /**
+ * Set the threadId on an active watch so responses go to the correct topic.
+ */
+export function setWatchThreadId(
+  chatId: number,
+  threadId: number | undefined,
+): void {
+  const state = watches.get(chatId);
+  if (state && threadId && !state.threadId) {
+    state.threadId = threadId;
+    debug(`watch: set threadId=${threadId} for chatId=${chatId}`);
+  }
+}
+
+/**
  * Send a message via relay while watching (no takeover).
  * Returns true if relay was used.
  */

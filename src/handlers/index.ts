@@ -41,6 +41,7 @@ export {
   startWatchingSession,
   startAutoWatch,
   stopAutoWatch,
+  setWatchThreadId,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {
