@@ -7,6 +7,7 @@
 import { run } from "@grammyjs/runner";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
 import { getWorkingDir } from "./settings";
+import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
   startWatcher,
@@ -121,26 +122,35 @@ if (existsSync(RESTART_FILE)) {
 let stopping = false;
 let runner = run(bot);
 
+function restartRunner() {
+  info("restarting runner");
+  runner.stop();
+  runner = run(bot);
+  monitorRunner();
+  info("runner restarted");
+}
+
+setRestartFn(restartRunner);
+
 function monitorRunner() {
-  runner
+  const monitored = runner;
+  monitored
     .task()
     ?.then(() => {
-      if (!stopping) {
-        warn("runner stopped unexpectedly, restarting in 3s");
-        setTimeout(() => {
-          runner = run(bot);
-          monitorRunner();
-        }, 3000);
-      }
+      if (stopping || monitored !== runner) return;
+      warn("runner stopped unexpectedly, restarting in 3s");
+      setTimeout(() => {
+        runner = run(bot);
+        monitorRunner();
+      }, 3000);
     })
     .catch((err) => {
-      if (!stopping) {
-        warn(`runner error: ${err}, restarting in 3s`);
-        setTimeout(() => {
-          runner = run(bot);
-          monitorRunner();
-        }, 3000);
-      }
+      if (stopping || monitored !== runner) return;
+      warn(`runner error: ${err}, restarting in 3s`);
+      setTimeout(() => {
+        runner = run(bot);
+        monitorRunner();
+      }, 3000);
     });
 }
 monitorRunner();

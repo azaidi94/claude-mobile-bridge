@@ -10,9 +10,9 @@ import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
+import { triggerRestart } from "../lifecycle";
 import {
   ALLOWED_USERS,
-  RESTART_FILE,
   findClaudeCli,
   isDesktopClaudeSpawnSupported,
   DESKTOP_CLAUDE_DEFAULT_ARGS,
@@ -875,11 +875,10 @@ export async function handleModel(ctx: Context): Promise<void> {
 }
 
 /**
- * /restart - Restart the bot process.
+ * /restart - Restart the bot runner in-process.
  */
 export async function handleRestart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
-  const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
@@ -888,23 +887,14 @@ export async function handleRestart(ctx: Context): Promise<void> {
 
   const msg = await ctx.reply("🔄 Restarting...");
 
-  if (chatId && msg.message_id) {
-    try {
-      await Bun.write(
-        RESTART_FILE,
-        JSON.stringify({
-          chat_id: chatId,
-          message_id: msg.message_id,
-          timestamp: Date.now(),
-        }),
-      );
-    } catch (e) {
-      warn("restart: failed to save state", e, { path: RESTART_FILE });
-    }
+  try {
+    triggerRestart();
+    await ctx.api.editMessageText(msg.chat.id, msg.message_id, "✅ Restarted");
+  } catch (e) {
+    await ctx.api
+      .editMessageText(msg.chat.id, msg.message_id, `❌ Restart failed: ${e}`)
+      .catch(() => {});
   }
-
-  await Bun.sleep(500);
-  process.exit(0);
 }
 
 /**
