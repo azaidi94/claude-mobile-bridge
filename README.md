@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/Bun-1.0.23+-black.svg)](https://bun.sh/)
 
-Control Claude Code sessions from your phone via Telegram. Multi-session support for switching between projects.
+Control Claude Code sessions from your phone via Telegram. Each Claude Code session gets its own Telegram topic thread for organized multi-session control.
 
 ## Features
 
@@ -20,17 +20,25 @@ Control Claude Code sessions from your phone via Telegram. Multi-session support
 
 ## Commands
 
-| Category     | Commands                                           |
-| ------------ | -------------------------------------------------- |
-| Sessions     | `/list`, `/switch`, `/new`, `/sessions`, `/kill`   |
-| Control      | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Live handoff | `/watch`, `/unwatch`                               |
-| Files        | `/pwd`, `/cd`, `/ls`                               |
-| Quota        | `/usage`                                           |
-| Scripts      | `/execute`                                         |
-| Settings     | `/settings`                                        |
+| Category | Commands                                           |
+| -------- | -------------------------------------------------- |
+| Sessions | `/list`, `/new`, `/sessions`, `/kill`              |
+| Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Files    | `/pwd`, `/cd`, `/ls`                               |
+| Quota    | `/usage`                                           |
+| Scripts  | `/execute`                                         |
+| Settings | `/settings`                                        |
 
 ## Quick Start
+
+### BotFather Setup (Topics)
+
+1. Open @BotFather Mini App
+2. Select your bot
+3. Enable "Topics in Private Chats"
+4. Optional: disable "Allow users to create topics" (bot manages topics)
+
+### Install
 
 **Prerequisites:** [Bun 1.0.23+](https://bun.sh/), [Claude Code CLI](https://claude.com/code), [Telegram Bot Token](https://t.me/botfather)
 
@@ -154,12 +162,14 @@ Scripts run detached; Start/Stop liveness is tracked by PID. Override the config
 
 `/settings` opens a persistent settings panel with tap-to-edit fields:
 
-| Field          | Effect                                             |
-| -------------- | -------------------------------------------------- |
-| 🖥 Terminal    | Terminal used by `/new` and `/sessions → Resume`   |
-| 📁 Working dir | Default project dir for `/new` (when no arg given) |
-| 👁 Auto-watch  | Whether `/new` auto-attaches a watch after spawn   |
-| 🤖 Model       | Default model — shares state with `/model`         |
+| Field            | Effect                                                              |
+| ---------------- | ------------------------------------------------------------------- |
+| 🖥 Terminal      | Terminal used by `/new` and `/sessions → Resume`                    |
+| 📁 Working dir   | Default project dir for `/new` (when no arg given)                  |
+| 👁 Auto-watch    | Whether `/new` auto-attaches a watch after spawn                    |
+| 🤖 Model         | Default model — shares state with `/model`                          |
+| 📌 Topics        | Enable topic-per-session mode (`topicsEnabled`, default: true)      |
+| 📌 Pinned status | Pin status messages in topics (`enablePinnedStatus`, default: true) |
 
 Values live in `~/.claude-mobile-bridge/settings.json` and override the matching `.env` values. Tap **↺ Reset to default** on any sub-menu to drop the override and fall back to the env value. Auto-watch cycles `default → off → on → default` on each tap.
 
