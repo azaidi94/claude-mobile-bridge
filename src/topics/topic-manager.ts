@@ -22,14 +22,10 @@ interface ReconcileSession {
 }
 
 export class TopicManager {
-  private chatId: number;
-
   constructor(
     private api: Api,
-    chatId: number,
-  ) {
-    this.chatId = chatId;
-  }
+    private chatId: number,
+  ) {}
 
   /** Update the target chat ID (e.g. when switching from DM to group). */
   setChatId(chatId: number): void {
@@ -119,20 +115,20 @@ export class TopicManager {
     const store = getTopicStore();
     const liveNames = new Set(liveSessions.map((s) => s.name));
 
-    for (const mapping of store.topics) {
-      if (!liveNames.has(mapping.sessionName) && mapping.isOnline) {
-        await this.updateTopicStatus(mapping.sessionName, false);
-      }
-    }
+    await Promise.allSettled(
+      store.topics
+        .filter((m) => !liveNames.has(m.sessionName) && m.isOnline)
+        .map((m) => this.updateTopicStatus(m.sessionName, false)),
+    );
 
-    for (const session of liveSessions) {
-      const existing = getTopicBySession(session.name);
-      if (!existing) {
-        await this.createTopic(session.name, session.dir, session.id);
-      } else if (!existing.isOnline) {
-        await this.updateTopicStatus(session.name, true);
-      }
-    }
+    await Promise.allSettled(
+      liveSessions.map((s) => {
+        const existing = getTopicBySession(s.name);
+        if (!existing) return this.createTopic(s.name, s.dir, s.id);
+        if (!existing.isOnline) return this.updateTopicStatus(s.name, true);
+        return Promise.resolve();
+      }),
+    );
 
     info(
       `topic-manager: reconciled ${liveSessions.length} session(s), ${store.topics.length} topic(s)`,

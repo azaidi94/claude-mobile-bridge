@@ -102,17 +102,21 @@ export function createBot(options: BotOptions): Bot {
         if (isForum) {
           forumGroupDetected = true;
           options.onForumGroupDetected(ctx.chat.id);
-        } else {
-          // is_forum might not be in the update — check via API
+        } else if (!forumGroupDetected) {
+          // is_forum might not be in the update — check via API (once)
+          forumGroupDetected = true; // set eagerly to prevent parallel getChat calls
           bot.api
             .getChat(ctx.chat.id)
             .then((chat) => {
-              if ((chat as any).is_forum && !forumGroupDetected) {
-                forumGroupDetected = true;
+              if ((chat as any).is_forum) {
                 options.onForumGroupDetected!(ctx.chat!.id);
+              } else {
+                forumGroupDetected = false; // not a forum — allow retry
               }
             })
-            .catch(() => {});
+            .catch(() => {
+              forumGroupDetected = false;
+            });
         }
       }
 
@@ -131,6 +135,14 @@ export function createBot(options: BotOptions): Bot {
           .catch(() => {});
       }
     }
+    // Block DMs when group mode is active
+    if (forumGroupDetected && ctx.chat?.type === "private") {
+      if (ctx.message?.text) {
+        await ctx.reply("ℹ️ Bot is running in group mode. Use the group chat.");
+      }
+      return;
+    }
+
     await next();
   });
 

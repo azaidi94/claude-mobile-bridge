@@ -23,6 +23,7 @@ export function getTopicStore(): TopicStore {
 }
 
 export function setChatId(chatId: number): void {
+  if (store.chatId === chatId) return;
   store.chatId = chatId;
   scheduleSave();
 }

@@ -84,7 +84,6 @@ export function setTopicManager(tm: TopicManager): void {
   _topicManager = tm;
 }
 
-/** Whether a forum group has been detected and topic routing is active. */
 /** True when topics are active AND the message is from the forum group. */
 export function isTopicChat(ctx: Context): boolean {
   return _topicManager !== null && ctx.chat?.type === "supergroup";
@@ -115,6 +114,27 @@ async function showSessionPicker(
   }
   await ctx.reply("Pick a session:", { reply_markup: keyboard });
   return true;
+}
+
+/**
+ * Resolve topic session context: load session from topic, or show picker in General.
+ * Returns true if caller should return early (picker shown or no session).
+ */
+async function resolveTopicSession(
+  ctx: Context,
+  pickerAction: string,
+): Promise<boolean> {
+  if (!isTopicChat(ctx)) return false;
+  const topicCtx = isSessionTopic(ctx);
+  if (topicCtx) {
+    const sessionInfo = getSession(topicCtx.sessionName);
+    if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    return false;
+  }
+  if (isGeneralTopic(ctx)) {
+    return showSessionPicker(ctx, pickerAction);
+  }
+  return false;
 }
 
 function bashSingleQuotedPath(p: string): string {
@@ -718,16 +738,7 @@ export async function handleStop(ctx: Context): Promise<void> {
     return;
   }
 
-  // Topic context: load session from topic or show picker in General
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-    if (topicCtx) {
-      const sessionInfo = getSession(topicCtx.sessionName);
-      if (sessionInfo) session.loadFromRegistry(sessionInfo);
-    } else if (isGeneralTopic(ctx)) {
-      if (await showSessionPicker(ctx, "stop_pick")) return;
-    }
-  }
+  if (await resolveTopicSession(ctx, "stop_pick")) return;
 
   const result = await session.stop();
 
@@ -892,16 +903,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
     return;
   }
 
-  // Topic context: load session from topic or show picker in General
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-    if (topicCtx) {
-      const sessionInfo = getSession(topicCtx.sessionName);
-      if (sessionInfo) session.loadFromRegistry(sessionInfo);
-    } else if (isGeneralTopic(ctx)) {
-      if (await showSessionPicker(ctx, "status_pick")) return;
-    }
-  }
+  if (await resolveTopicSession(ctx, "status_pick")) return;
 
   const activeSession = getActiveSession();
   const sessionName = session.sessionName || activeSession?.name;
@@ -997,16 +999,7 @@ export async function handleModel(ctx: Context): Promise<void> {
     return;
   }
 
-  // Topic context: load session from topic or show picker in General
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-    if (topicCtx) {
-      const sessionInfo = getSession(topicCtx.sessionName);
-      if (sessionInfo) session.loadFromRegistry(sessionInfo);
-    } else if (isGeneralTopic(ctx)) {
-      if (await showSessionPicker(ctx, "model_pick")) return;
-    }
-  }
+  if (await resolveTopicSession(ctx, "model_pick")) return;
 
   const currentModel = session.model;
   const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];

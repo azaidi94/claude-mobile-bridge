@@ -63,13 +63,11 @@ export function wireRelayDisplay(
   botApi: Api,
   client: RelayClient,
   state: RelayDisplayState,
-  threadId?: number,
 ): () => void {
   const scopeChatId = String(state.chatId);
+  const tid = state.threadId;
 
   const onReply = (msg: RelayReply) => {
-    // If the JSONL tailer already handled this reply, skip text delivery
-    // but still do cleanup and file handling.
     const alreadyHandled = state.finalReplyReceived;
     state.finalReplyReceived = true;
     const chatId = Number(msg.chat_id) || state.chatId;
@@ -78,15 +76,15 @@ export function wireRelayDisplay(
 
     if (!alreadyHandled) {
       if (msg.send_as_pdf) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, threadId);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
       } else {
-        sendTextReply(botApi, chatId, msg.text, threadId);
+        sendTextReply(botApi, chatId, msg.text, tid);
       }
     }
 
     if (msg.files?.length) {
       for (const filePath of msg.files) {
-        sendFile(botApi, chatId, filePath, threadId).catch((err) =>
+        sendFile(botApi, chatId, filePath, tid).catch((err) =>
           warn(`relay sendFile dispatch: ${err}`),
         );
       }

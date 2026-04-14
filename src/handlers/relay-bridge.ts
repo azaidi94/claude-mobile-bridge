@@ -66,12 +66,7 @@ export async function sendViaRelay(
 
   const typing = startTypingIndicator(ctx);
   const displayState = createRelayDisplayState(chatId, threadId);
-  const cleanupCallbacks = wireRelayDisplay(
-    ctx.api,
-    client,
-    displayState,
-    threadId,
-  );
+  const cleanupCallbacks = wireRelayDisplay(ctx.api, client, displayState);
 
   // Start JSONL tailer for live progress
   let tailer: SessionTailer | null = null;

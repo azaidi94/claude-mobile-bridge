@@ -86,7 +86,7 @@ export async function handleText(ctx: Context): Promise<void> {
       const si = getSession(topicCtx.sessionName);
       if (si) {
         session.loadFromRegistry(si);
-        topicSessionInfo = { id: si.id, dir: si.dir, pid: si.pid };
+        topicSessionInfo = si;
       }
       // Ensure the watch uses this topic's thread for responses
       if (isWatching(chatId)) {
