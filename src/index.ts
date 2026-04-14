@@ -6,7 +6,7 @@
 
 import { run } from "@grammyjs/runner";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir } from "./settings";
+import { getWorkingDir, getTopicsEnabled } from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -20,8 +20,20 @@ import {
   setSessionOfflineCallback,
   getActiveSession,
   getGitBranch,
+  getSessions,
 } from "./sessions";
-import { notifySessionOffline } from "./handlers";
+import {
+  notifySessionOffline,
+  setTopicManager,
+  startAutoWatch,
+} from "./handlers";
+import {
+  loadTopicStore,
+  setChatId,
+  getTopicBySession,
+  getThreadId,
+  TopicManager,
+} from "./topics";
 import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn, error as logError } from "./logger";
@@ -47,10 +59,12 @@ info(
 // Load persisted chat IDs and pinned message IDs
 await loadChatIds();
 await loadPinnedMessageIds();
+await loadTopicStore();
 
 // Wire up mode change callback to update pinned status
 session.onModeChange = (isPlanMode) => {
   const active = getActiveSession();
+  const topicId = active ? getThreadId(active.name) : undefined;
   getGitBranch(session.workingDir)
     .then((branch) => {
       const status = {
@@ -60,7 +74,7 @@ session.onModeChange = (isPlanMode) => {
         branch,
       };
       for (const chatId of getChatIds()) {
-        updatePinnedStatus(bot.api, chatId, status).catch(() => {});
+        updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
       }
     })
     .catch(() => {});
@@ -69,21 +83,43 @@ session.onModeChange = (isPlanMode) => {
 // Wire up watch handler's offline callback for resume flow
 setSessionOfflineCallback(notifySessionOffline);
 
-const notifyHandler = createNotificationHandler(bot.api);
-await startWatcher(notifyHandler);
-
-// Get bot info
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+
+let topicManager: TopicManager | undefined;
+const chatIdSet = getChatIds();
+const primaryChatId = [...chatIdSet][0] as number | undefined;
+if (primaryChatId !== undefined && getTopicsEnabled()) {
+  setChatId(primaryChatId);
+  topicManager = new TopicManager(bot.api, primaryChatId);
+  setTopicManager(topicManager);
+}
+
+const notifyHandler = createNotificationHandler(bot.api, topicManager);
+await startWatcher(notifyHandler);
+
+if (topicManager && primaryChatId !== undefined && getTopicsEnabled()) {
+  const sessions = getSessions();
+  await topicManager.reconcile(
+    sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+  );
+
+  // Start auto-watch for all online sessions with topics
+  for (const s of sessions) {
+    const topic = getTopicBySession(s.name);
+    if (topic) {
+      startAutoWatch(bot.api, primaryChatId, s.name, topic.topicId).catch(
+        () => {},
+      );
+    }
+  }
+}
 
 // Set autocomplete commands
 await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
-  { command: "switch", description: "Switch to session" },
   { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Open desktop Claude (Terminal)" },
-  { command: "watch", description: "Watch a desktop session live" },
-  { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
