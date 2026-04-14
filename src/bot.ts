@@ -17,7 +17,7 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
-import { error as logError } from "./logger";
+import { error as logError, info } from "./logger";
 import {
   handleStart,
   handleHelp,
@@ -50,6 +50,8 @@ import {
 
 export interface BotOptions {
   token: string;
+  /** Called when bot first sees a supergroup with forum topics enabled. */
+  onForumGroupDetected?: (chatId: number) => void;
 }
 
 /**
@@ -87,6 +89,16 @@ export function createBot(options: BotOptions): Bot {
     if (userId && ctx.chat?.id && isAuthorized(userId, ALLOWED_USERS)) {
       const isNew = !getChatIds().has(ctx.chat.id);
       registerChatId(ctx.chat.id);
+
+      // Detect group chats with forum topics — notify caller
+      if (
+        isNew &&
+        ctx.chat.type === "supergroup" &&
+        (ctx.chat as any).is_forum &&
+        options.onForumGroupDetected
+      ) {
+        options.onForumGroupDetected(ctx.chat.id);
+      }
 
       // Create pinned status for new chats
       if (isNew) {

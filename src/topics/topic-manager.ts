@@ -36,10 +36,23 @@ function topicName(
 }
 
 export class TopicManager {
+  private chatId: number;
+
   constructor(
     private api: Api,
-    private chatId: number,
-  ) {}
+    chatId: number,
+  ) {
+    this.chatId = chatId;
+  }
+
+  /** Update the target chat ID (e.g. when switching from DM to group). */
+  setChatId(chatId: number): void {
+    this.chatId = chatId;
+  }
+
+  getChatId(): number {
+    return this.chatId;
+  }
 
   async createTopic(
     sessionName: string,

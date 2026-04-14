@@ -39,8 +39,22 @@ import { session } from "./session";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 
+let topicManager: TopicManager | undefined;
+
 // Create bot instance using factory
-const bot = createBot({ token: TELEGRAM_TOKEN });
+const bot = createBot({
+  token: TELEGRAM_TOKEN,
+  onForumGroupDetected: (chatId) => {
+    info(`bot: detected forum group ${chatId}, adopting for topics`);
+    setChatId(chatId);
+    if (!topicManager && getTopicsEnabled()) {
+      topicManager = new TopicManager(bot.api, chatId);
+      setTopicManager(topicManager);
+    } else if (topicManager) {
+      topicManager.setChatId(chatId);
+    }
+  },
+});
 
 process.on("warning", (warning) => {
   warn("process: warning", warning);
@@ -86,9 +100,12 @@ setSessionOfflineCallback(notifySessionOffline);
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
 
-let topicManager: TopicManager | undefined;
 const chatIdSet = getChatIds();
-const primaryChatId = [...chatIdSet][0] as number | undefined;
+// Prefer the stored topic chat ID (may be a group), fall back to first registered chat
+import { getTopicStore } from "./topics";
+const storedTopicChatId = getTopicStore().chatId;
+const primaryChatId =
+  storedTopicChatId || ([...chatIdSet][0] as number | undefined);
 if (primaryChatId !== undefined && getTopicsEnabled()) {
   setChatId(primaryChatId);
   topicManager = new TopicManager(bot.api, primaryChatId);
