@@ -328,6 +328,41 @@ export async function handleHelp(ctx: Context): Promise<void> {
     return;
   }
 
+  if (getTopicsEnabled()) {
+    const topicHelp = [
+      "<b>📱 Claude Mobile Bridge v2</b>",
+      "",
+      "Each session has its own topic. Send messages in a topic to talk to that session.",
+      "",
+      "<b>Session Management</b>",
+      "/list — session dashboard",
+      "/new [path] — spawn desktop Claude",
+      "/sessions — browse offline sessions",
+      "/kill — terminate session + delete topic",
+      "",
+      "<b>Session Commands (in topic or General)</b>",
+      "/status — session details",
+      "/model — switch model",
+      "/stop — interrupt current query",
+      "/retry — replay last message",
+      "",
+      "<b>Navigation (in topic)</b>",
+      "/pwd — show working dir",
+      "/cd — change working dir",
+      "/ls — list directory",
+      "/clear — clear session",
+      "",
+      "<b>Utilities</b>",
+      "/usage — quota stats",
+      "/execute — configured scripts",
+      "/settings — bot settings",
+      "/pin — update pinned status",
+      "/restart — restart bot",
+    ].join("\n");
+    await ctx.reply(topicHelp, { parse_mode: "HTML" });
+    return;
+  }
+
   await ctx.reply(
     `📚 <b>Commands</b>\n\n` +
       `<b>Sessions:</b>\n` +

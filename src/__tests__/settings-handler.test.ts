@@ -65,9 +65,9 @@ describe("renderSettingsBody", () => {
     expect(body).toContain("━ Claude defaults ━");
     expect(body).toContain("Terminal.app");
     expect(body).toContain("Opus 4.6");
-    // All four fields should be marked (default).
+    // All six fields should be marked (default).
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(4);
+    expect(defaultMatches.length).toBe(6);
   });
 
   test("drops (default) marker on fields with overrides", async () => {
@@ -77,9 +77,9 @@ describe("renderSettingsBody", () => {
     const body = renderSettingsBody();
     expect(body).toContain("iTerm2");
     expect(body).toContain("<code>off</code>");
-    // Terminal + autowatch now explicit; workdir + model still default = 2.
+    // Terminal + autowatch now explicit; workdir + model + topics + pinnedStatus still default = 4.
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(2);
+    expect(defaultMatches.length).toBe(4);
   });
 
   test("truncates long working dirs with leading ellipsis", async () => {
@@ -97,18 +97,21 @@ describe("renderSettingsBody", () => {
 });
 
 describe("renderSettingsKeyboard", () => {
-  test("has four edit buttons in 2x2 layout", async () => {
+  test("has six edit buttons in 3x2 layout", async () => {
     const { renderSettingsKeyboard } = await import("../handlers/settings");
     const kb = renderSettingsKeyboard();
-    expect(kb.inline_keyboard.length).toBe(2);
+    expect(kb.inline_keyboard.length).toBe(3);
     expect(kb.inline_keyboard[0]!.length).toBe(2);
     expect(kb.inline_keyboard[1]!.length).toBe(2);
+    expect(kb.inline_keyboard[2]!.length).toBe(2);
     const all = kb.inline_keyboard.flat();
     expect(all.map((b) => b.callback_data)).toEqual([
       "set:edit:terminal",
       "set:edit:workdir",
       "set:edit:autowatch",
       "set:edit:model",
+      "set:edit:topics",
+      "set:edit:pinnedstatus",
     ]);
   });
 });
