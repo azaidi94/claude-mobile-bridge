@@ -3,42 +3,40 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/Bun-1.0.23+-black.svg)](https://bun.sh/)
 
-Control Claude Code sessions from your phone via Telegram. Each Claude Code session gets its own Telegram topic thread for organized multi-session control.
+Control Claude Code sessions from your phone via Telegram. Add the bot to a forum group and each session gets its own topic thread — isolated conversations, live streaming, no context switching.
 
 ## Features
 
-- **Multi-session support** - Switch between Claude Code projects on the fly
+- **Forum topics** - Each Claude Code session gets its own Telegram topic. Send messages in a topic to talk to that session. The bot creates/deletes topics as sessions come online/offline
 - **Auto-discovery** - Detects running Claude Code sessions automatically
-- **Streaming responses** with live updates
-- **Channel relay** - Inject messages into running desktop sessions without disconnecting them
-- **Live handoff** - Watch desktop Claude sessions in real-time from Telegram
+- **Channel relay** - Message running desktop sessions without disconnecting them
+- **Live streaming** - Watch Claude work in real-time with tool progress updates
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
 - **Extended thinking** - "think" keyword for deeper reasoning, "ultrathink" for 50k tokens
 - **Interrupt with `!`** - Prefix message to interrupt current query
 - **MCP support** - Configure external tools in `mcp-config.ts`
 - **Interactive buttons** - Claude can present options as tappable buttons
 
-## Commands
-
-| Category | Commands                                           |
-| -------- | -------------------------------------------------- |
-| Sessions | `/list`, `/new`, `/sessions`, `/kill`              |
-| Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Files    | `/pwd`, `/cd`, `/ls`                               |
-| Quota    | `/usage`                                           |
-| Scripts  | `/execute`                                         |
-| Settings | `/settings`                                        |
-
 ## Quick Start
 
-### BotFather Setup (Topics)
+### 1. Create a Forum Group
 
-1. Open @BotFather Mini App
-2. Select your bot
-3. Enable "Topics in Private Chats"
-4. Optional: disable "Allow users to create topics" (bot manages topics)
+The bot works best in a **Telegram forum group** where each session gets its own topic:
 
-### Install
+1. Create a new Telegram group
+2. Go to group settings → Topics → enable topics (makes it a forum)
+3. Add your bot to the group
+4. The bot auto-detects the forum and starts creating topics for sessions
+
+> **Private chat** also works — you get the classic UI with `/list` and `/switch` buttons. But once the bot detects a forum group, DMs are disabled to avoid split-brain.
+
+### 2. BotFather Config
+
+1. Open @BotFather → select your bot
+2. Bot Settings → enable "Topics in Groups"
+3. Optional: Group Privacy → disable (so bot sees all messages in topics)
+
+### 3. Install
 
 **Prerequisites:** [Bun 1.0.23+](https://bun.sh/), [Claude Code CLI](https://claude.com/code), [Telegram Bot Token](https://t.me/botfather)
 
@@ -59,6 +57,17 @@ TELEGRAM_ALLOWED_USERS=123456789  # Your Telegram user ID (get from @userinfobot
 ```
 
 See `.env.example` for all options (working dir, allowed paths, voice transcription, rate limits, etc).
+
+## Commands
+
+| Category | Commands                                           |
+| -------- | -------------------------------------------------- |
+| Sessions | `/list`, `/new`, `/sessions`, `/kill`              |
+| Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Files    | `/pwd`, `/cd`, `/ls`                               |
+| Quota    | `/usage`                                           |
+| Scripts  | `/execute`                                         |
+| Settings | `/settings`                                        |
 
 ## Channel Relay
 
@@ -168,7 +177,6 @@ Scripts run detached; Start/Stop liveness is tracked by PID. Override the config
 | 📁 Working dir   | Default project dir for `/new` (when no arg given)                  |
 | 👁 Auto-watch    | Whether `/new` auto-attaches a watch after spawn                    |
 | 🤖 Model         | Default model — shares state with `/model`                          |
-| 📌 Topics        | Auto-enabled when bot is added to a forum supergroup                |
 | 📌 Pinned status | Pin status messages in topics (`enablePinnedStatus`, default: true) |
 
 Values live in `~/.claude-mobile-bridge/settings.json` and override the matching `.env` values. Tap **↺ Reset to default** on any sub-menu to drop the override and fall back to the env value. Auto-watch cycles `default → off → on → default` on each tap.
