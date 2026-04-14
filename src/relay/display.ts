@@ -21,9 +21,13 @@ import { debug, warn } from "../logger";
 export interface RelayDisplayState extends TailDisplayState {
   progressMessages: import("grammy/types").Message[];
   finalReplyReceived: boolean;
+  threadId?: number;
 }
 
-export function createRelayDisplayState(chatId: number): RelayDisplayState {
+export function createRelayDisplayState(
+  chatId: number,
+  threadId?: number,
+): RelayDisplayState {
   return {
     chatId,
     currentToolMsg: null,
@@ -33,6 +37,7 @@ export function createRelayDisplayState(chatId: number): RelayDisplayState {
     segmentDone: true,
     progressMessages: [],
     finalReplyReceived: false,
+    threadId,
   };
 }
 
@@ -58,6 +63,7 @@ export function wireRelayDisplay(
   botApi: Api,
   client: RelayClient,
   state: RelayDisplayState,
+  threadId?: number,
 ): () => void {
   const scopeChatId = String(state.chatId);
 
@@ -72,15 +78,15 @@ export function wireRelayDisplay(
 
     if (!alreadyHandled) {
       if (msg.send_as_pdf) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, threadId);
       } else {
-        sendTextReply(botApi, chatId, msg.text);
+        sendTextReply(botApi, chatId, msg.text, threadId);
       }
     }
 
     if (msg.files?.length) {
       for (const filePath of msg.files) {
-        sendFile(botApi, chatId, filePath).catch((err) =>
+        sendFile(botApi, chatId, filePath, threadId).catch((err) =>
           warn(`relay sendFile dispatch: ${err}`),
         );
       }
@@ -127,6 +133,7 @@ export function sendPdfReply(
   chatId: number,
   text: string,
   filename?: string,
+  threadId?: number,
 ): void {
   const pdfName =
     sanitizePdfFilename(filename) || deriveFilenameFromMarkdown(text);
@@ -135,12 +142,12 @@ export function sendPdfReply(
     .then((buf) => {
       const input = new InputFile(buf, pdfName);
       botApi
-        .sendDocument(chatId, input)
+        .sendDocument(chatId, input, { message_thread_id: threadId })
         .catch((err) => warn(`pdf send: ${err}`));
     })
     .catch((err) => {
       warn(`pdf convert: ${err}`);
-      sendTextReply(botApi, chatId, text);
+      sendTextReply(botApi, chatId, text, threadId);
     });
 }
 
@@ -164,20 +171,37 @@ function deriveFilenameFromMarkdown(text: string): string {
   return "response.pdf";
 }
 
-export function sendTextReply(botApi: Api, chatId: number, text: string): void {
+export function sendTextReply(
+  botApi: Api,
+  chatId: number,
+  text: string,
+  threadId?: number,
+): void {
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    botApi.sendMessage(chatId, formatted, { parse_mode: "HTML" }).catch(() => {
-      botApi.sendMessage(chatId, text).catch(() => {});
-    });
+    botApi
+      .sendMessage(chatId, formatted, {
+        parse_mode: "HTML",
+        message_thread_id: threadId,
+      })
+      .catch(() => {
+        botApi
+          .sendMessage(chatId, text, { message_thread_id: threadId })
+          .catch(() => {});
+      });
   } else {
     const chunks = splitMessage(text);
     for (const chunk of chunks) {
       const chunkHtml = convertMarkdownToHtml(chunk);
       botApi
-        .sendMessage(chatId, chunkHtml, { parse_mode: "HTML" })
+        .sendMessage(chatId, chunkHtml, {
+          parse_mode: "HTML",
+          message_thread_id: threadId,
+        })
         .catch(() => {
-          botApi.sendMessage(chatId, chunk).catch(() => {});
+          botApi
+            .sendMessage(chatId, chunk, { message_thread_id: threadId })
+            .catch(() => {});
         });
     }
   }
@@ -204,6 +228,7 @@ export async function sendFile(
   botApi: Api,
   chatId: number,
   filePath: string,
+  threadId?: number,
 ): Promise<void> {
   const ext = "." + (filePath.toLowerCase().split(".").pop() || "");
   const name = filePath.split("/").pop() || "file";
@@ -213,9 +238,9 @@ export async function sendFile(
     const input = new InputFile(buf, name);
 
     if (PHOTO_EXTS.has(ext)) {
-      await botApi.sendPhoto(chatId, input);
+      await botApi.sendPhoto(chatId, input, { message_thread_id: threadId });
     } else {
-      await botApi.sendDocument(chatId, input);
+      await botApi.sendDocument(chatId, input, { message_thread_id: threadId });
     }
   } catch (err) {
     warn(`relay file ${name}: ${err}`);

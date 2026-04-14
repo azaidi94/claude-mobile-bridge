@@ -41,6 +41,7 @@ const TELEGRAM_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
 export async function sendFileToTelegram(
   ctx: Context,
   filePath: string,
+  threadId?: number,
 ): Promise<void> {
   // Normalize to absolute path to prevent traversal
   const resolvedPath = resolve(filePath);
@@ -48,7 +49,9 @@ export async function sendFileToTelegram(
   // Security: validate path is within allowed directories
   if (!isPathAllowed(resolvedPath)) {
     warn(`send_file blocked: ${resolvedPath}`);
-    await ctx.reply(`⚠️ Cannot send file outside allowed directories.`);
+    await ctx.reply(`⚠️ Cannot send file outside allowed directories.`, {
+      message_thread_id: threadId,
+    });
     return;
   }
 
@@ -60,27 +63,34 @@ export async function sendFileToTelegram(
     const file = Bun.file(resolvedPath);
 
     if (!(await file.exists())) {
-      await ctx.reply(`⚠️ Could not read file: ${filename}`);
+      await ctx.reply(`⚠️ Could not read file: ${filename}`, {
+        message_thread_id: threadId,
+      });
       return;
     }
 
     const size = file.size;
 
     if (size === 0) {
-      await ctx.reply(`⚠️ File is empty: ${filename}`);
+      await ctx.reply(`⚠️ File is empty: ${filename}`, {
+        message_thread_id: threadId,
+      });
       return;
     }
     if (size > TELEGRAM_FILE_SIZE_LIMIT) {
       const sizeMB = (size / (1024 * 1024)).toFixed(1);
       await ctx.reply(
         `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
+        { message_thread_id: threadId },
       );
       return;
     }
 
     fileBuffer = Buffer.from(await file.arrayBuffer());
   } catch {
-    await ctx.reply(`⚠️ Could not read file: ${filename}`);
+    await ctx.reply(`⚠️ Could not read file: ${filename}`, {
+      message_thread_id: threadId,
+    });
     return;
   }
 
@@ -92,15 +102,24 @@ export async function sendFileToTelegram(
 
   if (isPhoto) {
     try {
-      await ctx.replyWithPhoto(inputFile, { caption: filename });
+      await ctx.replyWithPhoto(inputFile, {
+        caption: filename,
+        message_thread_id: threadId,
+      });
     } catch {
       // Fall back to document if photo send fails (e.g. too large for photo API)
       debug(`photo fallback to document: ${filename}`);
       const fallbackFile = new InputFile(fileBuffer, filename);
-      await ctx.replyWithDocument(fallbackFile, { caption: filename });
+      await ctx.replyWithDocument(fallbackFile, {
+        caption: filename,
+        message_thread_id: threadId,
+      });
     }
   } else {
-    await ctx.replyWithDocument(inputFile, { caption: filename });
+    await ctx.replyWithDocument(inputFile, {
+      caption: filename,
+      message_thread_id: threadId,
+    });
   }
 }
 
@@ -310,6 +329,7 @@ export class StreamingState {
 export function createStatusCallback(
   ctx: Context,
   state: StreamingState,
+  threadId?: number,
 ): StatusCallback {
   return async (statusType: string, content: string, segmentId?: number) => {
     try {
@@ -320,10 +340,14 @@ export function createStatusCallback(
         const escaped = escapeHtml(preview);
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
+          message_thread_id: threadId,
         });
         state.toolMessages.push(thinkingMsg);
       } else if (statusType === "tool") {
-        const toolMsg = await ctx.reply(content, { parse_mode: "HTML" });
+        const toolMsg = await ctx.reply(content, {
+          parse_mode: "HTML",
+          message_thread_id: threadId,
+        });
         state.toolMessages.push(toolMsg);
       } else if (statusType === "text" && segmentId !== undefined) {
         if (!content) return; // Skip empty text segments (e.g. file-only responses)
@@ -338,13 +362,18 @@ export function createStatusCallback(
               : content;
           const formatted = convertMarkdownToHtml(display);
           try {
-            const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
+            const msg = await ctx.reply(formatted, {
+              parse_mode: "HTML",
+              message_thread_id: threadId,
+            });
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
             // HTML parse failed, fall back to plain text
             debug(`html reply fallback: ${htmlError}`);
-            const msg = await ctx.reply(formatted);
+            const msg = await ctx.reply(formatted, {
+              message_thread_id: threadId,
+            });
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
           }
@@ -419,10 +448,13 @@ export function createStatusCallback(
             for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
               const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
               try {
-                await ctx.reply(chunk, { parse_mode: "HTML" });
+                await ctx.reply(chunk, {
+                  parse_mode: "HTML",
+                  message_thread_id: threadId,
+                });
               } catch (htmlError) {
                 debug(`chunk html fallback: ${htmlError}`);
-                await ctx.reply(chunk);
+                await ctx.reply(chunk, { message_thread_id: threadId });
               }
             }
           }
@@ -430,10 +462,12 @@ export function createStatusCallback(
       } else if (statusType === "send_file") {
         // Send a file to the user via Telegram
         try {
-          await sendFileToTelegram(ctx, content);
+          await sendFileToTelegram(ctx, content, threadId);
         } catch (err) {
           warn(`send_file error: ${err}`);
-          await ctx.reply(`⚠️ Failed to send file.`);
+          await ctx.reply(`⚠️ Failed to send file.`, {
+            message_thread_id: threadId,
+          });
         }
       } else if (statusType === "done") {
         // Delete tool messages - text messages stay

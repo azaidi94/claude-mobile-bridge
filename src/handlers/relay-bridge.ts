@@ -28,6 +28,7 @@ export async function sendViaRelay(
   chatId: number,
   imagePath?: string,
   opId?: string,
+  threadId?: number,
 ): Promise<RelayResult> {
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
@@ -64,8 +65,13 @@ export async function sendViaRelay(
   });
 
   const typing = startTypingIndicator(ctx);
-  const displayState = createRelayDisplayState(chatId);
-  const cleanupCallbacks = wireRelayDisplay(ctx.api, client, displayState);
+  const displayState = createRelayDisplayState(chatId, threadId);
+  const cleanupCallbacks = wireRelayDisplay(
+    ctx.api,
+    client,
+    displayState,
+    threadId,
+  );
 
   // Start JSONL tailer for live progress
   let tailer: SessionTailer | null = null;
