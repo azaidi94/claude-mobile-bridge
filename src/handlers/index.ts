@@ -38,6 +38,8 @@ export {
   notifySessionOffline,
   sendWatchRelay,
   startWatchingSession,
+  startAutoWatch,
+  stopAutoWatch,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {

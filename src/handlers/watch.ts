@@ -62,6 +62,8 @@ interface WatchState extends TailDisplayState {
   sessionPid?: number;
   tailer: SessionTailer;
   lastEventTime: number;
+  /** Topic thread ID — when set, all messages go to this thread. */
+  threadId?: number;
   /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
   suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
@@ -90,7 +92,11 @@ const typingState = new Map<
 >();
 
 /** Signal activity — starts or extends the typing indicator. */
-function touchWatchTyping(botApi: Api, chatId: number): void {
+function touchWatchTyping(
+  botApi: Api,
+  chatId: number,
+  threadId?: number,
+): void {
   let entry = typingState.get(chatId);
   if (!entry) {
     entry = { running: false, timeout: null };
@@ -107,7 +113,9 @@ function touchWatchTyping(botApi: Api, chatId: number): void {
   const loop = async () => {
     while (entry!.running) {
       try {
-        await botApi.sendChatAction(chatId, "typing");
+        await botApi.sendChatAction(chatId, "typing", {
+          message_thread_id: threadId,
+        });
       } catch {}
       await Bun.sleep(4000);
     }
@@ -225,7 +233,10 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
         .sendMessage(
           chatId,
           `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
-          { parse_mode: "HTML" },
+          {
+            parse_mode: "HTML",
+            ...(state.threadId ? { message_thread_id: state.threadId } : {}),
+          },
         )
         .catch((err) => warn(`watch offline notify: ${err}`));
 
@@ -238,6 +249,111 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
       });
     }
   }
+}
+
+// ============== Auto-Watch (topic mode) ==============
+
+/**
+ * Start auto-watching a session in a topic.
+ * Called by topic manager when a topic is created and session is online.
+ */
+export async function startAutoWatch(
+  botApi: Api,
+  chatId: number,
+  sessionName: string,
+  threadId?: number,
+): Promise<boolean> {
+  // Stop existing watch if any
+  if (watches.has(chatId)) {
+    stopWatching(chatId, botApi, "auto-replace");
+  }
+
+  await forceRefresh();
+  const sessionInfo = getSession(sessionName);
+  if (!sessionInfo?.id) {
+    warn("auto-watch: start failed, missing session id", {
+      chatId,
+      sessionName,
+    });
+    return false;
+  }
+
+  const jsonlPath =
+    (await findSessionJsonlPath(sessionInfo.id)) ??
+    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
+
+  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
+  });
+  const watchState: WatchState = {
+    sessionName,
+    sessionId: sessionInfo.id,
+    sessionDir: sessionInfo.dir,
+    sessionPid: sessionInfo.pid,
+    tailer,
+    chatId,
+    threadId,
+    lastEventTime: Date.now(),
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+  };
+  watches.set(chatId, watchState);
+  await tailer.start();
+
+  // Wire relay client for replies
+  const relayClient = await getRelayClient({
+    sessionId: sessionInfo.id,
+    sessionDir: sessionInfo.dir,
+    claudePid: sessionInfo.pid,
+  });
+  if (relayClient) {
+    const scopeChatId = String(chatId);
+    const onReply = (msg: RelayReply) => {
+      watchState.suppressRelayReplyText = true;
+
+      if (msg.send_as_pdf && msg.text) {
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename);
+      } else if (msg.text) {
+        sendTextReply(botApi, chatId, msg.text);
+      }
+
+      if (msg.files?.length) {
+        for (const filePath of msg.files) {
+          sendFile(botApi, chatId, filePath).catch((err) =>
+            warn(`auto-watch file: ${err}`),
+          );
+        }
+      }
+    };
+    relayClient.onReply(onReply, scopeChatId);
+    watchState.relayCleanup = () => relayClient.offReply(onReply);
+  }
+
+  info("auto-watch: started", {
+    chatId,
+    sessionName,
+    sessionId: sessionInfo.id,
+    sessionDir: sessionInfo.dir,
+    threadId,
+  });
+  return true;
+}
+
+/**
+ * Stop auto-watching for a chat and clean up.
+ */
+export function stopAutoWatch(chatId: number): void {
+  const state = watches.get(chatId);
+  if (!state) return;
+  cleanupWatch(chatId, state);
+  info("auto-watch: stopped", {
+    chatId,
+    sessionName: state.sessionName,
+    sessionId: state.sessionId,
+  });
 }
 
 /**
@@ -368,7 +484,7 @@ export async function startWatchingSession(
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    handleTailEvent(botApi, watchState, event);
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
   });
   const watchState: WatchState = {
     sessionName: targetName,
@@ -408,7 +524,7 @@ export async function startWatchingSession(
     if (!newPath) return;
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
-      handleTailEvent(botApi, watchState, event),
+      handleTailEvent(botApi, watchState, event, watchState.threadId),
     );
     watchState.tailer = newTailer;
     watchState.sessionId = newId;
@@ -426,7 +542,12 @@ export async function startWatchingSession(
       .sendMessage(
         chatId,
         `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
-        { parse_mode: "HTML" },
+        {
+          parse_mode: "HTML",
+          ...(watchState.threadId
+            ? { message_thread_id: watchState.threadId }
+            : {}),
+        },
       )
       .catch(() => {});
   }, 5_000);
@@ -586,10 +707,12 @@ export function handleTailEvent(
   botApi: Api,
   state: TailDisplayState,
   event: TailEvent,
+  threadId?: number,
 ): void {
   if (state.finalReplyReceived) return;
 
   const { chatId } = state;
+  const threadOpts = threadId ? { message_thread_id: threadId } : {};
 
   // Typing only during "working" phases — stop when user-visible output arrives
   if (
@@ -597,7 +720,7 @@ export function handleTailEvent(
     event.type === "tool" ||
     event.type === "user"
   ) {
-    touchWatchTyping(botApi, chatId);
+    touchWatchTyping(botApi, chatId, threadId);
   } else {
     stopWatchTyping(chatId);
   }
@@ -615,6 +738,7 @@ export function handleTailEvent(
       botApi
         .sendMessage(chatId, `🧠 <i>${escapeHtml(preview)}</i>`, {
           parse_mode: "HTML",
+          ...threadOpts,
         })
         .then((msg) => {
           state.currentToolMsg = msg;
@@ -636,7 +760,10 @@ export function handleTailEvent(
       }
 
       botApi
-        .sendMessage(chatId, event.content, { parse_mode: "HTML" })
+        .sendMessage(chatId, event.content, {
+          parse_mode: "HTML",
+          ...threadOpts,
+        })
         .then((msg) => {
           state.currentToolMsg = msg;
           trackProgress(msg);
@@ -668,7 +795,7 @@ export function handleTailEvent(
 
       if (!state.currentTextMsg) {
         botApi
-          .sendMessage(chatId, formatted, { parse_mode: "HTML" })
+          .sendMessage(chatId, formatted, { parse_mode: "HTML", ...threadOpts })
           .then((msg) => {
             state.currentTextMsg = msg;
             trackProgress(msg);
@@ -676,7 +803,7 @@ export function handleTailEvent(
           .catch((err) => {
             debug(`tail text create: ${err}`);
             botApi
-              .sendMessage(chatId, display)
+              .sendMessage(chatId, display, threadOpts)
               .then((msg) => {
                 state.currentTextMsg = msg;
                 trackProgress(msg);
@@ -743,10 +870,13 @@ export function handleTailEvent(
       botApi
         .sendMessage(chatId, `🖥 <b>Desktop:</b>\n${formatted}`, {
           parse_mode: "HTML",
+          ...threadOpts,
         })
         .catch((err) => {
           debug(`tail user: ${err}`);
-          botApi.sendMessage(chatId, `🖥 Desktop:\n${preview}`).catch(() => {});
+          botApi
+            .sendMessage(chatId, `🖥 Desktop:\n${preview}`, threadOpts)
+            .catch(() => {});
         });
 
       state.currentTextMsg = null;
