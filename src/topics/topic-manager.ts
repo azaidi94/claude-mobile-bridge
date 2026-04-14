@@ -12,7 +12,6 @@ import {
   updateTopicMapping,
   getTopicStore,
 } from "./topic-store";
-import { getTopicsEnabled } from "../settings";
 import { info, warn, debug } from "../logger";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 
@@ -20,19 +19,6 @@ interface ReconcileSession {
   name: string;
   dir: string;
   id?: string;
-}
-
-function statusEmoji(online: boolean, thinking = false): string {
-  if (thinking) return "🟡";
-  return online ? "🟢" : "🔴";
-}
-
-function topicName(
-  sessionName: string,
-  online: boolean,
-  thinking = false,
-): string {
-  return `${statusEmoji(online, thinking)} ${sessionName}`;
 }
 
 export class TopicManager {
@@ -59,8 +45,6 @@ export class TopicManager {
     sessionDir: string,
     sessionId?: string,
   ): Promise<number | undefined> {
-    if (!getTopicsEnabled()) return undefined;
-
     const existing = getTopicBySession(sessionName);
     if (existing) {
       debug(`topic-manager: topic already exists for ${sessionName}`);
@@ -70,7 +54,7 @@ export class TopicManager {
     try {
       const result = await this.api.createForumTopic(
         this.chatId,
-        topicName(sessionName, true),
+        sessionName,
         {},
       );
       const topicId = result.message_thread_id;
@@ -123,31 +107,15 @@ export class TopicManager {
     removeTopicMapping(sessionName);
   }
 
-  async updateTopicStatus(
-    sessionName: string,
-    online: boolean,
-    thinking = false,
-  ): Promise<void> {
+  async updateTopicStatus(sessionName: string, online: boolean): Promise<void> {
     const mapping = getTopicBySession(sessionName);
     if (!mapping) return;
 
-    const newName = topicName(sessionName, online, thinking);
-
-    try {
-      await this.api.editForumTopic(this.chatId, mapping.topicId, {
-        name: newName,
-      });
-      updateTopicMapping(sessionName, { isOnline: online });
-      debug(`topic-manager: updated ${sessionName} → ${newName}`);
-    } catch (err) {
-      if (String(err).includes("TOPIC_NOT_MODIFIED")) return;
-      warn(`topic-manager: editForumTopic failed for ${sessionName}: ${err}`);
-    }
+    updateTopicMapping(sessionName, { isOnline: online });
+    debug(`topic-manager: updated ${sessionName} online=${online}`);
   }
 
   async reconcile(liveSessions: ReconcileSession[]): Promise<void> {
-    if (!getTopicsEnabled()) return;
-
     const store = getTopicStore();
     const liveNames = new Set(liveSessions.map((s) => s.name));
 

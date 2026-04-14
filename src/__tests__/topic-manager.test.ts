@@ -12,9 +12,8 @@ process.env.TELEGRAM_ALLOWED_USERS =
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import type { Api } from "grammy";
 
-// Mock settings — topics enabled by default
+// Mock settings
 mock.module("../settings", () => ({
-  getTopicsEnabled: () => true,
   getTerminal: () => "terminal",
   getWorkingDir: () => "/tmp",
   getAutoWatchOnSpawn: () => true,
@@ -132,7 +131,7 @@ describe("TopicManager", () => {
     expect(mockApi.createForumTopic).toHaveBeenCalledTimes(1);
     expect(mockApi.createForumTopic.mock.calls[0]).toEqual([
       CHAT_ID,
-      "🟢 my-session",
+      "my-session",
       {},
     ]);
 
@@ -169,43 +168,22 @@ describe("TopicManager", () => {
     expect(mockApi.deleteForumTopic).not.toHaveBeenCalled();
   });
 
-  test("updateTopicStatus renames topic with online emoji", async () => {
+  test("updateTopicStatus updates store to online", async () => {
     seedMapping("sess", 50, false);
     const mgr = createManager();
     await mgr.updateTopicStatus("sess", true);
 
-    expect(mockApi.editForumTopic).toHaveBeenCalledTimes(1);
-    expect(mockApi.editForumTopic.mock.calls[0]).toEqual([
-      CHAT_ID,
-      50,
-      { name: "🟢 sess" },
-    ]);
+    const mapping = getTopicBySession("sess");
+    expect(mapping!.isOnline).toBe(true);
   });
 
-  test("updateTopicStatus renames topic with offline emoji", async () => {
+  test("updateTopicStatus updates store to offline", async () => {
     seedMapping("sess", 50, true);
     const mgr = createManager();
     await mgr.updateTopicStatus("sess", false);
 
-    expect(mockApi.editForumTopic).toHaveBeenCalledTimes(1);
-    expect(mockApi.editForumTopic.mock.calls[0]).toEqual([
-      CHAT_ID,
-      50,
-      { name: "🔴 sess" },
-    ]);
-  });
-
-  test("updateTopicStatus renames topic with thinking emoji", async () => {
-    seedMapping("sess", 50, true);
-    const mgr = createManager();
-    await mgr.updateTopicStatus("sess", true, true);
-
-    expect(mockApi.editForumTopic).toHaveBeenCalledTimes(1);
-    expect(mockApi.editForumTopic.mock.calls[0]).toEqual([
-      CHAT_ID,
-      50,
-      { name: "🟡 sess" },
-    ]);
+    const mapping = getTopicBySession("sess");
+    expect(mapping!.isOnline).toBe(false);
   });
 
   test("createTopic handles API error gracefully", async () => {
@@ -237,14 +215,6 @@ describe("TopicManager", () => {
 
     await mgr.reconcile([{ name: "still-here", dir: "/tmp/b" }]);
 
-    // gone-sess should be marked offline
-    expect(mockApi.editForumTopic).toHaveBeenCalledTimes(1);
-    expect(mockApi.editForumTopic.mock.calls[0]).toEqual([
-      CHAT_ID,
-      10,
-      { name: "🔴 gone-sess" },
-    ]);
-
     const gone = getTopicBySession("gone-sess");
     expect(gone!.isOnline).toBe(false);
   });
@@ -254,13 +224,6 @@ describe("TopicManager", () => {
     const mgr = createManager();
 
     await mgr.reconcile([{ name: "comeback", dir: "/tmp/c" }]);
-
-    expect(mockApi.editForumTopic).toHaveBeenCalledTimes(1);
-    expect(mockApi.editForumTopic.mock.calls[0]).toEqual([
-      CHAT_ID,
-      30,
-      { name: "🟢 comeback" },
-    ]);
 
     const mapping = getTopicBySession("comeback");
     expect(mapping!.isOnline).toBe(true);

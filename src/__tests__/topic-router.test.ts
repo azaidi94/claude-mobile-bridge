@@ -119,13 +119,6 @@ describe("getThreadId", () => {
   test("returns undefined for unknown session", () => {
     expect(getThreadId("nope")).toBeUndefined();
   });
-
-  test("returns undefined when topics disabled", async () => {
-    await saveSetting({ topicsEnabled: false });
-    _reloadForTests();
-    addTopicMapping(makeMapping("sess", 77));
-    expect(getThreadId("sess")).toBeUndefined();
-  });
 });
 
 describe("getThreadIdFromCallback", () => {

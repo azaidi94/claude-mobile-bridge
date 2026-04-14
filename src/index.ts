@@ -6,7 +6,7 @@
 
 import { run } from "@grammyjs/runner";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir, getTopicsEnabled } from "./settings";
+import { getWorkingDir } from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -47,10 +47,10 @@ const bot = createBot({
   onForumGroupDetected: (chatId) => {
     info(`bot: detected forum group ${chatId}, adopting for topics`);
     setChatId(chatId);
-    if (!topicManager && getTopicsEnabled()) {
+    if (!topicManager) {
       topicManager = new TopicManager(bot.api, chatId);
       setTopicManager(topicManager);
-    } else if (topicManager) {
+    } else {
       topicManager.setChatId(chatId);
     }
   },
@@ -106,7 +106,7 @@ import { getTopicStore } from "./topics";
 const storedTopicChatId = getTopicStore().chatId;
 const primaryChatId =
   storedTopicChatId || ([...chatIdSet][0] as number | undefined);
-if (primaryChatId !== undefined && getTopicsEnabled()) {
+if (primaryChatId !== undefined && storedTopicChatId) {
   setChatId(primaryChatId);
   topicManager = new TopicManager(bot.api, primaryChatId);
   setTopicManager(topicManager);
@@ -115,7 +115,7 @@ if (primaryChatId !== undefined && getTopicsEnabled()) {
 const notifyHandler = createNotificationHandler(bot.api, topicManager);
 await startWatcher(notifyHandler);
 
-if (topicManager && primaryChatId !== undefined && getTopicsEnabled()) {
+if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
   await topicManager.reconcile(
     sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),

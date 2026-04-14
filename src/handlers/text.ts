@@ -37,7 +37,8 @@ import { sendViaRelay } from "./relay-bridge";
 import { isAbsolute } from "path";
 import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
-import { getTopicsEnabled, saveSetting } from "../settings";
+import { saveSetting } from "../settings";
+import { hasTopicManager } from "./commands";
 import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
@@ -76,7 +77,7 @@ export async function handleText(ctx: Context): Promise<void> {
   let threadId: number | undefined;
   let topicSessionInfo: { id?: string; dir: string; pid?: number } | undefined;
 
-  if (getTopicsEnabled()) {
+  if (hasTopicManager()) {
     const topicCtx = isSessionTopic(ctx);
 
     if (topicCtx) {
@@ -399,7 +400,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
-    if (getTopicsEnabled()) {
+    if (hasTopicManager()) {
       const topicCtx = isSessionTopic(ctx);
       if (topicCtx) {
         updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });

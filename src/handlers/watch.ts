@@ -36,7 +36,7 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
-import { getTopicsEnabled } from "../settings";
+import { hasTopicManager } from "./commands";
 
 // ============== Shared Tail Display State ==============
 
@@ -393,7 +393,7 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (getTopicsEnabled()) {
+  if (hasTopicManager()) {
     await ctx.reply(
       "ℹ️ Watching is automatic with topics. Each topic shows live updates.",
     );
@@ -704,7 +704,7 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (getTopicsEnabled()) {
+  if (hasTopicManager()) {
     await ctx.reply("ℹ️ Watching is automatic with topics.");
     return;
   }

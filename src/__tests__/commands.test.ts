@@ -67,7 +67,6 @@ mock.module("../settings", () => ({
   getOverrides: () => ({}),
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
-  getTopicsEnabled: () => false,
   getEnablePinnedStatus: () => true,
 }));
 
@@ -191,6 +190,25 @@ mock.module("../lib/keychain", () => ({
   readKeychainToken: mockReadKeychainToken,
 }));
 
+// Mock topics module
+let mockIsSessionTopicResult: {
+  sessionName: string;
+  topicId: number;
+  mapping: { sessionName: string; topicId: number; chatId: number };
+} | null = null;
+
+mock.module("../topics", () => ({
+  isGeneralTopic: mock((ctx: any) => {
+    const threadId = ctx.message?.message_thread_id;
+    return threadId === undefined || threadId === 1;
+  }),
+  isSessionTopic: mock(() => mockIsSessionTopicResult),
+  getThreadId: mock(() => undefined),
+  getThreadIdFromCallback: mock(() => undefined),
+  safeSendInThread: mock(async () => ({})),
+  TopicManager: class {},
+}));
+
 // Mock session singleton
 const mockSessionState = {
   isRunning: false,
@@ -282,6 +300,7 @@ function createMockContext(
     username: string;
     chatId: number;
     messageText: string;
+    threadId: number;
   }> = {},
 ) {
   const {
@@ -289,6 +308,7 @@ function createMockContext(
     username = "testuser",
     chatId = 789,
     messageText = "/test",
+    threadId,
   } = overrides;
 
   const replies: Array<{ text: string; options?: Record<string, unknown> }> =
@@ -300,7 +320,11 @@ function createMockContext(
   return {
     from: { id: userId, username },
     chat: { id: chatId },
-    message: { text: messageText, message_id: 1 },
+    message: {
+      text: messageText,
+      message_id: 1,
+      ...(threadId !== undefined ? { message_thread_id: threadId } : {}),
+    },
     match: matchResult || undefined,
     reply: mock(async (text: string, options?: Record<string, unknown>) => {
       replies.push({ text, options });
@@ -358,6 +382,7 @@ function resetMocks() {
   mockIsWatching.mockImplementation(() => false);
   mockReadKeychainToken.mockClear();
   mockReadKeychainToken.mockImplementation(async () => null);
+  mockIsSessionTopicResult = null;
 }
 
 // ============== /start Command Tests ==============
@@ -1957,6 +1982,41 @@ describe("commands: /kill", () => {
 
     expect(ctx._replies[0]?.text).toContain("No sessions");
     expect(ctx._replies[0]?.text).toContain("/new");
+  });
+
+  test("handleKill in session topic kills directly without picker", async () => {
+    const { handleKill, setTopicManager } =
+      await import("../handlers/commands");
+    setTopicManager({ deleteTopic: mock(() => Promise.resolve()) } as any);
+
+    mockSessions.push({
+      name: "topic-session",
+      dir: "/tmp/topic-proj",
+      lastActivity: Date.now(),
+      pid: 99,
+      source: "desktop",
+    });
+
+    mockIsSessionTopicResult = {
+      sessionName: "topic-session",
+      topicId: 42,
+      mapping: { sessionName: "topic-session", topicId: 42, chatId: 789 },
+    };
+
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/kill",
+      threadId: 42,
+    });
+
+    await handleKill(ctx as any);
+
+    // Should kill directly — no picker
+    expect(ctx._replies.length).toBe(1);
+    expect(ctx._replies[0]?.text).toContain("Killed");
+    expect(ctx._replies[0]?.text).toContain("topic-session");
+    const pickerReply = ctx._replies.find((r: any) => r.options?.reply_markup);
+    expect(pickerReply).toBeUndefined();
   });
 });
 

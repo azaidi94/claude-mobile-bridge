@@ -5,7 +5,6 @@
  */
 
 import type { Api, Context } from "grammy";
-import { getTopicsEnabled } from "../settings";
 import {
   getTopicBySession,
   getSessionByTopic,
@@ -48,7 +47,6 @@ export function isSessionTopic(
  * Returns undefined if topics disabled or no mapping exists.
  */
 export function getThreadId(sessionName: string): number | undefined {
-  if (!getTopicsEnabled()) return undefined;
   return getTopicBySession(sessionName)?.topicId;
 }
 

@@ -22,6 +22,7 @@ export {
   handleCd,
   handleLs,
   setTopicManager,
+  hasTopicManager,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";

@@ -15,10 +15,8 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-// --- Mock settings (topics enabled) ---
-let topicsEnabledValue = true;
+// --- Mock settings ---
 mock.module("../settings", () => ({
-  getTopicsEnabled: () => topicsEnabledValue,
   getEnablePinnedStatus: () => true,
   getTerminal: () => "Terminal" as const,
   getWorkingDir: () => "/tmp",
@@ -106,7 +104,6 @@ let tmpDir: string;
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "topics-integ-"));
   process.env.CLAUDE_TELEGRAM_TOPICS_FILE = join(tmpDir, "topics.json");
-  topicsEnabledValue = true;
   clearTopicStore();
 });
 
@@ -347,9 +344,8 @@ describe("topic manager reconcile", () => {
     // "still-here" stays online, no status change API call needed
     expect(getTopicBySession("still-here")!.isOnline).toBe(true);
 
-    // API calls: 1 create (brand-new) + 1 offline (gone-away) + 1 online (was-offline)
+    // API calls: 1 create (brand-new); status updates no longer rename topics
     expect(api.createForumTopic).toHaveBeenCalledTimes(1);
-    expect(api.editForumTopic).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -400,24 +396,16 @@ describe("safeSendInThread fallback", () => {
 });
 
 // ──────────────────────────────────────────────────────
-// 6. getThreadId respects settings
+// 6. getThreadId
 // ──────────────────────────────────────────────────────
 
-describe("getThreadId respects settings", () => {
-  test("returns topicId when topics enabled", () => {
-    topicsEnabledValue = true;
+describe("getThreadId", () => {
+  test("returns topicId for mapped session", () => {
     addTopicMapping(makeMapping("sess", 77));
     expect(getThreadId("sess")).toBe(77);
   });
 
-  test("returns undefined when topics disabled, even with valid mapping", () => {
-    topicsEnabledValue = false;
-    addTopicMapping(makeMapping("sess", 77));
-    expect(getThreadId("sess")).toBeUndefined();
-  });
-
-  test("returns undefined for unknown session regardless of setting", () => {
-    topicsEnabledValue = true;
+  test("returns undefined for unknown session", () => {
     expect(getThreadId("unknown")).toBeUndefined();
   });
 });

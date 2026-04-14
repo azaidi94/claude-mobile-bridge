@@ -168,7 +168,7 @@ Scripts run detached; Start/Stop liveness is tracked by PID. Override the config
 | 📁 Working dir   | Default project dir for `/new` (when no arg given)                  |
 | 👁 Auto-watch    | Whether `/new` auto-attaches a watch after spawn                    |
 | 🤖 Model         | Default model — shares state with `/model`                          |
-| 📌 Topics        | Enable topic-per-session mode (`topicsEnabled`, default: true)      |
+| 📌 Topics        | Auto-enabled when bot is added to a forum supergroup                |
 | 📌 Pinned status | Pin status messages in topics (`enablePinnedStatus`, default: true) |
 
 Values live in `~/.claude-mobile-bridge/settings.json` and override the matching `.env` values. Tap **↺ Reset to default** on any sub-menu to drop the override and fall back to the env value. Auto-watch cycles `default → off → on → default` on each tap.

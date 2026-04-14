@@ -15,7 +15,6 @@ mock.module("../settings", () => ({
   getOverrides: () => ({}),
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
-  getTopicsEnabled: () => true,
   getEnablePinnedStatus: () => true,
 }));
 

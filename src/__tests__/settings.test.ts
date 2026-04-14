@@ -115,21 +115,9 @@ describe("model persistence round-trip", () => {
 });
 
 describe("topic settings", () => {
-  test("getTopicsEnabled defaults to true", async () => {
-    const { getTopicsEnabled } = await import("../settings");
-    expect(getTopicsEnabled()).toBe(true);
-  });
-
   test("getEnablePinnedStatus defaults to true", async () => {
     const { getEnablePinnedStatus } = await import("../settings");
     expect(getEnablePinnedStatus()).toBe(true);
-  });
-
-  test("getTopicsEnabled reads from file", async () => {
-    await writeFile(settingsPath, JSON.stringify({ topicsEnabled: false }));
-    const { _reloadForTests, getTopicsEnabled } = await import("../settings");
-    _reloadForTests();
-    expect(getTopicsEnabled()).toBe(false);
   });
 
   test("getEnablePinnedStatus reads from file", async () => {

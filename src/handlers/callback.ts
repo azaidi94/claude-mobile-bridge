@@ -51,7 +51,6 @@ import {
   getTerminal,
   getWorkingDir,
   getOverrides,
-  getTopicsEnabled,
   getEnablePinnedStatus,
 } from "../settings";
 import type { TerminalApp } from "../config";
@@ -845,25 +844,6 @@ async function handleSettingsCallback(
       return;
     }
 
-    if (field === "topics") {
-      const current = getOverrides().topicsEnabled;
-      let next: boolean | undefined;
-      if (current === undefined) next = false;
-      else if (current === false) next = true;
-      else next = undefined;
-      await saveSetting({ topicsEnabled: next });
-      await rerenderSettingsPanel(ctx);
-      const val = next === undefined ? true : next; // default is on
-      const label = next === undefined ? "default (on)" : next ? "on" : "off";
-      if (val) {
-        await ctx.reply(
-          "✅ Topics enabled. Restart the bot to create topics for existing sessions.",
-        );
-      }
-      await ctx.answerCallbackQuery({ text: `Topics: ${label}` });
-      return;
-    }
-
     if (field === "pinnedstatus") {
       const current = getOverrides().enablePinnedStatus;
       let next: boolean | undefined;
@@ -938,8 +918,6 @@ async function handleSettingsCallback(
       pendingSettingsInput.delete(chatId);
     } else if (field === "autowatch") {
       await saveSetting({ autoWatchOnSpawn: undefined });
-    } else if (field === "topics") {
-      await saveSetting({ topicsEnabled: undefined });
     } else if (field === "pinnedstatus") {
       await saveSetting({ enablePinnedStatus: undefined });
     } else if (field === "model") {

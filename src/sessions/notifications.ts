@@ -12,7 +12,6 @@ import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
-import { getTopicsEnabled } from "../settings";
 import type { TopicManager } from "../topics";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
@@ -163,7 +162,7 @@ export function createNotificationHandler(
       }
       const timer = setTimeout(() => {
         pending.delete(session.dir);
-        if (topicManager && getTopicsEnabled()) {
+        if (topicManager) {
           topicManager
             .createTopic(session.name, session.dir, session.id)
             .catch((err) =>
@@ -173,7 +172,7 @@ export function createNotificationHandler(
         broadcast(
           botApi,
           `🟢 <b>${escHtml(session.name)}</b> online\n<code>${escHtml(session.dir)}</code>`,
-          getTopicsEnabled()
+          topicManager
             ? undefined
             : new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
         );
@@ -207,7 +206,7 @@ export function createNotificationHandler(
         // Notify watch handler for resume flow
         onSessionOfflineCallback?.(botApi, session.dir);
 
-        if (topicManager && getTopicsEnabled()) {
+        if (topicManager) {
           topicManager
             .deleteTopic(session.name)
             .catch((err) =>

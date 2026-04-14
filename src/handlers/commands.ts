@@ -20,12 +20,7 @@ import {
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
   type TerminalApp,
 } from "../config";
-import {
-  getWorkingDir,
-  getTerminal,
-  getAutoWatchOnSpawn,
-  getTopicsEnabled,
-} from "../settings";
+import { getWorkingDir, getTerminal, getAutoWatchOnSpawn } from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isGeneralTopic, isSessionTopic } from "../topics";
 import type { TopicManager } from "../topics";
@@ -89,6 +84,11 @@ export function setTopicManager(tm: TopicManager): void {
   _topicManager = tm;
 }
 
+/** Whether a forum group has been detected and topic routing is active. */
+export function hasTopicManager(): boolean {
+  return _topicManager !== null;
+}
+
 /**
  * Show a session picker keyboard when in General topic with multiple sessions.
  * Returns true if a picker was shown (caller should return early).
@@ -97,7 +97,7 @@ async function showSessionPicker(
   ctx: Context,
   action: string,
 ): Promise<boolean> {
-  if (!getTopicsEnabled() || !isGeneralTopic(ctx)) return false;
+  if (!_topicManager || !isGeneralTopic(ctx)) return false;
 
   const sessions = getSessions();
   if (sessions.length === 0) {
@@ -328,7 +328,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
     return;
   }
 
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     const topicHelp = [
       "<b>📱 Claude Mobile Bridge v2</b>",
       "",
@@ -608,7 +608,7 @@ export async function spawnDesktopClaudeSession(
       );
 
       // Create topic for the new session
-      if (_topicManager && getTopicsEnabled()) {
+      if (_topicManager) {
         const topicId = await _topicManager.createTopic(spawned.name, spawnCwd);
         if (topicId) {
           await api.sendMessage(
@@ -718,7 +718,7 @@ export async function handleStop(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -779,7 +779,7 @@ export async function killSession(
 
   removeSession(sessionInfo.name);
 
-  if (_topicManager && getTopicsEnabled()) {
+  if (_topicManager) {
     _topicManager
       .deleteTopic(sessionInfo.name)
       .catch((err) => warn(`kill: topic delete failed: ${err}`));
@@ -855,6 +855,23 @@ export async function handleKill(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
+  // Topic context: kill the topic's session directly, show picker in General
+  if (_topicManager) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      const sessionInfo = getSession(topicCtx.sessionName);
+      if (sessionInfo) {
+        const { pid } = await killSession(sessionInfo, chatId, ctx.api);
+        const pidStr = pid ? ` (PID ${pid})` : "";
+        await ctx.reply(
+          `💀 Killed <b>${escapeHtml(sessionInfo.name)}</b>${pidStr}`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+    }
+  }
+
   const sessions = getSessions();
   if (sessions.length === 0) {
     await ctx.reply("No active sessions.");
@@ -875,7 +892,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -980,7 +997,7 @@ export async function handleModel(ctx: Context): Promise<void> {
   }
 
   // Topic context: load session from topic or show picker in General
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     const topicCtx = isSessionTopic(ctx);
     if (topicCtx) {
       const sessionInfo = getSession(topicCtx.sessionName);
@@ -1095,7 +1112,7 @@ export async function handleList(ctx: Context): Promise<void> {
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     // Topic mode: show sessions as status list (user navigates by opening topics)
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i]!;
@@ -1164,7 +1181,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (getTopicsEnabled()) {
+  if (_topicManager) {
     await ctx.reply(
       "ℹ️ /switch is not needed with topics. Just open a session topic.",
     );
