@@ -328,7 +328,10 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 1.7. Check for active watch — relay message to desktop session.
-  if (isWatching(chatId)) {
+  // In topic mode, skip watch relay — use normal relay path which has correct
+  // session context from topic routing. Watch relay is keyed by chatId (group),
+  // not per-topic, so it would send to the wrong session.
+  if (isWatching(chatId) && !threadId) {
     const relayed = await sendWatchRelay(chatId, username, message, opId);
     if (relayed) {
       ctx
