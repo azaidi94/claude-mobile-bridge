@@ -261,7 +261,7 @@ export async function handleText(ctx: Context): Promise<void> {
       // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
       const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state);
+      const statusCallback = createStatusCallback(ctx, state, threadId);
 
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
@@ -292,7 +292,10 @@ export async function handleText(ctx: Context): Promise<void> {
           }
 
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-          await ctx.reply("Review and approve?", { reply_markup: keyboard });
+          await ctx.reply("Review and approve?", {
+            reply_markup: keyboard,
+            message_thread_id: threadId,
+          });
         }
         info("request: completed", {
           opId,
@@ -310,7 +313,9 @@ export async function handleText(ctx: Context): Promise<void> {
           userId,
           durationMs: elapsedMs(requestStartedAt),
         });
-        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
+        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
+          message_thread_id: threadId,
+        });
       } finally {
         typing.stop();
       }
@@ -322,7 +327,9 @@ export async function handleText(ctx: Context): Promise<void> {
   if (isWatching(chatId)) {
     const relayed = await sendWatchRelay(chatId, username, message, opId);
     if (relayed) {
-      ctx.replyWithChatAction("typing").catch(() => {});
+      ctx
+        .replyWithChatAction("typing", { message_thread_id: threadId })
+        .catch(() => {});
       await auditLog(userId, username, "WATCH_RELAY", message, "(via relay)");
       info("request: completed", {
         opId,
@@ -346,6 +353,7 @@ export async function handleText(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ Relay failed. Session may be offline.\n" +
         "Use /unwatch and check /list.",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -362,6 +370,7 @@ export async function handleText(ctx: Context): Promise<void> {
     await auditLogRateLimit(userId, username, retryAfter!);
     await ctx.reply(
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -369,7 +378,7 @@ export async function handleText(ctx: Context): Promise<void> {
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
     session.sessionId = null;
-    await ctx.reply("✓ Session cleared");
+    await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
     info("request: completed", {
       opId,
@@ -407,6 +416,7 @@ export async function handleText(ctx: Context): Promise<void> {
       chatId,
       undefined,
       opId,
+      threadId,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "RELAY", message, "(via relay)");
@@ -432,11 +442,13 @@ export async function handleText(ctx: Context): Promise<void> {
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
     return;
@@ -445,7 +457,7 @@ export async function handleText(ctx: Context): Promise<void> {
   // 8. Slash command — run locally via SDK so <local-command-stdout> is handled
   const typing = startTypingIndicator(ctx);
   const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
+  const statusCallback = createStatusCallback(ctx, state, threadId);
   try {
     const response = await session.sendMessageStreaming(
       message,
@@ -476,6 +488,7 @@ export async function handleText(ctx: Context): Promise<void> {
     logError("slash cmd error", err);
     await ctx.reply(
       `❌ Error: ${err instanceof Error ? err.message : String(err)}`,
+      { message_thread_id: threadId },
     );
   } finally {
     typing.stop();
