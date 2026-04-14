@@ -9,6 +9,7 @@ import { readdir, stat, access } from "fs/promises";
 import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { triggerRestart } from "../lifecycle";
 import {
@@ -19,8 +20,15 @@ import {
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
   type TerminalApp,
 } from "../config";
-import { getWorkingDir, getTerminal, getAutoWatchOnSpawn } from "../settings";
+import {
+  getWorkingDir,
+  getTerminal,
+  getAutoWatchOnSpawn,
+  getTopicsEnabled,
+} from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
+import { isGeneralTopic, isSessionTopic } from "../topics";
+import type { TopicManager } from "../topics";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -73,6 +81,40 @@ export const offlineSessionCache = new Map<
 >();
 
 let offlineSessionGen = 0;
+
+// Topic manager reference — set by index.ts when topics are enabled
+let _topicManager: TopicManager | null = null;
+
+export function setTopicManager(tm: TopicManager): void {
+  _topicManager = tm;
+}
+
+/**
+ * Show a session picker keyboard when in General topic with multiple sessions.
+ * Returns true if a picker was shown (caller should return early).
+ */
+async function showSessionPicker(
+  ctx: Context,
+  action: string,
+): Promise<boolean> {
+  if (!getTopicsEnabled() || !isGeneralTopic(ctx)) return false;
+
+  const sessions = getSessions();
+  if (sessions.length === 0) {
+    await ctx.reply("No active sessions.");
+    return true;
+  }
+  if (sessions.length === 1) {
+    return false; // Only one session — proceed with it
+  }
+
+  const keyboard = new InlineKeyboard();
+  for (const s of sessions) {
+    keyboard.text(s.name, `${action}:${s.name}`).row();
+  }
+  await ctx.reply("Pick a session:", { reply_markup: keyboard });
+  return true;
+}
 
 function bashSingleQuotedPath(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`;
@@ -529,6 +571,22 @@ export async function spawnDesktopClaudeSession(
       await editStatus(
         `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
       );
+
+      // Create topic for the new session
+      if (_topicManager && getTopicsEnabled()) {
+        const topicId = await _topicManager.createTopic(spawned.name, spawnCwd);
+        if (topicId) {
+          await api.sendMessage(
+            chatId,
+            `🟢 Session started in <code>${escapeHtml(spawnCwd)}</code>`,
+            {
+              parse_mode: "HTML",
+              message_thread_id: topicId,
+            },
+          );
+        }
+      }
+
       info("spawn: completed", {
         opId,
         chatId,
@@ -624,6 +682,17 @@ export async function handleStop(ctx: Context): Promise<void> {
     return;
   }
 
+  // Topic context: load session from topic or show picker in General
+  if (getTopicsEnabled()) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      const sessionInfo = getSession(topicCtx.sessionName);
+      if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    } else if (isGeneralTopic(ctx)) {
+      if (await showSessionPicker(ctx, "stop_pick")) return;
+    }
+  }
+
   const result = await session.stop();
 
   if (result === "stopped") {
@@ -674,6 +743,12 @@ export async function killSession(
   }
 
   removeSession(sessionInfo.name);
+
+  if (_topicManager && getTopicsEnabled()) {
+    _topicManager
+      .deleteTopic(sessionInfo.name)
+      .catch((err) => warn(`kill: topic delete failed: ${err}`));
+  }
 
   info("kill: terminated", {
     sessionName: sessionInfo.name,
@@ -762,6 +837,17 @@ export async function handleStatus(ctx: Context): Promise<void> {
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
     return;
+  }
+
+  // Topic context: load session from topic or show picker in General
+  if (getTopicsEnabled()) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      const sessionInfo = getSession(topicCtx.sessionName);
+      if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    } else if (isGeneralTopic(ctx)) {
+      if (await showSessionPicker(ctx, "status_pick")) return;
+    }
   }
 
   const activeSession = getActiveSession();
@@ -856,6 +942,17 @@ export async function handleModel(ctx: Context): Promise<void> {
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
     return;
+  }
+
+  // Topic context: load session from topic or show picker in General
+  if (getTopicsEnabled()) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      const sessionInfo = getSession(topicCtx.sessionName);
+      if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    } else if (isGeneralTopic(ctx)) {
+      if (await showSessionPicker(ctx, "model_pick")) return;
+    }
   }
 
   const currentModel = session.model;
@@ -963,43 +1060,61 @@ export async function handleList(ctx: Context): Promise<void> {
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
-    const isActive = active?.name === s.name;
-    const marker = isActive ? "✅ " : "• ";
-    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-    const ago = formatTimeAgo(s.lastActivity);
-    const branch = branches[i];
-    const hasRelay = relayDirSet.has(s.dir);
+  if (getTopicsEnabled()) {
+    // Topic mode: show sessions as status list (user navigates by opening topics)
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]!;
+      const hasRelay = relayDirSet.has(s.dir);
+      const emoji = hasRelay ? "🟢" : "🔴";
+      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+      lines.push(
+        `${emoji} <b>${escapeHtml(s.name)}</b>\n  <code>${escapeHtml(dir)}</code>`,
+      );
+      const branch = branches[i];
+      if (branch) lines.push(`  🌿 ${escapeHtml(branch)}`);
+      lines.push("");
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  } else {
+    // v1 behavior: show sessions with Switch buttons
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]!;
+      const isActive = active?.name === s.name;
+      const marker = isActive ? "✅ " : "• ";
+      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+      const ago = formatTimeAgo(s.lastActivity);
+      const branch = branches[i];
+      const hasRelay = relayDirSet.has(s.dir);
 
-    const meta = [
-      dir,
-      branch ? `🌿 ${branch}` : null,
-      hasRelay ? "📡" : null,
-      ago,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
-  }
+      const meta = [
+        dir,
+        branch ? `🌿 ${branch}` : null,
+        hasRelay ? "📡" : null,
+        ago,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
+    }
 
-  // Create inline buttons for all sessions (mark active with ✓)
-  const buttons = sessions.map((s) => [
-    {
-      text: active?.name === s.name ? `✓ ${s.name}` : s.name,
-      callback_data: `switch:${s.name}`,
-    },
-  ]);
+    const buttons = sessions.map((s) => [
+      {
+        text: active?.name === s.name ? `✓ ${s.name}` : s.name,
+        callback_data: `switch:${s.name}`,
+      },
+    ]);
 
-  await ctx.reply(lines.join("\n"), {
-    parse_mode: "HTML",
-    reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
-  });
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "HTML",
+      reply_markup:
+        buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+    });
 
-  // Auto-watch active desktop session if not already watching
-  const chatId = ctx.chat?.id;
-  if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
-    await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
+    // Auto-watch active desktop session if not already watching
+    const chatId = ctx.chat?.id;
+    if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
+      await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
+    }
   }
 }
 
@@ -1011,6 +1126,13 @@ export async function handleSwitch(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (getTopicsEnabled()) {
+    await ctx.reply(
+      "ℹ️ /switch is not needed with topics. Just open a session topic.",
+    );
     return;
   }
 

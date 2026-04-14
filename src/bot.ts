@@ -59,7 +59,7 @@ export interface BotOptions {
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
 
-  // Sequentialize non-command messages per user (prevents race conditions)
+  // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
     sequentialize((ctx) => {
       // Commands bypass sequentialization
@@ -74,7 +74,10 @@ export function createBot(options: BotOptions): Bot {
       if (ctx.callbackQuery) {
         return undefined;
       }
-      return ctx.chat?.id.toString();
+      const threadId = ctx.message?.message_thread_id;
+      return threadId
+        ? `${ctx.chat?.id}:${threadId}`
+        : ctx.chat?.id?.toString();
     }),
   );
 

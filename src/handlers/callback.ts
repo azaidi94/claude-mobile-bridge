@@ -84,6 +84,49 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  // Handle topic session-picker callbacks: status_pick, model_pick, stop_pick
+  if (callbackData.startsWith("status_pick:")) {
+    const sessionName = callbackData.slice("status_pick:".length);
+    const sessionInfo = getSession(sessionName);
+    if (sessionInfo) {
+      session.loadFromRegistry(sessionInfo);
+      const { handleStatus } = await import("./commands");
+      await handleStatus(ctx);
+    } else {
+      await ctx.reply("Session not found.");
+    }
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (callbackData.startsWith("model_pick:")) {
+    const sessionName = callbackData.slice("model_pick:".length);
+    const sessionInfo = getSession(sessionName);
+    if (sessionInfo) {
+      session.loadFromRegistry(sessionInfo);
+      const { handleModel } = await import("./commands");
+      await handleModel(ctx);
+    } else {
+      await ctx.reply("Session not found.");
+    }
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (callbackData.startsWith("stop_pick:")) {
+    const sessionName = callbackData.slice("stop_pick:".length);
+    const sessionInfo = getSession(sessionName);
+    if (sessionInfo) {
+      session.loadFromRegistry(sessionInfo);
+      const { handleStop } = await import("./commands");
+      await handleStop(ctx);
+    } else {
+      await ctx.reply("Session not found.");
+    }
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
   // 2. Handle model switch callbacks: model:{model_id}
   if (callbackData.startsWith("model:")) {
     const modelId = callbackData.slice(6) as ModelId; // Remove "model:" prefix

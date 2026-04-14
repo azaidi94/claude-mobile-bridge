@@ -21,6 +21,7 @@ export {
   handlePwd,
   handleCd,
   handleLs,
+  setTopicManager,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";

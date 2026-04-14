@@ -36,6 +36,7 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
+import { getTopicsEnabled } from "../settings";
 
 // ============== Shared Tail Display State ==============
 
@@ -370,6 +371,13 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
+  if (getTopicsEnabled()) {
+    await ctx.reply(
+      "ℹ️ Watching is automatic with topics. Each topic shows live updates.",
+    );
+    return;
+  }
+
   // Don't start watching while a query is running
   if (session.isRunning) {
     await ctx.reply("A query is in progress. Use /stop first.");
@@ -670,6 +678,11 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (getTopicsEnabled()) {
+    await ctx.reply("ℹ️ Watching is automatic with topics.");
     return;
   }
 
