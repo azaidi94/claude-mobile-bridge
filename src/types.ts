@@ -109,3 +109,18 @@ export interface AskUserQuestionState {
   chatId: number;
   isPlanMode: boolean;
 }
+
+// Topic ↔ session mapping for v2 private chat topics
+export interface TopicMapping {
+  topicId: number; // Telegram message_thread_id
+  sessionName: string;
+  sessionDir: string;
+  sessionId?: string;
+  isOnline: boolean;
+  createdAt: string;
+}
+
+export interface TopicStore {
+  chatId: number;
+  topics: TopicMapping[];
+}

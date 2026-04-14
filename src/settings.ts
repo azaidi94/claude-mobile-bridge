@@ -29,6 +29,8 @@ export interface BridgeSettings {
   workingDir?: string;
   autoWatchOnSpawn?: boolean;
   defaultModel?: string;
+  topicsEnabled?: boolean;
+  enablePinnedStatus?: boolean;
 }
 
 function resolveSettingsPath(): string {
@@ -55,6 +57,12 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.defaultModel === "string") {
     out.defaultModel = o.defaultModel;
+  }
+  if (typeof o.topicsEnabled === "boolean") {
+    out.topicsEnabled = o.topicsEnabled;
+  }
+  if (typeof o.enablePinnedStatus === "boolean") {
+    out.enablePinnedStatus = o.enablePinnedStatus;
   }
   return out;
 }
@@ -119,6 +127,14 @@ export function getAutoWatchOnSpawn(): boolean {
 
 export function getDefaultModelSetting(): string | undefined {
   return ensure().defaultModel;
+}
+
+export function getTopicsEnabled(): boolean {
+  return ensure().topicsEnabled ?? true;
+}
+
+export function getEnablePinnedStatus(): boolean {
+  return ensure().enablePinnedStatus ?? true;
 }
 
 /**
