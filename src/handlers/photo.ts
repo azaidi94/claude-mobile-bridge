@@ -21,6 +21,7 @@ import {
   info,
   warn,
 } from "../logger";
+import { isSessionTopic } from "../topics";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -66,6 +67,7 @@ async function processPhotos(
   username: string,
   chatId: number,
   opId: string,
+  threadId?: number,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -84,6 +86,7 @@ async function processPhotos(
       chatId,
       photoPaths[0],
       opId,
+      threadId,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
@@ -110,11 +113,13 @@ async function processPhotos(
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
   } finally {
@@ -141,6 +146,9 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
+  const topicCtx = isSessionTopic(ctx);
+  const threadId = topicCtx?.topicId;
+
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
   info("request: started", {
     opId,
@@ -161,6 +169,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -179,12 +188,15 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       await auditLogRateLimit(userId, username, retryAfter!);
       await ctx.reply(
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+        { message_thread_id: threadId },
       );
       return;
     }
 
     // Show status immediately
-    statusMsg = await ctx.reply("📷 Processing image...");
+    statusMsg = await ctx.reply("📷 Processing image...", {
+      message_thread_id: threadId,
+    });
   }
 
   // 3. Download photo
@@ -210,10 +222,14 @@ export async function handlePhoto(ctx: Context): Promise<void> {
           messageId: statusMsg.message_id,
           err: String(editError),
         });
-        await ctx.reply("❌ Failed to download photo.");
+        await ctx.reply("❌ Failed to download photo.", {
+          message_thread_id: threadId,
+        });
       }
     } else {
-      await ctx.reply("❌ Failed to download photo.");
+      await ctx.reply("❌ Failed to download photo.", {
+        message_thread_id: threadId,
+      });
     }
     return;
   }
@@ -228,6 +244,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       username,
       chatId,
       opId,
+      threadId,
     );
 
     // Clean up status message
@@ -261,6 +278,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
         groupUsername,
         groupChatId,
         opId,
+        threadId,
       ),
   );
 }

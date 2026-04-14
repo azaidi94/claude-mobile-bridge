@@ -17,6 +17,7 @@ import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
 import { getActiveSession } from "../sessions";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
+import { isSessionTopic } from "../topics";
 
 /**
  * Handle incoming voice messages.
@@ -37,6 +38,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
+  const topicCtx = isSessionTopic(ctx);
+  const threadId = topicCtx?.topicId;
+
   const opId = createOpId("voice");
   const requestStartedAt = Date.now();
   info("request: started", {
@@ -51,6 +55,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   if (!TRANSCRIPTION_AVAILABLE) {
     await ctx.reply(
       "Voice transcription is not configured. Set OPENAI_API_KEY in .env",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -61,6 +66,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     await auditLogRateLimit(userId, username, retryAfter!);
     await ctx.reply(
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -76,6 +82,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -102,7 +109,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
     await Bun.write(voicePath, buffer);
 
     // 7. Transcribe
-    const statusMsg = await ctx.reply("🎤 Transcribing...");
+    const statusMsg = await ctx.reply("🎤 Transcribing...", {
+      message_thread_id: threadId,
+    });
 
     const transcriptionStartedAt = Date.now();
     const transcript = await transcribeVoice(voicePath);
@@ -144,6 +153,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       chatId,
       undefined,
       opId,
+      threadId,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -175,11 +185,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
   } catch (error) {
@@ -191,7 +203,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
       durationMs: elapsedMs(requestStartedAt),
       err: String(error).slice(0, 200),
     });
-    await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+    await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`, {
+      message_thread_id: threadId,
+    });
   } finally {
     stopProcessing();
     typing.stop();
