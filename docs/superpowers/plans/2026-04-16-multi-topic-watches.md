@@ -1172,3 +1172,45 @@ Report PASS/FAIL for each of the six checks. If any FAIL, create a follow-up tas
 - [ ] **Step 5: No-op commit**
 
 Nothing to commit from this task unless smoke-test surfaced a bug.
+
+---
+
+## Task 7: Pre-merge `/simplify` pass
+
+Run `/simplify` over the full branch diff (versus `main`). Three parallel agents review the changes for code reuse, quality, and efficiency. Aggregate findings and fix inline.
+
+- [ ] **Step 1: Run `/simplify` against the branch diff**
+
+```bash
+git diff main...HEAD
+```
+
+Feed the full diff to `/simplify`. Common issues to watch for on this refactor specifically:
+
+- **Reuse**: any file re-implementing `watchKey()` inline instead of importing it; any helper duplicating `stopWatchByDir`'s linear scan.
+- **Quality**: parameter sprawl where `threadId` crept into signatures that didn't need it (only functions that operate on a specific watch need it); stringly-typed `WatchKey` use leaking outside `watch.ts` (should stay encapsulated — external callers pass `(chatId, threadId)` tuples, not `WatchKey` strings).
+- **Efficiency**: `isWatchingAny`'s O(n) prefix scan is fine for <20 watches; flag only if some hot path calls it per-message.
+
+- [ ] **Step 2: Apply fixes**
+
+Aggregate findings from the three agents. Fix each issue directly. If a finding is a false positive or out of scope for this refactor, note it and skip.
+
+- [ ] **Step 3: Re-run typecheck + tests after fixes**
+
+```bash
+bun run typecheck
+bun run test
+```
+
+Expected: both pass.
+
+- [ ] **Step 4: Commit (only if fixes were applied)**
+
+```bash
+git add <modified files>
+git commit -m "refactor: simplify watch refactor per /simplify review"
+```
+
+- [ ] **Step 5: Ready to merge**
+
+Branch is now ready. Follow repo's standard merge flow (PR against `main`, etc).
