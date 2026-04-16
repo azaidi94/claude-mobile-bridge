@@ -4,6 +4,7 @@
  */
 
 import type { Context } from "grammy";
+import type { SessionOverride } from "../sessions/types";
 import { session } from "../session";
 import type { RelayClient, RelayDisplayState } from "../relay";
 import {
@@ -29,6 +30,7 @@ export async function sendViaRelay(
   imagePath?: string,
   opId?: string,
   threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<RelayResult> {
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
@@ -39,20 +41,23 @@ export async function sendViaRelay(
       message,
       opId,
       imagePath,
+      sessionOverride,
     );
     if (relayed) return "delivered";
   }
 
   const active = getActiveSession();
-  const sessionId = active?.info.id || session.sessionId;
-  const sessionDir = session.workingDir || active?.info.dir;
+  const sessionId =
+    sessionOverride?.sessionId || active?.info.id || session.sessionId;
+  const sessionDir =
+    sessionOverride?.sessionDir || session.workingDir || active?.info.dir;
   if (!sessionDir) return "unavailable";
   const startedAt = Date.now();
 
   const client = await getRelayClient({
     sessionId: sessionId || undefined,
     sessionDir,
-    claudePid: active?.info.pid,
+    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
   });
   if (!client) return "unavailable";
 

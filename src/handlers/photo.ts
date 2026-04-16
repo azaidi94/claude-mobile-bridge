@@ -22,6 +22,7 @@ import {
   warn,
 } from "../logger";
 import { loadTopicSession } from "../topics";
+import type { SessionOverride } from "../sessions/types";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -68,6 +69,7 @@ async function processPhotos(
   chatId: number,
   opId: string,
   threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -87,6 +89,7 @@ async function processPhotos(
       photoPaths[0],
       opId,
       threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
@@ -146,7 +149,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
-  const threadId = loadTopicSession(ctx);
+  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
   info("request: started", {
@@ -244,6 +247,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       chatId,
       opId,
       threadId,
+      sessionOverride,
     );
 
     // Clean up status message
@@ -278,6 +282,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
         groupChatId,
         opId,
         threadId,
+        sessionOverride,
       ),
   );
 }

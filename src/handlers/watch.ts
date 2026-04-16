@@ -10,6 +10,7 @@
 
 import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
+import type { SessionOverride } from "../sessions/types";
 import { session } from "../session";
 import { ALLOWED_USERS, STREAMING_THROTTLE_MS } from "../config";
 import { isAuthorized } from "../security";
@@ -165,11 +166,7 @@ export async function sendWatchRelay(
   opId?: string,
   imagePath?: string,
   /** Override session target (for topic mode where watch may point at a different session). */
-  sessionOverride?: {
-    sessionId: string;
-    sessionDir: string;
-    sessionPid?: number;
-  },
+  sessionOverride?: SessionOverride,
 ): Promise<boolean> {
   const state = watches.get(chatId);
   if (!state) return false;

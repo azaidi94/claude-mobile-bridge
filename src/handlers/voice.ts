@@ -38,7 +38,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  const threadId = loadTopicSession(ctx);
+  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
   const opId = createOpId("voice");
   const requestStartedAt = Date.now();
@@ -153,6 +153,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       undefined,
       opId,
       threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(

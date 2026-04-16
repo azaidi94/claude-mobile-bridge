@@ -41,6 +41,7 @@ import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
 import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
+import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
 
 /**
@@ -75,7 +76,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // Topic routing — resolve session from topic context
   let threadId: number | undefined;
-  let topicSessionInfo: { id?: string; dir: string; pid?: number } | undefined;
+  let sessionOverride: SessionOverride | undefined;
 
   if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
@@ -86,7 +87,11 @@ export async function handleText(ctx: Context): Promise<void> {
       const si = getSession(topicCtx.sessionName);
       if (si) {
         session.loadFromRegistry(si);
-        topicSessionInfo = si;
+        sessionOverride = {
+          sessionId: si.id || "",
+          sessionDir: si.dir,
+          sessionPid: si.pid,
+        };
       }
       // Ensure the watch uses this topic's thread for responses
       if (isWatching(chatId)) {
@@ -334,13 +339,6 @@ export async function handleText(ctx: Context): Promise<void> {
   // In topic mode, pass session override so the relay targets the correct session
   // (topic routing loaded the right session above, but the watch may point elsewhere).
   if (isWatching(chatId)) {
-    const sessionOverride = topicSessionInfo
-      ? {
-          sessionId: topicSessionInfo.id || "",
-          sessionDir: topicSessionInfo.dir,
-          sessionPid: topicSessionInfo.pid,
-        }
-      : undefined;
     const relayed = await sendWatchRelay(
       chatId,
       username,
@@ -446,6 +444,7 @@ export async function handleText(ctx: Context): Promise<void> {
       undefined,
       opId,
       threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "RELAY", message, "(via relay)");

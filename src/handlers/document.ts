@@ -22,6 +22,7 @@ import {
   warn,
 } from "../logger";
 import { loadTopicSession } from "../topics";
+import type { SessionOverride } from "../sessions/types";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -228,6 +229,7 @@ async function processArchive(
   chatId: number,
   opId: string,
   threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -288,6 +290,7 @@ async function processArchive(
       undefined,
       opId,
       threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -365,6 +368,7 @@ async function processDocuments(
   chatId: number,
   opId: string,
   threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -394,6 +398,7 @@ async function processDocuments(
       undefined,
       opId,
       threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -452,6 +457,7 @@ async function processDocumentPaths(
   chatId: number,
   opId: string,
   threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
@@ -497,6 +503,7 @@ async function processDocumentPaths(
     chatId,
     opId,
     threadId,
+    sessionOverride,
   );
 }
 
@@ -520,7 +527,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  const threadId = loadTopicSession(ctx);
+  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
@@ -626,6 +633,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       chatId,
       opId,
       threadId,
+      sessionOverride,
     );
     return;
   }
@@ -660,6 +668,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
         chatId,
         opId,
         threadId,
+        sessionOverride,
       );
     } catch (error) {
       logError("document: single-file processing failed", error, {
@@ -694,6 +703,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
         groupChatId,
         opId,
         threadId,
+        sessionOverride,
       ),
   );
 }

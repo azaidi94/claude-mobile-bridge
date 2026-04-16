@@ -14,6 +14,7 @@ import { warn } from "../logger";
 import { session } from "../session";
 import { getSession } from "../sessions";
 import type { TopicMapping } from "../types";
+import type { SessionOverride } from "../sessions/types";
 
 /**
  * Check if the message is in the General topic (or no topic at all).
@@ -44,16 +45,26 @@ export function isSessionTopic(
   };
 }
 
+export interface TopicSessionResult {
+  threadId: number;
+  sessionOverride?: SessionOverride;
+}
+
 /**
  * Resolve topic context and load the session.
- * Returns threadId if in a session topic, undefined otherwise.
+ * Returns threadId and sessionOverride if in a session topic, undefined otherwise.
  */
-export function loadTopicSession(ctx: Context): number | undefined {
+export function loadTopicSession(ctx: Context): TopicSessionResult | undefined {
   const topicCtx = isSessionTopic(ctx);
   if (!topicCtx) return undefined;
   const si = getSession(topicCtx.sessionName);
   if (si) session.loadFromRegistry(si);
-  return topicCtx.topicId;
+  return {
+    threadId: topicCtx.topicId,
+    sessionOverride: si
+      ? { sessionId: si.id || "", sessionDir: si.dir, sessionPid: si.pid }
+      : undefined,
+  };
 }
 
 /**
