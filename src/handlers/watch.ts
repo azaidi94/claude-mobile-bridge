@@ -37,7 +37,6 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
-import { isTopicChat } from "./commands";
 
 // ============== Shared Tail Display State ==============
 
@@ -64,8 +63,8 @@ interface WatchState extends TailDisplayState {
   sessionPid?: number;
   tailer: SessionTailer;
   lastEventTime: number;
-  /** Topic thread ID — when set, all messages go to this thread. */
-  threadId?: number;
+  /** Topic thread ID — all messages go to this thread. */
+  threadId: number;
   /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
   suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
@@ -83,31 +82,70 @@ interface WatchState extends TailDisplayState {
   suppressNextIdChangeNotice?: boolean;
 }
 
-// Active watches: chatId -> WatchState
-const watches = new Map<number, WatchState>();
+// Active watches: "chatId:threadId" -> WatchState
+type WatchKey = `${number}:${number}`;
+const watches = new Map<WatchKey, WatchState>();
+
+function watchKey(chatId: number, threadId: number): WatchKey {
+  return `${chatId}:${threadId}`;
+}
+
+function watchKeyChatPrefix(chatId: number): string {
+  return `${chatId}:`;
+}
+
+function buildWatchState(args: {
+  sessionName: string;
+  sessionId: string;
+  sessionDir: string;
+  sessionPid?: number;
+  tailer: SessionTailer;
+  chatId: number;
+  threadId: number;
+  suppressNextIdChangeNotice?: boolean;
+}): WatchState {
+  return {
+    sessionName: args.sessionName,
+    sessionId: args.sessionId,
+    sessionDir: args.sessionDir,
+    sessionPid: args.sessionPid,
+    tailer: args.tailer,
+    chatId: args.chatId,
+    threadId: args.threadId,
+    lastEventTime: Date.now(),
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    ...(args.suppressNextIdChangeNotice
+      ? { suppressNextIdChangeNotice: true }
+      : {}),
+  };
+}
 
 // Activity-based typing: starts on events, auto-stops after idle
 const TYPING_IDLE_MS = 5_000;
 const typingState = new Map<
-  number,
+  WatchKey,
   { running: boolean; timeout: Timer | null }
 >();
 
 /** Signal activity — starts or extends the typing indicator. */
-function touchWatchTyping(
-  botApi: Api,
-  chatId: number,
-  threadId?: number,
-): void {
-  let entry = typingState.get(chatId);
+function touchWatchTyping(botApi: Api, chatId: number, threadId: number): void {
+  const key = watchKey(chatId, threadId);
+  let entry = typingState.get(key);
   if (!entry) {
     entry = { running: false, timeout: null };
-    typingState.set(chatId, entry);
+    typingState.set(key, entry);
   }
 
   // Reset idle timeout
   if (entry.timeout) clearTimeout(entry.timeout);
-  entry.timeout = setTimeout(() => stopWatchTyping(chatId), TYPING_IDLE_MS);
+  entry.timeout = setTimeout(
+    () => stopWatchTyping(chatId, threadId),
+    TYPING_IDLE_MS,
+  );
 
   // Start loop if not already running
   if (entry.running) return;
@@ -125,34 +163,31 @@ function touchWatchTyping(
   loop();
 }
 
-function stopWatchTyping(chatId: number): void {
-  const entry = typingState.get(chatId);
+function stopWatchTyping(chatId: number, threadId: number): void {
+  const key = watchKey(chatId, threadId);
+  const entry = typingState.get(key);
   if (entry) {
     entry.running = false;
     if (entry.timeout) clearTimeout(entry.timeout);
-    typingState.delete(chatId);
+    typingState.delete(key);
   }
 }
 
 /**
- * Check if a chat is currently watching a session.
+ * Check if a specific (chatId, threadId) pair is currently watching.
+ * Callers in General chat with no thread should use isWatchingAny instead.
  */
-export function isWatching(chatId: number): boolean {
-  return watches.has(chatId);
+export function isWatching(chatId: number, threadId: number): boolean {
+  return watches.has(watchKey(chatId, threadId));
 }
 
-/**
- * Set the threadId on an active watch so responses go to the correct topic.
- */
-export function setWatchThreadId(
-  chatId: number,
-  threadId: number | undefined,
-): void {
-  const state = watches.get(chatId);
-  if (state && threadId && !state.threadId) {
-    state.threadId = threadId;
-    debug(`watch: set threadId=${threadId} for chatId=${chatId}`);
+/** True if any topic in this chat has an active watch. */
+export function isWatchingAny(chatId: number): boolean {
+  const prefix = watchKeyChatPrefix(chatId);
+  for (const k of watches.keys()) {
+    if (k.startsWith(prefix)) return true;
   }
+  return false;
 }
 
 /**
@@ -161,6 +196,7 @@ export function setWatchThreadId(
  */
 export async function sendWatchRelay(
   chatId: number,
+  threadId: number,
   username: string,
   text: string,
   opId?: string,
@@ -168,7 +204,7 @@ export async function sendWatchRelay(
   /** Override session target (for topic mode where watch may point at a different session). */
   sessionOverride?: SessionOverride,
 ): Promise<boolean> {
-  const state = watches.get(chatId);
+  const state = watches.get(watchKey(chatId, threadId));
   if (!state) return false;
   const startedAt = Date.now();
 
@@ -189,6 +225,7 @@ export async function sendWatchRelay(
   info("watch: relay queued", {
     opId,
     chatId,
+    threadId,
     sessionName: state.sessionName,
     sessionId: state.sessionId,
     sessionDir: state.sessionDir,
@@ -197,32 +234,31 @@ export async function sendWatchRelay(
   return true;
 }
 
-/**
- * Stop watching for a chat and clean up.
- * If botApi is provided, flushes any pending text message before stopping.
- */
-function cleanupWatch(chatId: number, state: WatchState): void {
+/** Stop tailer, relay callbacks, typing indicator; remove from watches map. */
+function cleanupWatch(state: WatchState): void {
   state.tailer.stop();
   state.relayCleanup?.();
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
-  stopWatchTyping(chatId);
-  watches.delete(chatId);
+  stopWatchTyping(state.chatId, state.threadId);
+  watches.delete(watchKey(state.chatId, state.threadId));
 }
 
 export function stopWatching(
   chatId: number,
+  threadId: number,
   botApi?: Api,
   reason = "manual",
 ): WatchState | undefined {
-  const state = watches.get(chatId);
+  const state = watches.get(watchKey(chatId, threadId));
   if (state) {
     // Flush pending text before stopping
     if (botApi && state.currentTextMsg && !state.segmentDone) {
       finalizeTextMessage(botApi, state);
     }
-    cleanupWatch(chatId, state);
+    cleanupWatch(state);
     info("watch: stopped", {
       chatId,
+      threadId,
       sessionName: state.sessionName,
       sessionId: state.sessionId,
       sessionDir: state.sessionDir,
@@ -233,40 +269,68 @@ export function stopWatching(
 }
 
 /**
+ * Stop watching the session whose sessionDir matches `sessionDir`.
+ * Used by killSession so only the killed session's watch is stopped,
+ * leaving other topics' watches intact.
+ */
+export function stopWatchByDir(
+  sessionDir: string,
+  botApi?: Api,
+  reason = "byDir",
+): WatchState | undefined {
+  for (const [, state] of watches) {
+    if (state.sessionDir === sessionDir) {
+      if (botApi && state.currentTextMsg && !state.segmentDone) {
+        finalizeTextMessage(botApi, state);
+      }
+      cleanupWatch(state);
+      info("watch: stopped by dir", {
+        chatId: state.chatId,
+        threadId: state.threadId,
+        sessionName: state.sessionName,
+        sessionDir,
+        reason,
+      });
+      return state;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Notify watch handlers that a session went offline.
  * Called from the watcher notification system.
  */
 export function notifySessionOffline(botApi: Api, sessionDir: string): void {
-  for (const [chatId, state] of watches) {
-    if (state.sessionDir === sessionDir) {
-      cleanupWatch(chatId, state);
+  for (const [, state] of watches) {
+    if (state.sessionDir !== sessionDir) continue;
+    const { chatId, threadId } = state;
+    cleanupWatch(state);
 
-      // Load session for resume
-      const sessionInfo = getSession(state.sessionName);
-      if (sessionInfo) {
-        session.loadFromRegistry(sessionInfo);
-        setActiveSession(state.sessionName);
-      }
-
-      botApi
-        .sendMessage(
-          chatId,
-          `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
-          {
-            parse_mode: "HTML",
-            ...(state.threadId ? { message_thread_id: state.threadId } : {}),
-          },
-        )
-        .catch((err) => warn(`watch offline notify: ${err}`));
-
-      warn("watch: session went offline", {
-        chatId,
-        sessionName: state.sessionName,
-        sessionId: state.sessionId,
-        sessionDir,
-        readyForResume: Boolean(sessionInfo),
-      });
+    const sessionInfo = getSession(state.sessionName);
+    if (sessionInfo) {
+      session.loadFromRegistry(sessionInfo);
+      setActiveSession(state.sessionName);
     }
+
+    botApi
+      .sendMessage(
+        chatId,
+        `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
+        { parse_mode: "HTML", message_thread_id: threadId },
+      )
+      .catch((err) => warn(`watch offline notify: ${err}`));
+
+    warn("watch: session went offline", {
+      chatId,
+      threadId,
+      sessionName: state.sessionName,
+      sessionId: state.sessionId,
+      sessionDir,
+      readyForResume: Boolean(sessionInfo),
+    });
+    // Each session dir maps to at most one topic — stop after first match.
+    break;
   }
 }
 
@@ -279,12 +343,12 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
 export async function startAutoWatch(
   botApi: Api,
   chatId: number,
+  threadId: number,
   sessionName: string,
-  threadId?: number,
 ): Promise<boolean> {
-  // Stop existing watch if any
-  if (watches.has(chatId)) {
-    stopWatching(chatId, botApi, "auto-replace");
+  // Stop existing watch for THIS (chatId, threadId) if any — don't clobber others.
+  if (watches.has(watchKey(chatId, threadId))) {
+    stopWatching(chatId, threadId, botApi, "auto-replace");
   }
 
   await forceRefresh();
@@ -292,6 +356,7 @@ export async function startAutoWatch(
   if (!sessionInfo?.id) {
     warn("auto-watch: start failed, missing session id", {
       chatId,
+      threadId,
       sessionName,
     });
     return false;
@@ -304,7 +369,7 @@ export async function startAutoWatch(
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
   });
-  const watchState: WatchState = {
+  const watchState: WatchState = buildWatchState({
     sessionName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
@@ -312,14 +377,8 @@ export async function startAutoWatch(
     tailer,
     chatId,
     threadId,
-    lastEventTime: Date.now(),
-    currentToolMsg: null,
-    currentTextMsg: null,
-    currentTextContent: "",
-    lastTextUpdate: 0,
-    segmentDone: true,
-  };
-  watches.set(chatId, watchState);
+  });
+  watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
   // Wire relay client for replies
@@ -354,26 +413,12 @@ export async function startAutoWatch(
 
   info("auto-watch: started", {
     chatId,
+    threadId,
     sessionName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
-    threadId,
   });
   return true;
-}
-
-/**
- * Stop auto-watching for a chat and clean up.
- */
-export function stopAutoWatch(chatId: number): void {
-  const state = watches.get(chatId);
-  if (!state) return;
-  cleanupWatch(chatId, state);
-  info("auto-watch: stopped", {
-    chatId,
-    sessionName: state.sessionName,
-    sessionId: state.sessionId,
-  });
 }
 
 /**
@@ -382,6 +427,7 @@ export function stopAutoWatch(chatId: number): void {
 export async function handleWatch(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
 
   if (!userId || !chatId) return;
 
@@ -390,9 +436,9 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (isTopicChat(ctx)) {
+  if (threadId === undefined) {
     await ctx.reply(
-      "ℹ️ Watching is automatic with topics. Each topic shows live updates.",
+      "ℹ️ Watching is per-topic. Use /spawn to create a topic for your session.",
     );
     return;
   }
@@ -404,8 +450,8 @@ export async function handleWatch(ctx: Context): Promise<void> {
   }
 
   // Already watching?
-  if (watches.has(chatId)) {
-    const existing = watches.get(chatId)!;
+  if (watches.has(watchKey(chatId, threadId))) {
+    const existing = watches.get(watchKey(chatId, threadId))!;
     await ctx.reply(
       `Already watching <b>${escapeHtml(existing.sessionName)}</b>. Use /unwatch first.`,
       { parse_mode: "HTML" },
@@ -460,6 +506,7 @@ export async function handleWatch(ctx: Context): Promise<void> {
   const started = await startWatchingAndNotify(
     ctx,
     chatId,
+    threadId,
     targetName,
     "command",
   );
@@ -475,12 +522,13 @@ export async function handleWatch(ctx: Context): Promise<void> {
 export async function startWatchingSession(
   botApi: Api,
   chatId: number,
+  threadId: number,
   targetName: string,
   reason = "watch",
 ): Promise<boolean> {
   // Stop existing watch if any
-  if (watches.has(chatId)) {
-    stopWatching(chatId, botApi, "replace");
+  if (watches.has(watchKey(chatId, threadId))) {
+    stopWatching(chatId, threadId, botApi, "replace");
   }
 
   // Poll for session ID — freshly spawned sessions need a moment for the
@@ -498,6 +546,7 @@ export async function startWatchingSession(
   if (!sessionInfo?.id) {
     warn("watch: start failed, missing session id", {
       chatId,
+      threadId,
       targetName,
     });
     return false;
@@ -513,32 +562,27 @@ export async function startWatchingSession(
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
   });
-  const watchState: WatchState = {
+  // Spawn-initiated watches: the seeded sessionId is almost certainly
+  // the watcher's stale-JSONL fallback for this dir. When the real id
+  // shows up (after the first user prompt) we restart the tailer but
+  // skip the "reconnected" broadcast — there's no prior conversation.
+  const watchState: WatchState = buildWatchState({
     sessionName: targetName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
     tailer,
     chatId,
-    lastEventTime: Date.now(),
-    currentToolMsg: null,
-    currentTextMsg: null,
-    currentTextContent: "",
-    lastTextUpdate: 0,
-    segmentDone: true,
-    // Spawn-initiated watches: the seeded sessionId is almost certainly
-    // the watcher's stale-JSONL fallback for this dir. When the real id
-    // shows up (after the first user prompt) we restart the tailer but
-    // skip the "reconnected" broadcast — there's no prior conversation.
+    threadId,
     suppressNextIdChangeNotice: reason === "spawn",
-  };
-  watches.set(chatId, watchState);
+  });
+  watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
   // Detect when the desktop session starts a new conversation (new JSONL, same dir).
   // refresh() diffs by name only, so an ID change won't surface as added/removed.
   watchState.idCheckInterval = setInterval(async () => {
-    if (!watches.has(chatId)) return;
+    if (!watches.has(watchKey(chatId, threadId))) return;
     // Use newest JSONL as source of truth (port file can be stale after /clear).
     // Without this, reconnecting via JSONL scan would cause the stale port file
     // ID to differ from the new watchState.sessionId, ping-ponging back.
@@ -569,12 +613,7 @@ export async function startWatchingSession(
       .sendMessage(
         chatId,
         `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
-        {
-          parse_mode: "HTML",
-          ...(watchState.threadId
-            ? { message_thread_id: watchState.threadId }
-            : {}),
-        },
+        { parse_mode: "HTML", message_thread_id: watchState.threadId },
       )
       .catch(() => {});
   }, 5_000);
@@ -623,6 +662,7 @@ export async function startWatchingSession(
 
   info("watch: started", {
     chatId,
+    threadId,
     sessionName: targetName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
@@ -639,12 +679,14 @@ export async function startWatchingSession(
 export async function startWatchingAndNotify(
   ctx: Context,
   chatId: number,
+  threadId: number,
   sessionName: string,
   reason = "watch",
 ): Promise<boolean> {
   const watching = await startWatchingSession(
     ctx.api,
     chatId,
+    threadId,
     sessionName,
     reason,
   );
@@ -693,6 +735,7 @@ export async function startWatchingAndNotify(
 export async function handleUnwatch(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
 
   if (!userId || !chatId) return;
 
@@ -701,12 +744,12 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
     return;
   }
 
-  if (isTopicChat(ctx)) {
-    await ctx.reply("ℹ️ Watching is automatic with topics.");
+  if (threadId === undefined) {
+    await ctx.reply("ℹ️ Unwatching is per-topic.");
     return;
   }
 
-  const state = stopWatching(chatId, ctx.api, "unwatch");
+  const state = stopWatching(chatId, threadId, ctx.api, "unwatch");
 
   if (state) {
     await ctx.reply(
@@ -726,8 +769,26 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
       branch,
     }).catch(() => {});
   } else {
-    await ctx.reply("Not currently watching any session.");
+    await ctx.reply("Not currently watching any session in this topic.");
   }
+}
+
+/** Test seam — clear internal watch + typing state. Do NOT call from app code. */
+export function _resetWatchesForTests(): void {
+  for (const [, state] of watches) {
+    try {
+      state.tailer.stop();
+    } catch {}
+    state.relayCleanup?.();
+    if (state.idCheckInterval) clearInterval(state.idCheckInterval);
+  }
+  watches.clear();
+  typingState.clear();
+}
+
+/** Test seam — register a pre-built WatchState without starting a tailer. */
+export function _registerWatchForTests(state: WatchState): void {
+  watches.set(watchKey(state.chatId, state.threadId), state);
 }
 
 // ============== Tail Event Display ==============
@@ -747,15 +808,18 @@ export function handleTailEvent(
   const { chatId } = state;
   const threadOpts = threadId ? { message_thread_id: threadId } : {};
 
-  // Typing only during "working" phases — stop when user-visible output arrives
-  if (
-    event.type === "thinking" ||
-    event.type === "tool" ||
-    event.type === "user"
-  ) {
-    touchWatchTyping(botApi, chatId, threadId);
-  } else {
-    stopWatchTyping(chatId);
+  // Typing only during "working" phases — stop when user-visible output arrives.
+  // Only for watches (threadId present); relay display has no topic context.
+  if (threadId !== undefined) {
+    if (
+      event.type === "thinking" ||
+      event.type === "tool" ||
+      event.type === "user"
+    ) {
+      touchWatchTyping(botApi, chatId, threadId);
+    } else {
+      stopWatchTyping(chatId, threadId);
+    }
   }
 
   const trackProgress = (msg: Message) => {

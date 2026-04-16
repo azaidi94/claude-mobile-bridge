@@ -23,7 +23,7 @@ import {
 } from "./streaming";
 import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
-import { isWatching, sendWatchRelay, setWatchThreadId } from "./watch";
+import { isWatching, sendWatchRelay } from "./watch";
 import {
   createOpId,
   debug,
@@ -92,10 +92,6 @@ export async function handleText(ctx: Context): Promise<void> {
           sessionDir: si.dir,
           sessionPid: si.pid,
         };
-      }
-      // Ensure the watch uses this topic's thread for responses
-      if (isWatching(chatId)) {
-        setWatchThreadId(chatId, threadId);
       }
     } else if (isGeneralTopic(ctx)) {
       // Free text in General — nudge to use a topic
@@ -338,9 +334,10 @@ export async function handleText(ctx: Context): Promise<void> {
   // 1.7. Check for active watch — relay message to desktop session.
   // In topic mode, pass session override so the relay targets the correct session
   // (topic routing loaded the right session above, but the watch may point elsewhere).
-  if (isWatching(chatId)) {
+  if (threadId !== undefined && isWatching(chatId, threadId)) {
     const relayed = await sendWatchRelay(
       chatId,
+      threadId,
       username,
       message,
       opId,

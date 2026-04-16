@@ -36,13 +36,13 @@ export {
   handleWatch,
   handleUnwatch,
   isWatching,
+  isWatchingAny,
   stopWatching,
+  stopWatchByDir,
   notifySessionOffline,
   sendWatchRelay,
   startWatchingSession,
   startAutoWatch,
-  stopAutoWatch,
-  setWatchThreadId,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {

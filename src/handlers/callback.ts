@@ -34,7 +34,7 @@ import {
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
-import { startWatchingAndNotify, isWatching } from "./watch";
+import { isWatchingAny } from "./watch";
 import {
   killSession,
   sendPostKillSessionList,
@@ -167,11 +167,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Already on this session — start watching if not already
     if (currentActive?.name === name) {
-      if (currentActive.info.source === "desktop" && !isWatching(chatId)) {
-        if (await startWatchingAndNotify(ctx, chatId, name, "switch")) {
-          await ctx.answerCallbackQuery({ text: `Watching ${name}` });
-          return;
-        }
+      if (currentActive.info.source === "desktop" && !isWatchingAny(chatId)) {
+        await ctx.answerCallbackQuery({
+          text: `${name} is active — watching is per-topic, use /spawn`,
+        });
+        return;
       }
       await ctx.answerCallbackQuery({ text: `Already on ${name}` });
       return;
@@ -219,27 +219,17 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        // Auto-watch desktop sessions
-        if (active.info.source === "desktop") {
-          if (
-            !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
-          ) {
-            await sendSwitchHistory(ctx, active.info);
-          }
-        } else {
-          await sendSwitchHistory(ctx, active.info);
-          // Update pinned status for non-desktop sessions
-          getGitBranch(active.info.dir)
-            .then((branch) =>
-              updatePinnedStatus(ctx.api, chatId, {
-                sessionName: active.name,
-                isPlanMode: session.isPlanMode,
-                model: session.modelDisplayName,
-                branch,
-              }),
-            )
-            .catch(() => {});
-        }
+        await sendSwitchHistory(ctx, active.info);
+        getGitBranch(active.info.dir)
+          .then((branch) =>
+            updatePinnedStatus(ctx.api, chatId, {
+              sessionName: active.name,
+              isPlanMode: session.isPlanMode,
+              model: session.modelDisplayName,
+              branch,
+            }),
+          )
+          .catch(() => {});
       }
     } else {
       await ctx.answerCallbackQuery({ text: "Session not found" });

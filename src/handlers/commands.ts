@@ -45,13 +45,7 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import {
-  startWatchingSession,
-  startWatchingAndNotify,
-  stopWatching,
-  isWatching,
-  setWatchThreadId,
-} from "./watch";
+import { startWatchingSession, stopWatchByDir } from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -620,25 +614,27 @@ export async function spawnDesktopClaudeSession(
       // the session, and start watching.
       session.setWorkingDir(spawnCwd);
       setActiveSession(spawned.name);
-      if (getAutoWatchOnSpawn()) {
-        startWatchingSession(api, chatId, spawned.name, "spawn").catch(
-          () => {},
-        );
-      }
-      await editStatus(
-        `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
-      );
 
-      // Create topic for the new session and wire watch to it
+      // Create topic BEFORE starting the watch so its id is available.
+      let topicId: number | undefined;
       if (_topicManager) {
-        const topicId = await _topicManager
+        topicId = await _topicManager
           .createTopic(spawned.name, spawnCwd, spawned.id)
           .catch((err) => {
             warn(`spawn: topic creation failed: ${err}`);
             return undefined;
           });
-        if (topicId) setWatchThreadId(chatId, topicId);
       }
+
+      if (getAutoWatchOnSpawn() && topicId !== undefined) {
+        startWatchingSession(api, chatId, topicId, spawned.name, "spawn").catch(
+          () => {},
+        );
+      }
+
+      await editStatus(
+        `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
+      );
 
       info("spawn: completed", {
         opId,
@@ -760,7 +756,7 @@ export async function killSession(
   chatId: number,
   botApi: Context["api"],
 ): Promise<{ killed: boolean; pid?: number }> {
-  stopWatching(chatId, botApi, "kill");
+  stopWatchByDir(sessionInfo.dir, botApi, "kill");
   disconnectRelay(sessionInfo.dir);
   // Suppress notifications for this dir while the relay child winds down —
   // its lingering port file would otherwise be rediscovered as a new session.
@@ -1152,12 +1148,6 @@ export async function handleList(ctx: Context): Promise<void> {
       reply_markup:
         buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
     });
-
-    // Auto-watch active desktop session if not already watching
-    const chatId = ctx.chat?.id;
-    if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
-      await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
-    }
   }
 }
 
@@ -1193,25 +1183,12 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     const active = getActiveSession();
     if (active) {
       session.loadFromRegistry(active.info);
-      const chatId = ctx.chat?.id;
       const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
 
-      // Auto-watch desktop sessions
-      if (active.info.source === "desktop" && chatId) {
-        if (
-          !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
-        ) {
-          await sendSwitchHistory(ctx, active.info);
-          await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-            parse_mode: "HTML",
-          });
-        }
-      } else {
-        await sendSwitchHistory(ctx, active.info);
-        await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-          parse_mode: "HTML",
-        });
-      }
+      await sendSwitchHistory(ctx, active.info);
+      await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
+        parse_mode: "HTML",
+      });
     }
   } else {
     await ctx.reply(`❌ "${name}" not found. Use /list.`);

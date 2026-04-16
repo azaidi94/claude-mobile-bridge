@@ -117,8 +117,8 @@ const notifyHandler = createNotificationHandler(
   topicManager,
   (sessionName, topicId) => {
     const chatId = topicManager?.getChatId();
-    if (chatId !== undefined) {
-      startAutoWatch(bot.api, chatId, sessionName, topicId).catch(() => {});
+    if (chatId !== undefined && topicId !== undefined) {
+      startAutoWatch(bot.api, chatId, topicId, sessionName).catch(() => {});
     }
   },
 );
@@ -134,7 +134,7 @@ if (topicManager && primaryChatId !== undefined) {
   for (const s of sessions) {
     const topic = getTopicBySession(s.name);
     if (topic) {
-      startAutoWatch(bot.api, primaryChatId, s.name, topic.topicId).catch(
+      startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
         () => {},
       );
     }

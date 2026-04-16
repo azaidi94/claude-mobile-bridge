@@ -34,9 +34,10 @@ export async function sendViaRelay(
 ): Promise<RelayResult> {
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
-  if (isWatching(chatId)) {
+  if (threadId !== undefined && isWatching(chatId, threadId)) {
     const relayed = await sendWatchRelay(
       chatId,
+      threadId,
       username,
       message,
       opId,
