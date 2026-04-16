@@ -112,7 +112,16 @@ if (primaryChatId !== undefined && storedTopicChatId) {
   setTopicManager(topicManager);
 }
 
-const notifyHandler = createNotificationHandler(bot.api, topicManager);
+const notifyHandler = createNotificationHandler(
+  bot.api,
+  topicManager,
+  (sessionName, topicId) => {
+    const chatId = topicManager?.getChatId();
+    if (chatId !== undefined) {
+      startAutoWatch(bot.api, chatId, sessionName, topicId).catch(() => {});
+    }
+  },
+);
 await startWatcher(notifyHandler);
 
 if (topicManager && primaryChatId !== undefined) {

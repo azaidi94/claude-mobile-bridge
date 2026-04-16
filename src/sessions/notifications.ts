@@ -145,6 +145,7 @@ export function setSessionOfflineCallback(
 export function createNotificationHandler(
   botApi: Api,
   topicManager?: TopicManager,
+  onTopicCreated?: (sessionName: string, topicId: number) => void,
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
     for (const session of diff.added) {
@@ -165,6 +166,10 @@ export function createNotificationHandler(
         if (topicManager) {
           topicManager
             .createTopic(session.name, session.dir, session.id)
+            .then((topicId) => {
+              if (topicId && onTopicCreated)
+                onTopicCreated(session.name, topicId);
+            })
             .catch((err) =>
               warn(`notify: topic create failed for ${session.name}: ${err}`),
             );

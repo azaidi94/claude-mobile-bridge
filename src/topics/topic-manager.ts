@@ -135,11 +135,11 @@ export class TopicManager {
     const store = getTopicStore();
     const liveNames = new Set(liveSessions.map((s) => s.name));
 
-    await Promise.allSettled(
-      store.topics
-        .filter((m) => !liveNames.has(m.sessionName) && m.isOnline)
-        .map((m) => this.updateTopicStatus(m.sessionName, false)),
-    );
+    // Delete topics for sessions that no longer exist
+    const staleNames = store.topics
+      .filter((m) => !liveNames.has(m.sessionName))
+      .map((m) => m.sessionName);
+    await Promise.allSettled(staleNames.map((n) => this.deleteTopic(n)));
 
     await Promise.allSettled(
       liveSessions.map((s) => {

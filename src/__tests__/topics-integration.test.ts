@@ -330,8 +330,9 @@ describe("topic manager reconcile", () => {
       { name: "brand-new", dir: "/tmp/c", id: "id-new" },
     ]);
 
-    // "gone-away" should be marked offline
-    expect(getTopicBySession("gone-away")!.isOnline).toBe(false);
+    // "gone-away" should be deleted
+    expect(getTopicBySession("gone-away")).toBeUndefined();
+    expect(api.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 200);
 
     // "was-offline" should be brought back online
     expect(getTopicBySession("was-offline")!.isOnline).toBe(true);
@@ -344,8 +345,9 @@ describe("topic manager reconcile", () => {
     // "still-here" stays online, no status change API call needed
     expect(getTopicBySession("still-here")!.isOnline).toBe(true);
 
-    // API calls: 1 create (brand-new); status updates no longer rename topics
+    // API calls: 1 create (brand-new), 1 delete (gone-away)
     expect(api.createForumTopic).toHaveBeenCalledTimes(1);
+    expect(api.deleteForumTopic).toHaveBeenCalledTimes(1);
   });
 });
 

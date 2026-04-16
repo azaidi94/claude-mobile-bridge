@@ -208,15 +208,15 @@ describe("TopicManager", () => {
     expect(getTopicStore().topics).toHaveLength(2);
   });
 
-  test("reconcile marks offline sessions that are no longer live", async () => {
+  test("reconcile deletes topics for sessions that are no longer live", async () => {
     seedMapping("gone-sess", 10, true);
     seedMapping("still-here", 20, true);
     const mgr = createManager();
 
     await mgr.reconcile([{ name: "still-here", dir: "/tmp/b" }]);
 
-    const gone = getTopicBySession("gone-sess");
-    expect(gone!.isOnline).toBe(false);
+    expect(getTopicBySession("gone-sess")).toBeUndefined();
+    expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 10);
   });
 
   test("reconcile updates offline→online for sessions that came back", async () => {
