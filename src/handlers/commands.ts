@@ -50,6 +50,7 @@ import {
   startWatchingAndNotify,
   stopWatching,
   isWatching,
+  setWatchThreadId,
 } from "./watch";
 import {
   createOpId,
@@ -628,11 +629,15 @@ export async function spawnDesktopClaudeSession(
         `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
       );
 
-      // Create topic for the new session
+      // Create topic for the new session and wire watch to it
       if (_topicManager) {
-        await _topicManager
+        const topicId = await _topicManager
           .createTopic(spawned.name, spawnCwd, spawned.id)
-          .catch((err) => warn(`spawn: topic creation failed: ${err}`));
+          .catch((err) => {
+            warn(`spawn: topic creation failed: ${err}`);
+            return undefined;
+          });
+        if (topicId) setWatchThreadId(chatId, topicId);
       }
 
       info("spawn: completed", {

@@ -182,6 +182,7 @@ mock.module("../handlers/watch", () => ({
   startWatchingAndNotify: mockStartWatchingAndNotify,
   stopWatching: mockStopWatching,
   isWatching: mockIsWatching,
+  setWatchThreadId: mock(() => {}),
 }));
 
 const mockReadKeychainToken = mock(async (): Promise<string | null> => null);
