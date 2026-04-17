@@ -28,6 +28,6 @@ export function startWebServer(): void {
     return c.html(text);
   });
 
-  Bun.serve({ port, fetch: app.fetch });
+  Bun.serve({ port, fetch: app.fetch, idleTimeout: 0 });
   info(`web: server listening on port ${port}`);
 }

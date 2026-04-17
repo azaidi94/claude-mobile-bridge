@@ -24,6 +24,9 @@ export class SessionEventBus {
     sessionId: string,
   ): (type: string, content: string, segmentId?: number) => Promise<void> {
     return async (type, content, segmentId) => {
+      console.log(
+        `[SSE] cb: ${type} listeners=${this.emitter.listenerCount(sessionId)} content=${content.slice(0, 30)}`,
+      );
       this.emit(sessionId, {
         type: type as SseEvent["type"],
         content,

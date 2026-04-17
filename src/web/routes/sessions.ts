@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { stream } from "hono/streaming";
 import {
   getSessions,
   getActiveSession,
@@ -7,9 +6,12 @@ import {
 } from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
+import type { SseEvent } from "../sse";
 import { authMiddleware } from "../auth";
 import type { SessionInfo } from "../../sessions/types";
 import { session as claudeSession } from "../../session";
+import { getRelayClient } from "../../relay";
+import type { RelayReply } from "../../relay";
 
 export interface ApiSession {
   id: string;
@@ -36,6 +38,59 @@ export function serializeSessions(
       live: true,
       active: active?.name === s.name,
     }));
+}
+
+async function sendWebRelay(
+  session: SessionInfo,
+  text: string,
+  emit: (type: SseEvent["type"], content: string) => void,
+): Promise<void> {
+  const client = await getRelayClient({
+    sessionId: session.id,
+    sessionDir: session.dir,
+    claudePid: session.pid,
+  });
+  if (!client) {
+    emit("text", "⚠ Relay unavailable for this session.");
+    emit("done", "");
+    return;
+  }
+
+  const chatId = "web";
+  emit("thinking", "...");
+
+  client.sendMessage({ chat_id: chatId, user: "web", text });
+
+  await new Promise<void>((resolve) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      client.offReply(onReply);
+      client.offDisconnect(onDisconnect);
+    };
+
+    const onReply = (msg: RelayReply) => {
+      cleanup();
+      emit("text", msg.text);
+      emit("done", "");
+      resolve();
+    };
+
+    const onDisconnect = () => {
+      cleanup();
+      emit("done", "");
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      emit("text", "⚠ Relay response timed out.");
+      emit("done", "");
+      resolve();
+    }, 120_000);
+
+    client.onReply(onReply, chatId);
+    client.onDisconnect(onDisconnect);
+  });
 }
 
 export function createSessionsRouter(): Hono {
@@ -72,23 +127,45 @@ export function createSessionsRouter(): Hono {
 
   app.get("/:id/stream", (c) => {
     const sessionId = c.req.param("id");
-    c.header("Content-Type", "text/event-stream");
-    c.header("Cache-Control", "no-cache");
-    c.header("Connection", "keep-alive");
-    return stream(c, async (s) => {
-      const unsub = globalEventBus.subscribe(sessionId, async (evt) => {
-        await s.write(`data: ${JSON.stringify(evt)}\n\n`);
-      });
-      const ping = setInterval(async () => {
-        await s.write(": ping\n\n");
-      }, 15000);
-      await new Promise<void>((resolve) => {
-        s.onAbort(() => {
-          unsub();
-          clearInterval(ping);
-          resolve();
-        });
-      });
+    const encoder = new TextEncoder();
+    let controller: ReadableStreamDefaultController<Uint8Array>;
+
+    const body = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        controller = ctrl;
+        ctrl.enqueue(encoder.encode(": connected\n\n"));
+      },
+    });
+
+    const unsub = globalEventBus.subscribe(sessionId, (evt) => {
+      try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
+      } catch {}
+    });
+
+    const ping = setInterval(() => {
+      try {
+        controller.enqueue(encoder.encode(": ping\n\n"));
+      } catch {
+        clearInterval(ping);
+      }
+    }, 15000);
+
+    c.req.raw.signal.addEventListener("abort", () => {
+      unsub();
+      clearInterval(ping);
+      try {
+        controller.close();
+      } catch {}
+    });
+
+    return new Response(body, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
     });
   });
 
@@ -97,8 +174,22 @@ export function createSessionsRouter(): Hono {
     const body = await c.req.json<{ text: string }>();
     if (!body.text?.trim()) return c.json({ error: "text required" }, 400);
 
-    const cb = globalEventBus.makeStatusCallback(sessionId);
-    claudeSession.sendMessageStreaming(body.text, "web", 0, cb).catch(() => {});
+    const sessions = getSessions();
+    const found = sessions.find((s) => s.id === sessionId);
+
+    const emit = (type: SseEvent["type"], content: string) =>
+      globalEventBus.emit(sessionId, { type, content });
+
+    if (found?.source === "desktop") {
+      sendWebRelay(found, body.text, emit);
+    } else {
+      if (found) claudeSession.loadFromRegistry(found);
+      const cb = globalEventBus.makeStatusCallback(sessionId);
+      claudeSession
+        .sendMessageStreaming(body.text, "web", 0, cb)
+        .catch(() => emit("done", ""));
+    }
+
     return c.json({ ok: true });
   });
 
