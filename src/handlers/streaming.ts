@@ -23,6 +23,8 @@ import {
 } from "../config";
 import { isPathAllowed } from "../security";
 import { debug, warn, error, info } from "../logger";
+import { globalEventBus, type SseEvent } from "../web/sse";
+import { getActiveSession } from "../sessions";
 
 /**
  * Image extensions that Telegram Bot API accepts via sendPhoto.
@@ -313,6 +315,14 @@ export function createStatusCallback(
 ): StatusCallback {
   return async (statusType: string, content: string, segmentId?: number) => {
     try {
+      const activeSess = getActiveSession();
+      if (activeSess?.info.id) {
+        globalEventBus.emit(activeSess.info.id, {
+          type: statusType as SseEvent["type"],
+          content,
+          segmentId,
+        });
+      }
       if (statusType === "thinking") {
         // Show thinking inline, compact (first 500 chars)
         const preview =
