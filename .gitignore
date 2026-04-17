@@ -49,3 +49,8 @@ execute-commands.json
 # Git worktrees
 .worktrees/
 
+# Terminal mini app
+web/dist/
+web/node_modules/
+.superpowers/
+
