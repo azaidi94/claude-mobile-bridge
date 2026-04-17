@@ -337,6 +337,56 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
 // ============== Auto-Watch (topic mode) ==============
 
 /**
+ * Poll for new-conversation detection: when the desktop session starts a new
+ * conversation (new JSONL, same dir), restart the tailer against the new file.
+ * /clear doesn't rewrite the relay port file, so without this the tailer stays
+ * stuck on the stale pre-/clear JSONL while relay messages still flow.
+ */
+function setupIdDriftDetection(
+  botApi: Api,
+  watchState: WatchState,
+  targetName: string,
+): void {
+  const { chatId, threadId } = watchState;
+  watchState.idCheckInterval = setInterval(async () => {
+    if (!watches.has(watchKey(chatId, threadId))) return;
+    // Use newest JSONL as source of truth (port file can be stale after /clear).
+    // Without this, reconnecting via JSONL scan would cause the stale port file
+    // ID to differ from the new watchState.sessionId, ping-ponging back.
+    const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
+    const current = getSession(targetName);
+    const newId = newestJsonl ?? current?.id;
+
+    if (!newId || newId === watchState.sessionId) return;
+    const newPath = await findSessionJsonlPath(newId);
+    if (!newPath) return;
+    watchState.tailer?.stop();
+    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
+      handleTailEvent(botApi, watchState, event, watchState.threadId),
+    );
+    watchState.tailer = newTailer;
+    watchState.sessionId = newId;
+    await newTailer.start();
+    const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
+    watchState.suppressNextIdChangeNotice = false;
+    info("watch: restarted tailer for new conversation", {
+      chatId,
+      sessionName: targetName,
+      sessionId: newId,
+      suppressedNotice: wasSpawnSeed,
+    });
+    if (wasSpawnSeed) return;
+    botApi
+      .sendMessage(
+        chatId,
+        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
+        { parse_mode: "HTML", message_thread_id: watchState.threadId },
+      )
+      .catch(() => {});
+  }, 5_000);
+}
+
+/**
  * Start auto-watching a session in a topic.
  * Called by topic manager when a topic is created and session is online.
  */
@@ -380,6 +430,8 @@ export async function startAutoWatch(
   });
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
+
+  setupIdDriftDetection(botApi, watchState, sessionName);
 
   // Wire relay client for replies
   const relayClient = await getRelayClient({
@@ -579,44 +631,7 @@ export async function startWatchingSession(
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
-  // Detect when the desktop session starts a new conversation (new JSONL, same dir).
-  // refresh() diffs by name only, so an ID change won't surface as added/removed.
-  watchState.idCheckInterval = setInterval(async () => {
-    if (!watches.has(watchKey(chatId, threadId))) return;
-    // Use newest JSONL as source of truth (port file can be stale after /clear).
-    // Without this, reconnecting via JSONL scan would cause the stale port file
-    // ID to differ from the new watchState.sessionId, ping-ponging back.
-    const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
-    const current = getSession(targetName);
-    const newId = newestJsonl ?? current?.id;
-
-    if (!newId || newId === watchState.sessionId) return;
-    const newPath = await findSessionJsonlPath(newId);
-    if (!newPath) return;
-    watchState.tailer?.stop();
-    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
-      handleTailEvent(botApi, watchState, event, watchState.threadId),
-    );
-    watchState.tailer = newTailer;
-    watchState.sessionId = newId;
-    await newTailer.start();
-    const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
-    watchState.suppressNextIdChangeNotice = false;
-    info("watch: restarted tailer for new conversation", {
-      chatId,
-      sessionName: targetName,
-      sessionId: newId,
-      suppressedNotice: wasSpawnSeed,
-    });
-    if (wasSpawnSeed) return;
-    botApi
-      .sendMessage(
-        chatId,
-        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
-        { parse_mode: "HTML", message_thread_id: watchState.threadId },
-      )
-      .catch(() => {});
-  }, 5_000);
+  setupIdDriftDetection(botApi, watchState, targetName);
 
   // Wire relay client for replies. The JSONL tailer normally handles text
   // display, but if the tailer is stale (e.g. after /clear) the TCP path
