@@ -19,25 +19,13 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 
 ## Quick Start
 
-### 1. Create a Forum Group
+### 1. BotFather Config
 
-The bot works best in a **Telegram forum group** where each session gets its own topic:
-
-1. Create a new Telegram group
-2. Go to group settings → Topics → enable topics (makes it a forum)
-3. Add your bot to the group
-4. Promote the bot to admin with **Manage Topics** permission (required to create/delete session topics)
-5. The bot auto-detects the forum and starts creating topics for sessions
-
-> **Private chat** also works — you get the classic UI with `/list` and `/switch` buttons. But once the bot detects a forum group, DMs are disabled to avoid split-brain.
-
-### 2. BotFather Config
-
-1. Open @BotFather → select your bot
+1. Open @BotFather → `/newbot` (or select an existing bot) and grab the token
 2. Bot Settings → enable "Topics in Groups"
 3. Optional: Group Privacy → disable (so bot sees all messages in topics)
 
-### 3. Install
+### 2. Install
 
 **Prerequisites:** [Bun 1.0.23+](https://bun.sh/), [Claude Code CLI](https://claude.com/code), [Telegram Bot Token](https://t.me/botfather)
 
@@ -58,6 +46,18 @@ TELEGRAM_ALLOWED_USERS=123456789  # Your Telegram user ID (get from @userinfobot
 ```
 
 See `.env.example` for all options (working dir, allowed paths, voice transcription, rate limits, etc).
+
+### 3. Create a Forum Group
+
+The bot works best in a **Telegram forum group** where each session gets its own topic:
+
+1. Create a new Telegram group
+2. Go to group settings → Topics → enable topics (makes it a forum)
+3. Add your bot to the group
+4. Promote the bot to admin with **Manage Topics** permission (required to create/delete session topics)
+5. The bot auto-detects the forum and starts creating topics for sessions
+
+> **Private chat** also works — you get the classic UI with `/list` and `/switch` buttons. But once the bot detects a forum group, DMs are disabled to avoid split-brain.
 
 ## Commands
 
