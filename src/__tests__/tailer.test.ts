@@ -4,6 +4,7 @@
  * Tests JSONL line parsing, event emission, and session file discovery.
  */
 
+import "./ensure-test-env";
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { writeFile, rm } from "fs/promises";
 import { join } from "path";

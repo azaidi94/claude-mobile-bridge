@@ -6,6 +6,7 @@
  * so we use unique names and relative assertions.
  */
 
+import "./ensure-test-env";
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import {
   startWatcher,
