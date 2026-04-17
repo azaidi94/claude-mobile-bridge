@@ -8,6 +8,7 @@ export function ChatPage() {
   const [events, setEvents] = useState<SseEvent[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -15,7 +16,7 @@ export function ChatPage() {
       setSessions(s);
       const active = s.find((x) => x.active) ?? s[0];
       if (active) setActiveId(active.id);
-    });
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -37,12 +38,18 @@ export function ChatPage() {
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || !activeId) return;
+    if (!text || !activeId || streaming) return;
     setInput("");
+    setSendError(null);
     setEvents((prev) => [...prev, { type: "text", content: `› ${text}` } as SseEvent]);
     setStreaming(true);
-    await api.sendMessage(activeId, text);
-  }, [input, activeId]);
+    try {
+      await api.sendMessage(activeId, text);
+    } catch {
+      setSendError("Send failed");
+      setInput(text);
+    }
+  }, [input, activeId, streaming]);
 
   const activeSession = sessions.find((s) => s.id === activeId);
 
@@ -64,14 +71,17 @@ export function ChatPage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
+          disabled={streaming}
         />
         <button
           onClick={send}
-          className="bg-terminal-green text-black font-bold rounded-lg px-4 py-2 text-sm"
+          disabled={streaming}
+          className="bg-terminal-green text-black font-bold rounded-lg px-4 py-2 text-sm disabled:opacity-50"
         >
           ↑
         </button>
       </div>
+      {sendError && <p className="text-red-400 text-xs px-2 pb-1">{sendError}</p>}
     </div>
   );
 }

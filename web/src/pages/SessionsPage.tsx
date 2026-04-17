@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api, type ApiSession } from "../api";
 
 interface SessionsPageProps {
@@ -17,26 +17,27 @@ export function SessionsPage({ onSwitchToChat }: SessionsPageProps) {
   const [sessions, setSessions] = useState<ApiSession[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setLoading(true);
     api.getSessions().then((s) => {
       setSessions(s);
       setLoading(false);
-    });
-  };
+    }).catch(() => setLoading(false));
+  }, []);
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const handleActivate = async (session: ApiSession) => {
-    if (session.live) {
-      await fetch(`/api/sessions/${session.name}/activate`, {
-        method: "POST",
-        headers: { "X-Telegram-Init-Data": (window as any).Telegram?.WebApp?.initData ?? "" },
-      });
-    } else {
-      await api.spawnAgent(session.dir);
+    try {
+      if (session.live) {
+        await api.activateSession(session.name);
+      } else {
+        await api.spawnAgent(session.dir);
+      }
+      onSwitchToChat();
+    } catch {
+      // silently stay on sessions page if activation fails
     }
-    onSwitchToChat();
   };
 
   return (

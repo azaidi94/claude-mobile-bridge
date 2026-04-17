@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api, type ApiSession } from "../api";
 
 export function AgentsPage() {
@@ -7,14 +7,15 @@ export function AgentsPage() {
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = () =>
-    api.getSessions().then((s) => setSessions(s.filter((x) => x.live)));
+  const refresh = useCallback(() => {
+    api.getSessions().then((s) => setSessions(s.filter((x) => x.live))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [refresh]);
 
   const spawn = async () => {
     if (!spawnDir.trim()) return;

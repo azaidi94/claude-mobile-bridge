@@ -37,6 +37,7 @@ export interface SseEvent {
 export const api = {
   async getSessions(): Promise<ApiSession[]> {
     const res = await fetch(`${BASE}/sessions`, { headers: headers() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
 
@@ -66,6 +67,7 @@ export const api = {
 
   async getSystem(): Promise<SystemStats> {
     const res = await fetch(`${BASE}/system`, { headers: headers() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
 
@@ -75,6 +77,18 @@ export const api = {
       headers: headers(),
       body: JSON.stringify({ dir }),
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
+  },
+
+  async activateSession(name: string): Promise<void> {
+    const res = await fetch(
+      `${BASE}/sessions/${encodeURIComponent(name)}/activate`,
+      {
+        method: "POST",
+        headers: headers(),
+      },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
   },
 };
