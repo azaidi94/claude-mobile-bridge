@@ -32,6 +32,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "grammy": "^1.38.4",
+    "hono": "^4.12.14",
     "marked": "^17.0.6",
     "openai": "^6.15.0",
     "pdfmake": "0.2",
