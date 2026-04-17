@@ -54,7 +54,8 @@ export const api = {
     onEvent: (evt: SseEvent) => void,
     onError?: () => void,
   ): () => void {
-    const url = `${BASE}/sessions/${sessionId}/stream`;
+    const initData = encodeURIComponent(getInitData());
+    const url = `${BASE}/sessions/${sessionId}/stream?initData=${initData}`;
     const es = new EventSource(url);
     es.onmessage = (e) => {
       try {

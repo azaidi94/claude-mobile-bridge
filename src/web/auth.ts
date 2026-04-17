@@ -1,5 +1,6 @@
 import { createHmac } from "crypto";
-import type { Context, Next } from "hono";
+import { createMiddleware } from "hono/factory";
+import type { Context } from "hono";
 import { TELEGRAM_TOKEN } from "../config";
 
 export function validateInitData(
@@ -33,13 +34,16 @@ export function validateInitData(
   return expectedHash === hash;
 }
 
-export async function authMiddleware(
-  c: Context,
-  next: Next,
-): Promise<Response | void> {
-  const initData = c.req.header("X-Telegram-Init-Data");
-  if (!initData || !validateInitData(initData, TELEGRAM_TOKEN)) {
+export function extractInitData(c: Context): string {
+  return c.req.header("X-Telegram-Init-Data") ?? c.req.query("initData") ?? "";
+}
+
+export const authMiddleware = createMiddleware(async (c, next) => {
+  const initData = extractInitData(c);
+  if (!initData) return c.json({ error: "Unauthorized" }, 401);
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+  if (!token || !validateInitData(initData, token)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return next();
-}
+});

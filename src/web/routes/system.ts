@@ -1,4 +1,4 @@
-import { totalmem, freemem, loadavg } from "os";
+import { totalmem, freemem, loadavg, cpus } from "os";
 import { Hono } from "hono";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -18,7 +18,7 @@ export async function getSystemStats(): Promise<SystemStats> {
   const free = freemem();
   const used = total - free;
   const [load1 = 0] = loadavg();
-  const cpu = Math.min(100, Math.round((load1 / 1) * 100));
+  const cpu = Math.min(100, Math.round((load1 / cpus().length) * 100));
 
   let disk = { used: 0, total: 0, usedPercent: 0 };
   try {
