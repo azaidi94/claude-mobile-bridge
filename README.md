@@ -26,7 +26,8 @@ The bot works best in a **Telegram forum group** where each session gets its own
 1. Create a new Telegram group
 2. Go to group settings → Topics → enable topics (makes it a forum)
 3. Add your bot to the group
-4. The bot auto-detects the forum and starts creating topics for sessions
+4. Promote the bot to admin with **Manage Topics** permission (required to create/delete session topics)
+5. The bot auto-detects the forum and starts creating topics for sessions
 
 > **Private chat** also works — you get the classic UI with `/list` and `/switch` buttons. But once the bot detects a forum group, DMs are disabled to avoid split-brain.
 
