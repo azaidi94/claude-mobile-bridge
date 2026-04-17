@@ -46,3 +46,6 @@ execute-commands.json
 .DS_Store
 /claude-bot-standalone
 
+# Git worktrees
+.worktrees/
+
