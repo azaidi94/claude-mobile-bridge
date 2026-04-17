@@ -38,6 +38,10 @@ import { isAbsolute } from "path";
 import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
 import { saveSetting } from "../settings";
+import { isTopicChat } from "./commands";
+import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
+import { getSession } from "../sessions";
+import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
 
 /**
@@ -70,34 +74,76 @@ export async function handleText(ctx: Context): Promise<void> {
     messagePreview: truncate(message, 120),
   });
 
+  // Topic routing — resolve session from topic context
+  let threadId: number | undefined;
+  let sessionOverride: SessionOverride | undefined;
+
+  if (isTopicChat(ctx)) {
+    const topicCtx = isSessionTopic(ctx);
+
+    if (topicCtx) {
+      // In a session topic — load that session
+      threadId = topicCtx.topicId;
+      const si = getSession(topicCtx.sessionName);
+      if (si) {
+        session.loadFromRegistry(si);
+        sessionOverride = {
+          sessionId: si.id || "",
+          sessionDir: si.dir,
+          sessionPid: si.pid,
+        };
+      }
+    } else if (isGeneralTopic(ctx)) {
+      // Free text in General — nudge to use a topic
+      // But allow through if there are pending interactive states
+      if (
+        !pendingSettingsInput.has(chatId) &&
+        !pendingPlanFeedback.has(chatId) &&
+        !pendingAskUserQuestionCustom.has(chatId)
+      ) {
+        await ctx.reply(
+          "💬 Send messages in a session topic.\nUse /list to see sessions.",
+        );
+        return;
+      }
+    }
+  }
+
   // 1.4. Check for pending settings input (working dir entry)
   if (pendingSettingsInput.has(chatId)) {
     const field = pendingSettingsInput.get(chatId)!;
     if (message.trim() === "/cancel") {
       pendingSettingsInput.delete(chatId);
-      await ctx.reply("✖ Cancelled.");
+      await ctx.reply("✖ Cancelled.", { message_thread_id: threadId });
       return;
     }
     if (field === "workdir") {
       const path = message.trim();
       if (!isAbsolute(path)) {
-        await ctx.reply("❌ Path must be absolute (start with /).");
+        await ctx.reply("❌ Path must be absolute (start with /).", {
+          message_thread_id: threadId,
+        });
         return;
       }
       try {
         const s = await stat(path);
         if (!s.isDirectory()) {
-          await ctx.reply("❌ Not a directory.");
+          await ctx.reply("❌ Not a directory.", {
+            message_thread_id: threadId,
+          });
           return;
         }
       } catch {
-        await ctx.reply("❌ Path does not exist.");
+        await ctx.reply("❌ Path does not exist.", {
+          message_thread_id: threadId,
+        });
         return;
       }
       await saveSetting({ workingDir: path });
       pendingSettingsInput.delete(chatId);
       await ctx.reply(`✅ Working dir set:\n<code>${escapeHtml(path)}</code>`, {
         parse_mode: "HTML",
+        message_thread_id: threadId,
       });
       return;
     }
@@ -110,14 +156,16 @@ export async function handleText(ctx: Context): Promise<void> {
 
     // Check if there's still a pending plan approval
     if (!session.pendingPlanApproval) {
-      await ctx.reply("❌ Plan approval expired.");
+      await ctx.reply("❌ Plan approval expired.", {
+        message_thread_id: threadId,
+      });
       return;
     }
 
     // Process feedback
     const typing = startTypingIndicator(ctx);
     const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
+    const statusCallback = createStatusCallback(ctx, state, threadId);
 
     try {
       const response = await session.respondToPlanApproval(
@@ -140,6 +188,7 @@ export async function handleText(ctx: Context): Promise<void> {
         const keyboard = createPlanApprovalKeyboard(newRequestId);
         await ctx.reply("📋 Revised plan ready. Review and approve?", {
           reply_markup: keyboard,
+          message_thread_id: threadId,
         });
       }
 
@@ -166,7 +215,9 @@ export async function handleText(ctx: Context): Promise<void> {
         userId,
         durationMs: elapsedMs(requestStartedAt),
       });
-      await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
+      await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
+        message_thread_id: threadId,
+      });
     } finally {
       typing.stop();
     }
@@ -180,7 +231,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
     const pending = pendingAskUserQuestions.get(requestId);
     if (!pending) {
-      await ctx.reply("❌ Question expired.");
+      await ctx.reply("❌ Question expired.", { message_thread_id: threadId });
       return;
     }
 
@@ -204,18 +255,21 @@ export async function handleText(ctx: Context): Promise<void> {
       await ctx.reply(questionText, {
         reply_markup: keyboard,
         parse_mode: "HTML",
+        message_thread_id: threadId,
       });
     } else {
       // All questions answered - send to Claude
       const wasPlanMode = pending.isPlanMode;
       pendingAskUserQuestions.delete(requestId);
       const answersText = pending.answers.join(", ");
-      await ctx.reply(`✅ Answered: ${answersText}`);
+      await ctx.reply(`✅ Answered: ${answersText}`, {
+        message_thread_id: threadId,
+      });
 
       // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
       const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state);
+      const statusCallback = createStatusCallback(ctx, state, threadId);
 
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
@@ -246,7 +300,10 @@ export async function handleText(ctx: Context): Promise<void> {
           }
 
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-          await ctx.reply("Review and approve?", { reply_markup: keyboard });
+          await ctx.reply("Review and approve?", {
+            reply_markup: keyboard,
+            message_thread_id: threadId,
+          });
         }
         info("request: completed", {
           opId,
@@ -264,7 +321,9 @@ export async function handleText(ctx: Context): Promise<void> {
           userId,
           durationMs: elapsedMs(requestStartedAt),
         });
-        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`);
+        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
+          message_thread_id: threadId,
+        });
       } finally {
         typing.stop();
       }
@@ -273,10 +332,22 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 1.7. Check for active watch — relay message to desktop session.
-  if (isWatching(chatId)) {
-    const relayed = await sendWatchRelay(chatId, username, message, opId);
+  // In topic mode, pass session override so the relay targets the correct session
+  // (topic routing loaded the right session above, but the watch may point elsewhere).
+  if (threadId !== undefined && isWatching(chatId, threadId)) {
+    const relayed = await sendWatchRelay(
+      chatId,
+      threadId,
+      username,
+      message,
+      opId,
+      undefined,
+      sessionOverride,
+    );
     if (relayed) {
-      ctx.replyWithChatAction("typing").catch(() => {});
+      ctx
+        .replyWithChatAction("typing", { message_thread_id: threadId })
+        .catch(() => {});
       await auditLog(userId, username, "WATCH_RELAY", message, "(via relay)");
       info("request: completed", {
         opId,
@@ -300,6 +371,7 @@ export async function handleText(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ Relay failed. Session may be offline.\n" +
         "Use /unwatch and check /list.",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -316,14 +388,21 @@ export async function handleText(ctx: Context): Promise<void> {
     await auditLogRateLimit(userId, username, retryAfter!);
     await ctx.reply(
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+      { message_thread_id: threadId },
     );
     return;
   }
 
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
+    if (isTopicChat(ctx)) {
+      const topicCtx = isSessionTopic(ctx);
+      if (topicCtx) {
+        updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
+      }
+    }
     session.sessionId = null;
-    await ctx.reply("✓ Session cleared");
+    await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
     info("request: completed", {
       opId,
@@ -361,6 +440,8 @@ export async function handleText(ctx: Context): Promise<void> {
       chatId,
       undefined,
       opId,
+      threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "RELAY", message, "(via relay)");
@@ -386,11 +467,13 @@ export async function handleText(ctx: Context): Promise<void> {
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
     return;
@@ -399,7 +482,7 @@ export async function handleText(ctx: Context): Promise<void> {
   // 8. Slash command — run locally via SDK so <local-command-stdout> is handled
   const typing = startTypingIndicator(ctx);
   const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
+  const statusCallback = createStatusCallback(ctx, state, threadId);
   try {
     const response = await session.sendMessageStreaming(
       message,
@@ -430,6 +513,7 @@ export async function handleText(ctx: Context): Promise<void> {
     logError("slash cmd error", err);
     await ctx.reply(
       `❌ Error: ${err instanceof Error ? err.message : String(err)}`,
+      { message_thread_id: threadId },
     );
   } finally {
     typing.stop();

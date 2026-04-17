@@ -34,7 +34,7 @@ import {
   getGitBranch,
   sendSwitchHistory,
 } from "../sessions";
-import { startWatchingAndNotify, isWatching } from "./watch";
+import { isWatchingAny } from "./watch";
 import {
   killSession,
   sendPostKillSessionList,
@@ -51,6 +51,7 @@ import {
   getTerminal,
   getWorkingDir,
   getOverrides,
+  getEnablePinnedStatus,
 } from "../settings";
 import type { TerminalApp } from "../config";
 import { debug, error as logError, info } from "../logger";
@@ -82,6 +83,27 @@ export async function handleCallback(ctx: Context): Promise<void> {
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.answerCallbackQuery({ text: "Unauthorized" });
     return;
+  }
+
+  // Handle topic session-picker callbacks
+  for (const [prefix, handler] of [
+    ["status_pick:", "handleStatus"],
+    ["model_pick:", "handleModel"],
+    ["stop_pick:", "handleStop"],
+  ] as const) {
+    if (callbackData.startsWith(prefix)) {
+      const sessionName = callbackData.slice(prefix.length);
+      const sessionInfo = getSession(sessionName);
+      if (sessionInfo) {
+        session.loadFromRegistry(sessionInfo);
+        const commands = await import("./commands");
+        await (commands[handler] as (ctx: Context) => Promise<void>)(ctx);
+      } else {
+        await ctx.reply("Session not found.");
+      }
+      await ctx.answerCallbackQuery();
+      return;
+    }
   }
 
   // 2. Handle model switch callbacks: model:{model_id}
@@ -145,11 +167,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Already on this session — start watching if not already
     if (currentActive?.name === name) {
-      if (currentActive.info.source === "desktop" && !isWatching(chatId)) {
-        if (await startWatchingAndNotify(ctx, chatId, name, "switch")) {
-          await ctx.answerCallbackQuery({ text: `Watching ${name}` });
-          return;
-        }
+      if (currentActive.info.source === "desktop" && !isWatchingAny(chatId)) {
+        await ctx.answerCallbackQuery({
+          text: `${name} is active — watching is per-topic, use /spawn`,
+        });
+        return;
       }
       await ctx.answerCallbackQuery({ text: `Already on ${name}` });
       return;
@@ -197,27 +219,17 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        // Auto-watch desktop sessions
-        if (active.info.source === "desktop") {
-          if (
-            !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
-          ) {
-            await sendSwitchHistory(ctx, active.info);
-          }
-        } else {
-          await sendSwitchHistory(ctx, active.info);
-          // Update pinned status for non-desktop sessions
-          getGitBranch(active.info.dir)
-            .then((branch) =>
-              updatePinnedStatus(ctx.api, chatId, {
-                sessionName: active.name,
-                isPlanMode: session.isPlanMode,
-                model: session.modelDisplayName,
-                branch,
-              }),
-            )
-            .catch(() => {});
-        }
+        await sendSwitchHistory(ctx, active.info);
+        getGitBranch(active.info.dir)
+          .then((branch) =>
+            updatePinnedStatus(ctx.api, chatId, {
+              sessionName: active.name,
+              isPlanMode: session.isPlanMode,
+              model: session.modelDisplayName,
+              branch,
+            }),
+          )
+          .catch(() => {});
       }
     } else {
       await ctx.answerCallbackQuery({ text: "Session not found" });
@@ -800,6 +812,19 @@ async function handleSettingsCallback(
       return;
     }
 
+    if (field === "pinnedstatus") {
+      const current = getOverrides().enablePinnedStatus;
+      let next: boolean | undefined;
+      if (current === undefined) next = false;
+      else if (current === false) next = true;
+      else next = undefined;
+      await saveSetting({ enablePinnedStatus: next });
+      await rerenderSettingsPanel(ctx);
+      const label = next === undefined ? "default (on)" : next ? "on" : "off";
+      await ctx.answerCallbackQuery({ text: `Pinned Status: ${label}` });
+      return;
+    }
+
     if (field === "model") {
       const current = session.model;
       const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
@@ -861,6 +886,8 @@ async function handleSettingsCallback(
       pendingSettingsInput.delete(chatId);
     } else if (field === "autowatch") {
       await saveSetting({ autoWatchOnSpawn: undefined });
+    } else if (field === "pinnedstatus") {
+      await saveSetting({ enablePinnedStatus: undefined });
     } else if (field === "model") {
       // Clearing the override only affects next restart; the live session
       // keeps whatever model it last had.

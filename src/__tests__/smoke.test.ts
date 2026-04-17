@@ -99,6 +99,7 @@ mock.module("../settings", () => ({
   getOverrides: () => ({}),
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
+  getEnablePinnedStatus: () => true,
 }));
 
 // Mock handlers to avoid complex dependencies

@@ -114,6 +114,24 @@ describe("model persistence round-trip", () => {
   });
 });
 
+describe("topic settings", () => {
+  test("getEnablePinnedStatus defaults to true", async () => {
+    const { getEnablePinnedStatus } = await import("../settings");
+    expect(getEnablePinnedStatus()).toBe(true);
+  });
+
+  test("getEnablePinnedStatus reads from file", async () => {
+    await writeFile(
+      settingsPath,
+      JSON.stringify({ enablePinnedStatus: false }),
+    );
+    const { _reloadForTests, getEnablePinnedStatus } =
+      await import("../settings");
+    _reloadForTests();
+    expect(getEnablePinnedStatus()).toBe(false);
+  });
+});
+
 describe("loadSync sanitization", () => {
   test("ignores invalid JSON, returns defaults", async () => {
     await writeFile(settingsPath, "{ this is not json");

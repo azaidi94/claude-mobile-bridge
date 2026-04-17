@@ -21,6 +21,8 @@ export {
   handlePwd,
   handleCd,
   handleLs,
+  setTopicManager,
+  isTopicChat,
 } from "./commands";
 export { handleText } from "./text";
 export { handleVoice } from "./voice";
@@ -34,10 +36,13 @@ export {
   handleWatch,
   handleUnwatch,
   isWatching,
+  isWatchingAny,
   stopWatching,
+  stopWatchByDir,
   notifySessionOffline,
   sendWatchRelay,
   startWatchingSession,
+  startAutoWatch,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {

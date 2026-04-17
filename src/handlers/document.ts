@@ -21,6 +21,8 @@ import {
   info,
   warn,
 } from "../logger";
+import { loadTopicSession } from "../topics";
+import type { SessionOverride } from "../sessions/types";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -226,12 +228,15 @@ async function processArchive(
   username: string,
   chatId: number,
   opId: string,
+  threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
 
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
     parse_mode: "HTML",
+    message_thread_id: threadId,
   });
 
   try {
@@ -284,6 +289,8 @@ async function processArchive(
       chatId,
       undefined,
       opId,
+      threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -316,11 +323,13 @@ async function processArchive(
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
   } catch (error) {
@@ -340,6 +349,7 @@ async function processArchive(
     }
     await ctx.reply(
       `❌ Failed to process archive: ${String(error).slice(0, 100)}`,
+      { message_thread_id: threadId },
     );
   } finally {
     stopProcessing();
@@ -357,6 +367,8 @@ async function processDocuments(
   username: string,
   chatId: number,
   opId: string,
+  threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -385,6 +397,8 @@ async function processDocuments(
       chatId,
       undefined,
       opId,
+      threadId,
+      sessionOverride,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -417,11 +431,13 @@ async function processDocuments(
       await ctx.reply(
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
+        { message_thread_id: threadId },
       );
     } else {
       await ctx.reply(
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
+        { message_thread_id: threadId },
       );
     }
   } finally {
@@ -440,6 +456,8 @@ async function processDocumentPaths(
   username: string,
   chatId: number,
   opId: string,
+  threadId?: number,
+  sessionOverride?: SessionOverride,
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
@@ -470,7 +488,9 @@ async function processDocumentPaths(
   });
 
   if (documents.length === 0) {
-    await ctx.reply("❌ Failed to extract any documents.");
+    await ctx.reply("❌ Failed to extract any documents.", {
+      message_thread_id: threadId,
+    });
     return;
   }
 
@@ -482,6 +502,8 @@ async function processDocumentPaths(
     username,
     chatId,
     opId,
+    threadId,
+    sessionOverride,
   );
 }
 
@@ -505,9 +527,13 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
+  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
-    await ctx.reply("❌ File too large. Maximum size is 10MB.");
+    await ctx.reply("❌ File too large. Maximum size is 10MB.", {
+      message_thread_id: threadId,
+    });
     return;
   }
 
@@ -540,6 +566,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
         `Supported: PDF, archives (${ARCHIVE_EXTENSIONS.join(
           ", ",
         )}), ${TEXT_EXTENSIONS.join(", ")}`,
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -555,6 +582,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
     await ctx.reply(
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
+      { message_thread_id: threadId },
     );
     return;
   }
@@ -571,7 +599,9 @@ export async function handleDocument(ctx: Context): Promise<void> {
       userId,
       username,
     });
-    await ctx.reply("❌ Failed to download document.");
+    await ctx.reply("❌ Failed to download document.", {
+      message_thread_id: threadId,
+    });
     return;
   }
 
@@ -588,6 +618,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       await auditLogRateLimit(userId, username, retryAfter!);
       await ctx.reply(
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+        { message_thread_id: threadId },
       );
       return;
     }
@@ -601,6 +632,8 @@ export async function handleDocument(ctx: Context): Promise<void> {
       username,
       chatId,
       opId,
+      threadId,
+      sessionOverride,
     );
     return;
   }
@@ -619,6 +652,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       await auditLogRateLimit(userId, username, retryAfter!);
       await ctx.reply(
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
+        { message_thread_id: threadId },
       );
       return;
     }
@@ -633,6 +667,8 @@ export async function handleDocument(ctx: Context): Promise<void> {
         username,
         chatId,
         opId,
+        threadId,
+        sessionOverride,
       );
     } catch (error) {
       logError("document: single-file processing failed", error, {
@@ -644,6 +680,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       });
       await ctx.reply(
         `❌ Failed to process document: ${String(error).slice(0, 100)}`,
+        { message_thread_id: threadId },
       );
     }
     return;
@@ -665,6 +702,8 @@ export async function handleDocument(ctx: Context): Promise<void> {
         groupUsername,
         groupChatId,
         opId,
+        threadId,
+        sessionOverride,
       ),
   );
 }

@@ -20,15 +20,43 @@ import {
   setSessionOfflineCallback,
   getActiveSession,
   getGitBranch,
+  getSessions,
 } from "./sessions";
-import { notifySessionOffline } from "./handlers";
+import {
+  notifySessionOffline,
+  setTopicManager,
+  startAutoWatch,
+} from "./handlers";
+import {
+  loadTopicStore,
+  setChatId,
+  getTopicBySession,
+  getThreadId,
+  TopicManager,
+} from "./topics";
 import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
+import { startWebServer } from "./web/server";
+import { WEB_ENABLED } from "./config";
+
+let topicManager: TopicManager | undefined;
 
 // Create bot instance using factory
-const bot = createBot({ token: TELEGRAM_TOKEN });
+const bot = createBot({
+  token: TELEGRAM_TOKEN,
+  onForumGroupDetected: (chatId) => {
+    info(`bot: detected forum group ${chatId}, adopting for topics`);
+    setChatId(chatId);
+    if (!topicManager) {
+      topicManager = new TopicManager(bot.api, chatId);
+      setTopicManager(topicManager);
+    } else {
+      topicManager.setChatId(chatId);
+    }
+  },
+});
 
 process.on("warning", (warning) => {
   warn("process: warning", warning);
@@ -47,10 +75,12 @@ info(
 // Load persisted chat IDs and pinned message IDs
 await loadChatIds();
 await loadPinnedMessageIds();
+await loadTopicStore();
 
 // Wire up mode change callback to update pinned status
 session.onModeChange = (isPlanMode) => {
   const active = getActiveSession();
+  const topicId = active ? getThreadId(active.name) : undefined;
   getGitBranch(session.workingDir)
     .then((branch) => {
       const status = {
@@ -60,7 +90,7 @@ session.onModeChange = (isPlanMode) => {
         branch,
       };
       for (const chatId of getChatIds()) {
-        updatePinnedStatus(bot.api, chatId, status).catch(() => {});
+        updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
       }
     })
     .catch(() => {});
@@ -69,21 +99,58 @@ session.onModeChange = (isPlanMode) => {
 // Wire up watch handler's offline callback for resume flow
 setSessionOfflineCallback(notifySessionOffline);
 
-const notifyHandler = createNotificationHandler(bot.api);
-await startWatcher(notifyHandler);
-
-// Get bot info
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+if (WEB_ENABLED) {
+  startWebServer();
+}
+
+const chatIdSet = getChatIds();
+// Prefer the stored topic chat ID (may be a group), fall back to first registered chat
+import { getTopicStore } from "./topics";
+const storedTopicChatId = getTopicStore().chatId;
+const primaryChatId =
+  storedTopicChatId || ([...chatIdSet][0] as number | undefined);
+if (primaryChatId !== undefined && storedTopicChatId) {
+  setChatId(primaryChatId);
+  topicManager = new TopicManager(bot.api, primaryChatId);
+  setTopicManager(topicManager);
+}
+
+const notifyHandler = createNotificationHandler(
+  bot.api,
+  topicManager,
+  (sessionName, topicId) => {
+    const chatId = topicManager?.getChatId();
+    if (chatId !== undefined && topicId !== undefined) {
+      startAutoWatch(bot.api, chatId, topicId, sessionName).catch(() => {});
+    }
+  },
+);
+await startWatcher(notifyHandler);
+
+if (topicManager && primaryChatId !== undefined) {
+  const sessions = getSessions();
+  await topicManager.reconcile(
+    sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+  );
+
+  // Start auto-watch for all online sessions with topics
+  for (const s of sessions) {
+    const topic = getTopicBySession(s.name);
+    if (topic) {
+      startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
+        () => {},
+      );
+    }
+  }
+}
 
 // Set autocomplete commands
 await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
-  { command: "switch", description: "Switch to session" },
   { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Open desktop Claude (Terminal)" },
-  { command: "watch", description: "Watch a desktop session live" },
-  { command: "unwatch", description: "Stop watching" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },

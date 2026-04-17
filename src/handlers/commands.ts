@@ -9,6 +9,7 @@ import { readdir, stat, access } from "fs/promises";
 import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
 import { triggerRestart } from "../lifecycle";
 import {
@@ -21,6 +22,8 @@ import {
 } from "../config";
 import { getWorkingDir, getTerminal, getAutoWatchOnSpawn } from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
+import { isGeneralTopic, isSessionTopic } from "../topics";
+import type { TopicManager } from "../topics";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -42,12 +45,7 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import {
-  startWatchingSession,
-  startWatchingAndNotify,
-  stopWatching,
-  isWatching,
-} from "./watch";
+import { startWatchingSession, stopWatchByDir } from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -73,6 +71,66 @@ export const offlineSessionCache = new Map<
 >();
 
 let offlineSessionGen = 0;
+
+// Topic manager reference — set by index.ts when topics are enabled
+let _topicManager: TopicManager | null = null;
+
+export function setTopicManager(tm: TopicManager): void {
+  _topicManager = tm;
+}
+
+/** True when topics are active AND the message is from the forum group. */
+export function isTopicChat(ctx: Context): boolean {
+  return _topicManager !== null && ctx.chat?.type === "supergroup";
+}
+
+/**
+ * Show a session picker keyboard when in General topic with multiple sessions.
+ * Returns true if a picker was shown (caller should return early).
+ */
+async function showSessionPicker(
+  ctx: Context,
+  action: string,
+): Promise<boolean> {
+  if (!isTopicChat(ctx) || !isGeneralTopic(ctx)) return false;
+
+  const sessions = getSessions();
+  if (sessions.length === 0) {
+    await ctx.reply("No active sessions.");
+    return true;
+  }
+  if (sessions.length === 1) {
+    return false; // Only one session — proceed with it
+  }
+
+  const keyboard = new InlineKeyboard();
+  for (const s of sessions) {
+    keyboard.text(s.name, `${action}:${s.name}`).row();
+  }
+  await ctx.reply("Pick a session:", { reply_markup: keyboard });
+  return true;
+}
+
+/**
+ * Resolve topic session context: load session from topic, or show picker in General.
+ * Returns true if caller should return early (picker shown or no session).
+ */
+async function resolveTopicSession(
+  ctx: Context,
+  pickerAction: string,
+): Promise<boolean> {
+  if (!isTopicChat(ctx)) return false;
+  const topicCtx = isSessionTopic(ctx);
+  if (topicCtx) {
+    const sessionInfo = getSession(topicCtx.sessionName);
+    if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    return false;
+  }
+  if (isGeneralTopic(ctx)) {
+    return showSessionPicker(ctx, pickerAction);
+  }
+  return false;
+}
 
 function bashSingleQuotedPath(p: string): string {
   return `'${p.replace(/'/g, `'\\''`)}'`;
@@ -283,6 +341,41 @@ export async function handleHelp(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (isTopicChat(ctx)) {
+    const topicHelp = [
+      "<b>📱 Claude Mobile Bridge v2</b>",
+      "",
+      "Each session has its own topic. Send messages in a topic to talk to that session.",
+      "",
+      "<b>Session Management</b>",
+      "/list — session dashboard",
+      "/new [path] — spawn desktop Claude",
+      "/sessions — browse offline sessions",
+      "/kill — terminate session + delete topic",
+      "",
+      "<b>Session Commands (in topic or General)</b>",
+      "/status — session details",
+      "/model — switch model",
+      "/stop — interrupt current query",
+      "/retry — replay last message",
+      "",
+      "<b>Navigation (in topic)</b>",
+      "/pwd — show working dir",
+      "/cd — change working dir",
+      "/ls — list directory",
+      "/clear — clear session",
+      "",
+      "<b>Utilities</b>",
+      "/usage — quota stats",
+      "/execute — configured scripts",
+      "/settings — bot settings",
+      "/pin — update pinned status",
+      "/restart — restart bot",
+    ].join("\n");
+    await ctx.reply(topicHelp, { parse_mode: "HTML" });
     return;
   }
 
@@ -521,14 +614,28 @@ export async function spawnDesktopClaudeSession(
       // the session, and start watching.
       session.setWorkingDir(spawnCwd);
       setActiveSession(spawned.name);
-      if (getAutoWatchOnSpawn()) {
-        startWatchingSession(api, chatId, spawned.name, "spawn").catch(
+
+      // Create topic BEFORE starting the watch so its id is available.
+      let topicId: number | undefined;
+      if (_topicManager) {
+        topicId = await _topicManager
+          .createTopic(spawned.name, spawnCwd, spawned.id)
+          .catch((err) => {
+            warn(`spawn: topic creation failed: ${err}`);
+            return undefined;
+          });
+      }
+
+      if (getAutoWatchOnSpawn() && topicId !== undefined) {
+        startWatchingSession(api, chatId, topicId, spawned.name, "spawn").catch(
           () => {},
         );
       }
+
       await editStatus(
         `✅ <b>${escapeHtml(spawned.name)}</b> ready — watching for updates.`,
       );
+
       info("spawn: completed", {
         opId,
         chatId,
@@ -624,6 +731,8 @@ export async function handleStop(ctx: Context): Promise<void> {
     return;
   }
 
+  if (await resolveTopicSession(ctx, "stop_pick")) return;
+
   const result = await session.stop();
 
   if (result === "stopped") {
@@ -647,7 +756,7 @@ export async function killSession(
   chatId: number,
   botApi: Context["api"],
 ): Promise<{ killed: boolean; pid?: number }> {
-  stopWatching(chatId, botApi, "kill");
+  stopWatchByDir(sessionInfo.dir, botApi, "kill");
   disconnectRelay(sessionInfo.dir);
   // Suppress notifications for this dir while the relay child winds down —
   // its lingering port file would otherwise be rediscovered as a new session.
@@ -674,6 +783,12 @@ export async function killSession(
   }
 
   removeSession(sessionInfo.name);
+
+  if (_topicManager) {
+    _topicManager
+      .deleteTopic(sessionInfo.name)
+      .catch((err) => warn(`kill: topic delete failed: ${err}`));
+  }
 
   info("kill: terminated", {
     sessionName: sessionInfo.name,
@@ -745,6 +860,23 @@ export async function handleKill(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
+  // Topic context: kill the topic's session directly, show picker in General
+  if (isTopicChat(ctx)) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      const sessionInfo = getSession(topicCtx.sessionName);
+      if (sessionInfo) {
+        const { pid } = await killSession(sessionInfo, chatId, ctx.api);
+        const pidStr = pid ? ` (PID ${pid})` : "";
+        await ctx.reply(
+          `💀 Killed <b>${escapeHtml(sessionInfo.name)}</b>${pidStr}`,
+          { parse_mode: "HTML" },
+        );
+        return;
+      }
+    }
+  }
+
   const sessions = getSessions();
   if (sessions.length === 0) {
     await ctx.reply("No active sessions.");
@@ -763,6 +895,8 @@ export async function handleStatus(ctx: Context): Promise<void> {
     await ctx.reply("Unauthorized.");
     return;
   }
+
+  if (await resolveTopicSession(ctx, "status_pick")) return;
 
   const activeSession = getActiveSession();
   const sessionName = session.sessionName || activeSession?.name;
@@ -857,6 +991,8 @@ export async function handleModel(ctx: Context): Promise<void> {
     await ctx.reply("Unauthorized.");
     return;
   }
+
+  if (await resolveTopicSession(ctx, "model_pick")) return;
 
   const currentModel = session.model;
   const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
@@ -963,43 +1099,55 @@ export async function handleList(ctx: Context): Promise<void> {
 
   const lines: string[] = ["📋 <b>Sessions</b>\n"];
 
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
-    const isActive = active?.name === s.name;
-    const marker = isActive ? "✅ " : "• ";
-    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-    const ago = formatTimeAgo(s.lastActivity);
-    const branch = branches[i];
-    const hasRelay = relayDirSet.has(s.dir);
+  if (isTopicChat(ctx)) {
+    // Topic mode: show sessions as status list (user navigates by opening topics)
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]!;
+      const hasRelay = relayDirSet.has(s.dir);
+      const emoji = hasRelay ? "🟢" : "🔴";
+      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+      lines.push(
+        `${emoji} <b>${escapeHtml(s.name)}</b>\n  <code>${escapeHtml(dir)}</code>`,
+      );
+      const branch = branches[i];
+      if (branch) lines.push(`  🌿 ${escapeHtml(branch)}`);
+      lines.push("");
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  } else {
+    // v1 behavior: show sessions with Switch buttons
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]!;
+      const isActive = active?.name === s.name;
+      const marker = isActive ? "✅ " : "• ";
+      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+      const ago = formatTimeAgo(s.lastActivity);
+      const branch = branches[i];
+      const hasRelay = relayDirSet.has(s.dir);
 
-    const meta = [
-      dir,
-      branch ? `🌿 ${branch}` : null,
-      hasRelay ? "📡" : null,
-      ago,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
-  }
+      const meta = [
+        dir,
+        branch ? `🌿 ${branch}` : null,
+        hasRelay ? "📡" : null,
+        ago,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
+    }
 
-  // Create inline buttons for all sessions (mark active with ✓)
-  const buttons = sessions.map((s) => [
-    {
-      text: active?.name === s.name ? `✓ ${s.name}` : s.name,
-      callback_data: `switch:${s.name}`,
-    },
-  ]);
+    const buttons = sessions.map((s) => [
+      {
+        text: active?.name === s.name ? `✓ ${s.name}` : s.name,
+        callback_data: `switch:${s.name}`,
+      },
+    ]);
 
-  await ctx.reply(lines.join("\n"), {
-    parse_mode: "HTML",
-    reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
-  });
-
-  // Auto-watch active desktop session if not already watching
-  const chatId = ctx.chat?.id;
-  if (chatId && active?.info.source === "desktop" && !isWatching(chatId)) {
-    await startWatchingAndNotify(ctx, chatId, active.name, "list_auto");
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "HTML",
+      reply_markup:
+        buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+    });
   }
 }
 
@@ -1011,6 +1159,13 @@ export async function handleSwitch(ctx: Context): Promise<void> {
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  if (isTopicChat(ctx)) {
+    await ctx.reply(
+      "ℹ️ /switch is not needed with topics. Just open a session topic.",
+    );
     return;
   }
 
@@ -1028,25 +1183,12 @@ export async function handleSwitch(ctx: Context): Promise<void> {
     const active = getActiveSession();
     if (active) {
       session.loadFromRegistry(active.info);
-      const chatId = ctx.chat?.id;
       const dir = active.info.dir.replace(/^\/Users\/[^/]+/, "~");
 
-      // Auto-watch desktop sessions
-      if (active.info.source === "desktop" && chatId) {
-        if (
-          !(await startWatchingAndNotify(ctx, chatId, active.name, "switch"))
-        ) {
-          await sendSwitchHistory(ctx, active.info);
-          await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-            parse_mode: "HTML",
-          });
-        }
-      } else {
-        await sendSwitchHistory(ctx, active.info);
-        await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-          parse_mode: "HTML",
-        });
-      }
+      await sendSwitchHistory(ctx, active.info);
+      await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
+        parse_mode: "HTML",
+      });
     }
   } else {
     await ctx.reply(`❌ "${name}" not found. Use /list.`);

@@ -17,6 +17,7 @@ import {
   getTerminal,
   getWorkingDir,
   getAutoWatchOnSpawn,
+  getEnablePinnedStatus,
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
@@ -46,6 +47,7 @@ export function renderSettingsBody(): string {
   const terminal = getTerminal();
   const workdir = getWorkingDir();
   const autowatch = getAutoWatchOnSpawn();
+  const pinnedStatus = getEnablePinnedStatus();
   const modelDisplay = session.modelDisplayName;
   const overrides = getOverrides();
 
@@ -70,6 +72,11 @@ export function renderSettingsBody(): string {
     `🤖 Model:        <code>${escapeHtml(modelDisplay)}</code>${marker(
       "defaultModel",
     )}`,
+    "",
+    "━ Features ━",
+    `📌 Pinned Status: <code>${pinnedStatus ? "on" : "off"}</code>${marker(
+      "enablePinnedStatus",
+    )}`,
   ].join("\n");
 }
 
@@ -86,6 +93,7 @@ export function renderSettingsKeyboard(): {
         { text: "👁 Auto-watch", callback_data: "set:edit:autowatch" },
         { text: "🤖 Model", callback_data: "set:edit:model" },
       ],
+      [{ text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" }],
     ],
   };
 }

@@ -2,7 +2,7 @@
  * Session management module exports.
  */
 
-export type { SessionInfo } from "./types";
+export type { SessionInfo, SessionOverride } from "./types";
 
 export {
   startWatcher,

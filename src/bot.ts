@@ -17,7 +17,7 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
-import { error as logError } from "./logger";
+import { error as logError, info } from "./logger";
 import {
   handleStart,
   handleHelp,
@@ -50,6 +50,8 @@ import {
 
 export interface BotOptions {
   token: string;
+  /** Called when bot first sees a supergroup with forum topics enabled. */
+  onForumGroupDetected?: (chatId: number) => void;
 }
 
 /**
@@ -58,8 +60,9 @@ export interface BotOptions {
  */
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
+  let forumGroupDetected = false;
 
-  // Sequentialize non-command messages per user (prevents race conditions)
+  // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
     sequentialize((ctx) => {
       // Commands bypass sequentialization
@@ -74,7 +77,10 @@ export function createBot(options: BotOptions): Bot {
       if (ctx.callbackQuery) {
         return undefined;
       }
-      return ctx.chat?.id.toString();
+      const threadId = ctx.message?.message_thread_id;
+      return threadId
+        ? `${ctx.chat?.id}:${threadId}`
+        : ctx.chat?.id?.toString();
     }),
   );
 
@@ -84,6 +90,35 @@ export function createBot(options: BotOptions): Bot {
     if (userId && ctx.chat?.id && isAuthorized(userId, ALLOWED_USERS)) {
       const isNew = !getChatIds().has(ctx.chat.id);
       registerChatId(ctx.chat.id);
+
+      // Detect group chats with forum topics — notify caller
+      // is_forum may not be on the message update, so also check via getChat()
+      if (
+        !forumGroupDetected &&
+        ctx.chat.type === "supergroup" &&
+        options.onForumGroupDetected
+      ) {
+        const isForum = (ctx.chat as any).is_forum;
+        if (isForum) {
+          forumGroupDetected = true;
+          options.onForumGroupDetected(ctx.chat.id);
+        } else if (!forumGroupDetected) {
+          // is_forum might not be in the update — check via API (once)
+          forumGroupDetected = true; // set eagerly to prevent parallel getChat calls
+          bot.api
+            .getChat(ctx.chat.id)
+            .then((chat) => {
+              if ((chat as any).is_forum) {
+                options.onForumGroupDetected!(ctx.chat!.id);
+              } else {
+                forumGroupDetected = false; // not a forum — allow retry
+              }
+            })
+            .catch(() => {
+              forumGroupDetected = false;
+            });
+        }
+      }
 
       // Create pinned status for new chats
       if (isNew) {
@@ -100,6 +135,14 @@ export function createBot(options: BotOptions): Bot {
           .catch(() => {});
       }
     }
+    // Block DMs when group mode is active
+    if (forumGroupDetected && ctx.chat?.type === "private") {
+      if (ctx.message?.text) {
+        await ctx.reply("ℹ️ Bot is running in group mode. Use the group chat.");
+      }
+      return;
+    }
+
     await next();
   });
 

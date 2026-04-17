@@ -2,6 +2,13 @@
  * Session types for multi-session management.
  */
 
+/** Subset of session identity used to target a specific relay. */
+export interface SessionOverride {
+  sessionId: string;
+  sessionDir: string;
+  sessionPid?: number;
+}
+
 export interface SessionInfo {
   /** Claude session UUID. Empty string ("") until the first message initializes it. */
   id: string;

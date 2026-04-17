@@ -12,6 +12,7 @@ import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
+import type { TopicManager } from "../topics";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
 const FLAP_BUFFER_MS = 2_000;
@@ -91,7 +92,10 @@ export function getChatIds(): Set<number> {
 
 function isTelegramChatNotFoundError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /\b400\b/.test(msg) && /chat not found/i.test(msg);
+  return (
+    (/\b400\b/.test(msg) && /chat not found/i.test(msg)) ||
+    /group chat was upgraded to a supergroup/i.test(msg)
+  );
 }
 
 /**
@@ -140,6 +144,8 @@ export function setSessionOfflineCallback(
  */
 export function createNotificationHandler(
   botApi: Api,
+  topicManager?: TopicManager,
+  onTopicCreated?: (sessionName: string, topicId: number) => void,
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
     for (const session of diff.added) {
@@ -157,10 +163,23 @@ export function createNotificationHandler(
       }
       const timer = setTimeout(() => {
         pending.delete(session.dir);
+        if (topicManager) {
+          topicManager
+            .createTopic(session.name, session.dir, session.id)
+            .then((topicId) => {
+              if (topicId && onTopicCreated)
+                onTopicCreated(session.name, topicId);
+            })
+            .catch((err) =>
+              warn(`notify: topic create failed for ${session.name}: ${err}`),
+            );
+        }
         broadcast(
           botApi,
           `🟢 <b>${escHtml(session.name)}</b> online\n<code>${escHtml(session.dir)}</code>`,
-          new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
+          topicManager
+            ? undefined
+            : new InlineKeyboard().text("👁 Watch", `switch:${session.name}`),
         );
       }, FLAP_BUFFER_MS);
       pending.set(session.dir, {
@@ -191,6 +210,14 @@ export function createNotificationHandler(
 
         // Notify watch handler for resume flow
         onSessionOfflineCallback?.(botApi, session.dir);
+
+        if (topicManager) {
+          topicManager
+            .deleteTopic(session.name)
+            .catch((err) =>
+              warn(`notify: topic delete failed for ${session.name}: ${err}`),
+            );
+        }
 
         let msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
         if (wasActive) msg += "\n⚠️ was active session";
