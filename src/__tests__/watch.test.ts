@@ -5,6 +5,7 @@
  * notifySessionOffline, and the new isWatching status format.
  */
 
+import "./ensure-test-env";
 import { describe, expect, test, mock } from "bun:test";
 
 mock.module("../config", () => ({

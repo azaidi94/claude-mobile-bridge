@@ -5,6 +5,7 @@
  * spurious online → offline flap.
  */
 
+import "./ensure-test-env";
 import { describe, expect, test, beforeEach, mock } from "bun:test";
 import type { Api } from "grammy";
 import type { SessionInfo } from "../sessions/types";

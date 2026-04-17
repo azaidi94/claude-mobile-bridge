@@ -38,6 +38,8 @@ import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
+import { startWebServer } from "./web/server";
+import { WEB_ENABLED } from "./config";
 
 let topicManager: TopicManager | undefined;
 
@@ -99,6 +101,9 @@ setSessionOfflineCallback(notifySessionOffline);
 
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+if (WEB_ENABLED) {
+  startWebServer();
+}
 
 const chatIdSet = getChatIds();
 // Prefer the stored topic chat ID (may be a group), fall back to first registered chat

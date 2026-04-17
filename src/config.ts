@@ -288,7 +288,8 @@ export const RATE_LIMIT_WINDOW = parseInt(
 export const WEB_PORT = process.env.WEB_PORT
   ? parseInt(process.env.WEB_PORT, 10)
   : undefined;
-export const WEB_TOKEN = process.env.WEB_TOKEN || "";
+export const WEB_ENABLED =
+  (process.env.WEB_ENABLED || "false").toLowerCase() === "true";
 
 // ============== TTS ==============
 

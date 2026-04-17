@@ -46,3 +46,11 @@ execute-commands.json
 .DS_Store
 /claude-bot-standalone
 
+# Git worktrees
+.worktrees/
+
+# Terminal mini app
+web/dist/
+web/node_modules/
+.superpowers/
+

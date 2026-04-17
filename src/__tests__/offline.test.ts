@@ -2,6 +2,7 @@
  * Unit tests for listOfflineSessions().
  */
 
+import "./ensure-test-env";
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { join } from "path";
