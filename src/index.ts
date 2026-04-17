@@ -26,6 +26,8 @@ import { createBot } from "./bot";
 import { session } from "./session";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
+import { startWebServer } from "./web/server";
+import { WEB_ENABLED } from "./config";
 
 // Create bot instance using factory
 const bot = createBot({ token: TELEGRAM_TOKEN });
@@ -75,6 +77,9 @@ await startWatcher(notifyHandler);
 // Get bot info
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+if (WEB_ENABLED) {
+  startWebServer();
+}
 
 // Set autocomplete commands
 await bot.api.setMyCommands([
