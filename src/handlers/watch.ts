@@ -342,19 +342,15 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
  * /clear doesn't rewrite the relay port file, so without this the tailer stays
  * stuck on the stale pre-/clear JSONL while relay messages still flow.
  */
-function setupIdDriftDetection(
-  botApi: Api,
-  watchState: WatchState,
-  targetName: string,
-): void {
-  const { chatId, threadId } = watchState;
+function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
+  const { chatId, threadId, sessionName } = watchState;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
     // Use newest JSONL as source of truth (port file can be stale after /clear).
     // Without this, reconnecting via JSONL scan would cause the stale port file
     // ID to differ from the new watchState.sessionId, ping-ponging back.
     const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
-    const current = getSession(targetName);
+    const current = getSession(sessionName);
     const newId = newestJsonl ?? current?.id;
 
     if (!newId || newId === watchState.sessionId) return;
@@ -371,7 +367,7 @@ function setupIdDriftDetection(
     watchState.suppressNextIdChangeNotice = false;
     info("watch: restarted tailer for new conversation", {
       chatId,
-      sessionName: targetName,
+      sessionName,
       sessionId: newId,
       suppressedNotice: wasSpawnSeed,
     });
@@ -379,7 +375,7 @@ function setupIdDriftDetection(
     botApi
       .sendMessage(
         chatId,
-        `🔄 <b>${escapeHtml(targetName)}</b> started a new conversation.`,
+        `🔄 <b>${escapeHtml(sessionName)}</b> started a new conversation.`,
         { parse_mode: "HTML", message_thread_id: watchState.threadId },
       )
       .catch(() => {});
@@ -431,7 +427,7 @@ export async function startAutoWatch(
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
-  setupIdDriftDetection(botApi, watchState, sessionName);
+  setupIdDriftDetection(botApi, watchState);
 
   // Wire relay client for replies
   const relayClient = await getRelayClient({
@@ -631,7 +627,7 @@ export async function startWatchingSession(
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
-  setupIdDriftDetection(botApi, watchState, targetName);
+  setupIdDriftDetection(botApi, watchState);
 
   // Wire relay client for replies. The JSONL tailer normally handles text
   // display, but if the tailer is stale (e.g. after /clear) the TCP path
