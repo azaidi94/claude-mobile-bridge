@@ -263,15 +263,24 @@ export async function getRelayDirs(): Promise<string[]> {
   return alive.map((pf) => pf.cwd);
 }
 
-export function disconnectRelay(sessionDir: string): void {
-  for (const [key, { client }] of clientCache) {
-    const entry = clientCache.get(key);
-    if (!entry) continue;
-    if (entry.dir === sessionDir) {
-      client.disconnect();
-      clientCache.delete(key);
-    }
-  }
+/**
+ * Disconnect the cached relay client for `selector`.
+ *
+ * Pass `sessionId` (or `claudePid`) when sessions share a dir — a dir-only
+ * match would blow away sibling sessions' relays too. Silently no-ops if
+ * no entry matches the selector's strongest key.
+ */
+export function disconnectRelay(selector: {
+  sessionDir?: string;
+  sessionId?: string;
+  claudePid?: number;
+}): void {
+  const targetKey = cacheKey(selector);
+  if (!targetKey) return;
+  const entry = clientCache.get(targetKey);
+  if (!entry) return;
+  entry.client.disconnect();
+  clientCache.delete(targetKey);
 }
 
 export function disconnectAllRelays(): void {

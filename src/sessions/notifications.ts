@@ -16,10 +16,10 @@ import type { TopicManager } from "../topics";
 
 const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
 const FLAP_BUFFER_MS = 2_000;
-// Long enough for the relay child to exit after SIGTERM and for the next
-// discovery scan to clean up its stale port file (relay shutdown ≈ a few s,
-// discovery TTL is 5s in src/relay/discovery.ts).
-const KILL_SUPPRESS_MS = 15_000;
+// Port file reaping via isRelayProcess can take 30–60s after SIGTERM, so the
+// session-removed diff fires long after kill — must outlast that window or
+// the "🔴 offline" broadcast fires redundantly.
+const KILL_SUPPRESS_MS = 90_000;
 
 // Registered chat IDs of allowed users
 const chatIds = new Set<number>();
@@ -125,7 +125,7 @@ export interface SessionDiff {
 
 // Callback for when sessions go offline (used by watch handler for resume)
 let onSessionOfflineCallback:
-  | ((botApi: Api, sessionDir: string) => void)
+  | ((botApi: Api, sessionName: string) => void)
   | null = null;
 
 /**
@@ -133,7 +133,7 @@ let onSessionOfflineCallback:
  * Used by the watch handler to trigger resume flow.
  */
 export function setSessionOfflineCallback(
-  callback: (botApi: Api, sessionDir: string) => void,
+  callback: (botApi: Api, sessionName: string) => void,
 ): void {
   onSessionOfflineCallback = callback;
 }
@@ -209,7 +209,7 @@ export function createNotificationHandler(
         pending.delete(session.dir);
 
         // Notify watch handler for resume flow
-        onSessionOfflineCallback?.(botApi, session.dir);
+        onSessionOfflineCallback?.(botApi, session.name);
 
         if (topicManager) {
           topicManager

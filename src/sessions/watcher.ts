@@ -465,9 +465,16 @@ export function assignPidsToSessions(
 async function refresh(): Promise<SessionDiff> {
   // Snapshot current desktop sessions by name (unique)
   const oldDesktop = new Map<string, { name: string; dir: string }>();
+  // Map prior session ids/pids to their names so names stay sticky across
+  // refreshes — otherwise port-file iteration order can swap base name
+  // between two sessions sharing a dir, breaking topic mapping.
+  const priorNameById = new Map<string, string>();
+  const priorNameByPid = new Map<number, string>();
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop") {
       oldDesktop.set(s.name, { name: s.name, dir: s.dir });
+      if (s.id) priorNameById.set(s.id, s.name);
+      if (s.pid !== undefined) priorNameByPid.set(s.pid, s.name);
     }
   }
 
@@ -487,8 +494,22 @@ async function refresh(): Promise<SessionDiff> {
   // Rebuild cache
   cache.sessions.clear();
 
-  // Add discovered sessions with generated names
+  // Restore prior names first, then generate fresh names for the rest.
+  // Splitting prevents a freshly-spawned sibling from grabbing the base
+  // name before the incumbent's entry is re-registered.
+  const needsNewName: SessionInfo[] = [];
   for (const si of discovered) {
+    const prior =
+      (si.id ? priorNameById.get(si.id) : undefined) ??
+      (si.pid !== undefined ? priorNameByPid.get(si.pid) : undefined);
+    if (prior && !cache.sessions.has(prior)) {
+      si.name = prior;
+      cache.sessions.set(prior, si);
+    } else {
+      needsNewName.push(si);
+    }
+  }
+  for (const si of needsNewName) {
     si.name = generateName(si.dir);
     cache.sessions.set(si.name, si);
   }

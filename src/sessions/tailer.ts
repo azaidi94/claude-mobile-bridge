@@ -278,6 +278,7 @@ export async function findSessionJsonlPath(
  */
 export async function findNewestSessionInDir(
   cwd: string,
+  excludeIds?: ReadonlySet<string> | Set<string>,
 ): Promise<string | null> {
   const dir = projectDir(cwd);
 
@@ -287,10 +288,12 @@ export async function findNewestSessionInDir(
 
     for (const file of files) {
       if (!file.endsWith(".jsonl")) continue;
+      const id = file.slice(0, -6);
+      if (excludeIds?.has(id)) continue;
       const s = await stat(join(dir, file)).catch(() => null);
       if (!s) continue;
       if (!newest || s.mtimeMs > newest.mtime) {
-        newest = { id: file.slice(0, -6), mtime: s.mtimeMs };
+        newest = { id, mtime: s.mtimeMs };
       }
     }
 

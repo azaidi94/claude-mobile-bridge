@@ -45,7 +45,7 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import { startWatchingSession, stopWatchByDir } from "./watch";
+import { startWatchingSession, stopWatchByName } from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -756,8 +756,12 @@ export async function killSession(
   chatId: number,
   botApi: Context["api"],
 ): Promise<{ killed: boolean; pid?: number }> {
-  stopWatchByDir(sessionInfo.dir, botApi, "kill");
-  disconnectRelay(sessionInfo.dir);
+  stopWatchByName(sessionInfo.name, botApi, "kill");
+  disconnectRelay({
+    sessionDir: sessionInfo.dir,
+    sessionId: sessionInfo.id || undefined,
+    claudePid: sessionInfo.pid,
+  });
   // Suppress notifications for this dir while the relay child winds down —
   // its lingering port file would otherwise be rediscovered as a new session.
   suppressDirNotifications(sessionInfo.dir);

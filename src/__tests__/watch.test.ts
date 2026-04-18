@@ -211,24 +211,38 @@ describe("watch: multi-topic isolation", () => {
     expect(mod.isWatching(100, 2)).toBe(true);
   });
 
-  test("stopWatchByDir only removes the watch whose sessionDir matches", async () => {
+  test("stopWatchByName only removes the watch whose sessionName matches", async () => {
     const mod = await import("../handlers/watch");
     mod._resetWatchesForTests();
 
     mod._registerWatchForTests(makeState(100, 1, "/repo/a"));
     mod._registerWatchForTests(makeState(100, 2, "/repo/b"));
 
-    const stopped = mod.stopWatchByDir("/repo/a");
+    const stopped = mod.stopWatchByName("s-1");
 
-    expect(stopped?.sessionDir).toBe("/repo/a");
+    expect(stopped?.sessionName).toBe("s-1");
     expect(mod.isWatching(100, 1)).toBe(false);
     expect(mod.isWatching(100, 2)).toBe(true);
   });
 
-  test("stopWatchByDir returns undefined for unknown dir", async () => {
+  test("stopWatchByName targets the named sibling when two watches share a dir", async () => {
     const mod = await import("../handlers/watch");
     mod._resetWatchesForTests();
-    expect(mod.stopWatchByDir("/nonexistent/dir")).toBeUndefined();
+
+    mod._registerWatchForTests(makeState(100, 1, "/repo/shared"));
+    mod._registerWatchForTests(makeState(100, 2, "/repo/shared"));
+
+    const stopped = mod.stopWatchByName("s-2");
+
+    expect(stopped?.sessionName).toBe("s-2");
+    expect(mod.isWatching(100, 1)).toBe(true);
+    expect(mod.isWatching(100, 2)).toBe(false);
+  });
+
+  test("stopWatchByName returns undefined for unknown name", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    expect(mod.stopWatchByName("nonexistent")).toBeUndefined();
   });
 });
 

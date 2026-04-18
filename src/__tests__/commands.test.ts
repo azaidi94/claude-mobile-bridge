@@ -174,13 +174,13 @@ mock.module("../sessions/offline", () => ({
 
 const mockStartWatchingSession = mock(async () => true);
 const mockStartWatchingAndNotify = mock(async () => true);
-const mockStopWatchByDir = mock(() => undefined);
+const mockStopWatchByName = mock((_name: string) => undefined);
 const mockIsWatchingAny = mock(() => false);
 
 mock.module("../handlers/watch", () => ({
   startWatchingSession: mockStartWatchingSession,
   startWatchingAndNotify: mockStartWatchingAndNotify,
-  stopWatchByDir: mockStopWatchByDir,
+  stopWatchByName: mockStopWatchByName,
   isWatchingAny: mockIsWatchingAny,
 }));
 
@@ -379,7 +379,7 @@ function resetMocks() {
   mockStartWatchingSession.mockImplementation(async () => true);
   mockStartWatchingAndNotify.mockClear();
   mockStartWatchingAndNotify.mockImplementation(async () => true);
-  mockStopWatchByDir.mockClear();
+  mockStopWatchByName.mockClear();
   mockIsWatchingAny.mockClear();
   mockIsWatchingAny.mockImplementation(() => false);
   mockReadKeychainToken.mockClear();
@@ -2177,7 +2177,7 @@ describe("commands: /usage", () => {
 
 describe("killSession: multi-topic", () => {
   beforeEach(() => {
-    mockStopWatchByDir.mockClear();
+    mockStopWatchByName.mockClear();
     mockDisconnectRelay.mockClear();
   });
 
@@ -2229,26 +2229,40 @@ describe("killSession: multi-topic", () => {
 
     await killSession(sessionB, 100, mockApi);
 
-    // stopWatchByDir called with sessionB's dir
-    expect(mockStopWatchByDir).toHaveBeenCalledWith("/repo/b", mockApi, "kill");
+    // stopWatchByName called with sessionB's name
+    expect(mockStopWatchByName).toHaveBeenCalledWith(
+      sessionB.name,
+      mockApi,
+      "kill",
+    );
 
-    // stopWatchByDir NOT called with sessionA's dir
-    const calls = mockStopWatchByDir.mock.calls as unknown as [
+    // stopWatchByName NOT called with sessionA's name
+    const calls = mockStopWatchByName.mock.calls as unknown as [
       string,
       ...unknown[],
     ][];
-    const calledWithA = calls.some((c) => c[0] === "/repo/a");
+    const calledWithA = calls.some((c) => c[0] === sessionA.name);
     expect(calledWithA).toBe(false);
 
-    // disconnectRelay called for sessionB
-    expect(mockDisconnectRelay).toHaveBeenCalledWith("/repo/b");
+    // disconnectRelay called for sessionB (specific selector, not just dir)
+    expect(mockDisconnectRelay).toHaveBeenCalledWith({
+      sessionDir: sessionB.dir,
+      sessionId: sessionB.id,
+      claudePid: sessionB.pid,
+    });
 
-    // disconnectRelay NOT called for sessionA
+    // No disconnect call identifies sessionA
     const relayCalls = mockDisconnectRelay.mock.calls as unknown as [
-      string,
-      ...unknown[],
+      { sessionDir?: string; sessionId?: string; claudePid?: number },
     ][];
-    const relayCalledWithA = relayCalls.some((c) => c[0] === "/repo/a");
-    expect(relayCalledWithA).toBe(false);
+    const touchesA = relayCalls.some(
+      ([s]) =>
+        s.sessionId === sessionA.id ||
+        s.claudePid === sessionA.pid ||
+        (s.sessionDir === sessionA.dir &&
+          !s.sessionId &&
+          s.claudePid === undefined),
+    );
+    expect(touchesA).toBe(false);
   });
 });

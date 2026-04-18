@@ -86,6 +86,22 @@ interface WatchState extends TailDisplayState {
 type WatchKey = `${number}:${number}`;
 const watches = new Map<WatchKey, WatchState>();
 
+// Recently-killed session ids. A sibling sharing the dir could otherwise
+// drift onto the dying session's JSONL (still the newest for a moment).
+const KILLED_ID_TTL_MS = 120_000;
+const killedSessionIds = new Map<string, Timer>();
+
+function blacklistKilledSessionId(sessionId: string): void {
+  if (!sessionId) return;
+  const existing = killedSessionIds.get(sessionId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(
+    () => killedSessionIds.delete(sessionId),
+    KILLED_ID_TTL_MS,
+  );
+  killedSessionIds.set(sessionId, timer);
+}
+
 function watchKey(chatId: number, threadId: number): WatchKey {
   return `${chatId}:${threadId}`;
 }
@@ -269,26 +285,28 @@ export function stopWatching(
 }
 
 /**
- * Stop watching the session whose sessionDir matches `sessionDir`.
+ * Stop watching the session whose sessionName matches `sessionName`.
  * Used by killSession so only the killed session's watch is stopped,
- * leaving other topics' watches intact.
+ * leaving other topics' watches intact — including sibling sessions that
+ * share a sessionDir.
  */
-export function stopWatchByDir(
-  sessionDir: string,
+export function stopWatchByName(
+  sessionName: string,
   botApi?: Api,
-  reason = "byDir",
+  reason = "byName",
 ): WatchState | undefined {
   for (const [, state] of watches) {
-    if (state.sessionDir === sessionDir) {
+    if (state.sessionName === sessionName) {
       if (botApi && state.currentTextMsg && !state.segmentDone) {
         finalizeTextMessage(botApi, state);
       }
+      if (reason === "kill") blacklistKilledSessionId(state.sessionId);
       cleanupWatch(state);
-      info("watch: stopped by dir", {
+      info("watch: stopped by name", {
         chatId: state.chatId,
         threadId: state.threadId,
-        sessionName: state.sessionName,
-        sessionDir,
+        sessionName,
+        sessionDir: state.sessionDir,
         reason,
       });
       return state;
@@ -301,9 +319,9 @@ export function stopWatchByDir(
  * Notify watch handlers that a session went offline.
  * Called from the watcher notification system.
  */
-export function notifySessionOffline(botApi: Api, sessionDir: string): void {
+export function notifySessionOffline(botApi: Api, sessionName: string): void {
   for (const [, state] of watches) {
-    if (state.sessionDir !== sessionDir) continue;
+    if (state.sessionName !== sessionName) continue;
     const { chatId, threadId } = state;
     cleanupWatch(state);
 
@@ -326,11 +344,10 @@ export function notifySessionOffline(botApi: Api, sessionDir: string): void {
       threadId,
       sessionName: state.sessionName,
       sessionId: state.sessionId,
-      sessionDir,
+      sessionDir: state.sessionDir,
       readyForResume: Boolean(sessionInfo),
     });
-    // Each session dir maps to at most one topic — stop after first match.
-    break;
+    return;
   }
 }
 
@@ -346,22 +363,46 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
   const { chatId, threadId, sessionName } = watchState;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
-    // Use newest JSONL as source of truth (port file can be stale after /clear).
-    // Without this, reconnecting via JSONL scan would cause the stale port file
-    // ID to differ from the new watchState.sessionId, ping-ponging back.
-    const newestJsonl = await findNewestSessionInDir(watchState.sessionDir);
-    const current = getSession(sessionName);
-    const newId = newestJsonl ?? current?.id;
+    // Only drift when sole owner of the dir. With siblings, the newest
+    // JSONL can't be attributed to a specific named session, and toggling
+    // sessionId on each mode change would fire spurious "🔄" notices and
+    // revert /clear recovery earned while solo.
+    for (const other of watches.values()) {
+      if (other === watchState) continue;
+      if (other.sessionDir === watchState.sessionDir) return;
+    }
+    const excludeIds =
+      killedSessionIds.size > 0
+        ? new Set<string>(killedSessionIds.keys())
+        : undefined;
+    const newestJsonl = await findNewestSessionInDir(
+      watchState.sessionDir,
+      excludeIds,
+    );
+    const newId = newestJsonl ?? getSession(sessionName)?.id;
 
     if (!newId || newId === watchState.sessionId) return;
+    if (killedSessionIds.has(newId)) return;
+    // Defense in depth: don't steal an id another live watcher already holds.
+    for (const other of watches.values()) {
+      if (other === watchState) continue;
+      if (other.sessionDir !== watchState.sessionDir) continue;
+      if (other.sessionId === newId) return;
+    }
+    // Claim synchronously so a concurrent drift tick on a sibling watch sees
+    // this id as taken before its own guard runs.
+    const previousId = watchState.sessionId;
+    watchState.sessionId = newId;
     const newPath = await findSessionJsonlPath(newId);
-    if (!newPath) return;
+    if (!newPath) {
+      watchState.sessionId = previousId;
+      return;
+    }
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
       handleTailEvent(botApi, watchState, event, watchState.threadId),
     );
     watchState.tailer = newTailer;
-    watchState.sessionId = newId;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
     watchState.suppressNextIdChangeNotice = false;

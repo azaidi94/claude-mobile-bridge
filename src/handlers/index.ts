@@ -38,7 +38,7 @@ export {
   isWatching,
   isWatchingAny,
   stopWatching,
-  stopWatchByDir,
+  stopWatchByName,
   notifySessionOffline,
   sendWatchRelay,
   startWatchingSession,
