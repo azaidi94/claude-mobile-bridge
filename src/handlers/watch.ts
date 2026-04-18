@@ -86,6 +86,9 @@ interface WatchState extends TailDisplayState {
 type WatchKey = `${number}:${number}`;
 const watches = new Map<WatchKey, WatchState>();
 
+/** Exported for tests only — do not use from application code. */
+export const _watchesForTest = watches;
+
 // Recently-killed session ids. A sibling sharing the dir could otherwise
 // drift onto the dying session's JSONL (still the newest for a moment).
 const KILLED_ID_TTL_MS = 120_000;
@@ -463,8 +466,20 @@ export async function startAutoWatch(
   threadId: number,
   sessionName: string,
 ): Promise<boolean> {
-  // Stop existing watch for THIS (chatId, threadId) if any — don't clobber others.
-  if (watches.has(watchKey(chatId, threadId))) {
+  // Auto-watch loses to user intent: if this topic is already bound to a
+  // different session (via /watch), don't clobber it — neither now, nor
+  // after a mid-wait race (post-wait guard below).
+  const preExisting = watches.get(watchKey(chatId, threadId));
+  if (preExisting && preExisting.sessionName !== sessionName) {
+    info("auto-watch: skipped, topic already bound to different session", {
+      chatId,
+      threadId,
+      requestedSession: sessionName,
+      currentSession: preExisting.sessionName,
+    });
+    return false;
+  }
+  if (preExisting) {
     stopWatching(chatId, threadId, botApi, "auto-replace");
   }
 
@@ -478,8 +493,8 @@ export async function startAutoWatch(
     return false;
   }
 
-  // While we waited, a /watch command may have bound this topic to a different
-  // session. Don't clobber that — auto-watch loses to user intent.
+  // Re-check: a /watch may have bound the topic to a different session while
+  // we were waiting. Stand down in that case.
   const existing = watches.get(watchKey(chatId, threadId));
   if (existing && existing.sessionName !== sessionName) {
     info("auto-watch: skipped, topic now bound to different session", {

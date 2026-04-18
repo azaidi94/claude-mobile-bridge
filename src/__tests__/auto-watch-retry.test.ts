@@ -107,3 +107,68 @@ describe("_awaitSessionId", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("startAutoWatch intent-preservation guards", () => {
+  const CHAT_ID = 1001;
+  const THREAD_ID = 42;
+  const KEY = `${CHAT_ID}:${THREAD_ID}`;
+  const fakeBotApi = {} as never;
+
+  beforeEach(() => {
+    forceRefreshCalls = 0;
+  });
+
+  test("pre-wait: bails immediately when topic already bound to different session", async () => {
+    getSessionImpl = () => SESSION;
+    const { startAutoWatch, _watchesForTest } =
+      await import("../handlers/watch");
+    _watchesForTest.clear();
+    const preExisting = { sessionName: "other-session" } as never;
+    _watchesForTest.set(KEY as never, preExisting);
+
+    const result = await startAutoWatch(
+      fakeBotApi,
+      CHAT_ID,
+      THREAD_ID,
+      "AHZ_Claw",
+    );
+
+    expect(result).toBe(false);
+    // Pre-wait guard must bail BEFORE calling forceRefresh/_awaitSessionId.
+    expect(forceRefreshCalls).toBe(0);
+    // Existing watch must not be clobbered.
+    expect(_watchesForTest.get(KEY as never)).toBe(preExisting);
+    _watchesForTest.clear();
+  });
+
+  test("post-wait: stands down when different session gets bound during wait", async () => {
+    const { startAutoWatch, _watchesForTest } =
+      await import("../handlers/watch");
+    _watchesForTest.clear();
+
+    // Simulate a /watch racing in "during the wait" without actually sleeping:
+    // _awaitSessionId resolves on the first attempt, but getSession injects a
+    // different-session watch into the map before returning — exactly the
+    // state startAutoWatch's post-wait guard must handle.
+    const racingWatch = { sessionName: "user-picked" } as never;
+    getSessionImpl = () => {
+      if (!_watchesForTest.has(KEY as never)) {
+        _watchesForTest.set(KEY as never, racingWatch);
+      }
+      return SESSION;
+    };
+
+    const result = await startAutoWatch(
+      fakeBotApi,
+      CHAT_ID,
+      THREAD_ID,
+      "AHZ_Claw",
+    );
+
+    expect(result).toBe(false);
+    expect(forceRefreshCalls).toBe(1);
+    // Racing watch must survive — auto-watch loses to user intent.
+    expect(_watchesForTest.get(KEY as never)).toBe(racingWatch);
+    _watchesForTest.clear();
+  });
+});
