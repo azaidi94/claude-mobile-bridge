@@ -40,6 +40,7 @@ import {
   sendPostKillSessionList,
   offlineSessionCache,
   spawnDesktopClaudeSession,
+  handleGroupModeCallback,
 } from "./commands";
 import {
   pendingSettingsInput,
@@ -600,6 +601,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // Settings panel callbacks: set:<action>[:<field>[:<value>]]
   if (callbackData.startsWith("set:")) {
     await handleSettingsCallback(ctx, chatId, callbackData);
+    return;
+  }
+
+  // /groupmode selector: gm:<on|off|auto>
+  if (callbackData.startsWith("gm:")) {
+    await handleGroupModeCallback(ctx, callbackData.slice(3));
     return;
   }
 

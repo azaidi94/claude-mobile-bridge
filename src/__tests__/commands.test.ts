@@ -68,6 +68,7 @@ mock.module("../settings", () => ({
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
 }));
 
 // Mock sessions module
@@ -207,6 +208,7 @@ mock.module("../topics", () => ({
   getThreadIdFromCallback: mock(() => undefined),
   safeSendInThread: mock(async () => ({})),
   TopicManager: class {},
+  getTopicStore: mock(() => ({ chatId: 0, topics: [] })),
 }));
 
 // Mock session singleton

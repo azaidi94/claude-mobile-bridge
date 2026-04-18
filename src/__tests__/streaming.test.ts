@@ -55,6 +55,7 @@ mock.module("../settings", () => ({
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
 }));
 
 // ============== StreamingState Tests ==============

@@ -45,6 +45,7 @@ mock.module("../settings", () => ({
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
 }));
 
 // Import directly from source to avoid barrel export issues

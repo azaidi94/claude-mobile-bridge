@@ -111,9 +111,10 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
 
     const ppidMap = new Map(rootEntries.map((e) => [e.pid, e.ppid]));
 
-    // Get working directory for each PID via lsof (single call)
+    // Get working directory for each PID via lsof (single call).
+    // Absolute path: lsof lives in /usr/sbin, which launchd's default PATH omits.
     const { stdout: lsofOutput } = await execAsync(
-      `lsof -p ${pids.join(",")} -a -d cwd -Fpn 2>/dev/null`,
+      `/usr/sbin/lsof -p ${pids.join(",")} -a -d cwd -Fpn 2>/dev/null`,
     );
 
     let currentPid = 0;

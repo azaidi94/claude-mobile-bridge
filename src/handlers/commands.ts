@@ -5,7 +5,7 @@
  * /list, /switch, /refresh, /pin, /watch, /unwatch, /pwd, /cd, /ls
  */
 
-import { readdir, stat, access } from "fs/promises";
+import { readdir, readFile, stat, access } from "fs/promises";
 import { realpathSync, statSync } from "fs";
 import { resolve } from "path";
 import type { Context } from "grammy";
@@ -20,9 +20,15 @@ import {
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
   type TerminalApp,
 } from "../config";
-import { getWorkingDir, getTerminal, getAutoWatchOnSpawn } from "../settings";
+import {
+  getWorkingDir,
+  getTerminal,
+  getAutoWatchOnSpawn,
+  getGroupModeSetting,
+  saveSetting,
+} from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
-import { isGeneralTopic, isSessionTopic } from "../topics";
+import { isGeneralTopic, isSessionTopic, getTopicStore } from "../topics";
 import type { TopicManager } from "../topics";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
@@ -1303,6 +1309,209 @@ export async function handlePin(ctx: Context): Promise<void> {
 
   await updatePinnedStatus(ctx.api, chatId, status);
   await ctx.reply("📌 Status pinned.");
+}
+
+/**
+ * /groupmode - Toggle routing between supergroup topics and private DM.
+ * Shows inline buttons; also accepts on|off|auto as a text arg.
+ */
+export async function handleGroupMode(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const arg = (ctx.message?.text || "")
+    .split(/\s+/)
+    .slice(1)
+    .join(" ")
+    .trim()
+    .toLowerCase();
+
+  if (arg) {
+    let next: boolean | undefined;
+    if (arg === "on" || arg === "group") next = true;
+    else if (arg === "off" || arg === "private") next = false;
+    else if (arg === "auto") next = undefined;
+    else {
+      await ctx.reply("❌ Usage: /groupmode [on|off|auto]");
+      return;
+    }
+    await saveSetting({ groupMode: next });
+    const label = next === undefined ? "auto" : next ? "group" : "private";
+    await ctx.reply(`✅ Group mode: <b>${label}</b>. /restart to apply.`, {
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
+  const current = getGroupModeSetting();
+  await ctx.reply(renderGroupModeText(current), {
+    parse_mode: "HTML",
+    reply_markup: buildGroupModeKeyboard(current),
+  });
+}
+
+function renderGroupModeText(current: boolean | undefined): string {
+  const label = current === undefined ? "auto" : current ? "group" : "private";
+  return (
+    `⚙️ Group mode: <b>${label}</b>\n\n` +
+    `• <b>group</b> — supergroup topics (DMs blocked)\n` +
+    `• <b>private</b> — DM only (group blocked)\n` +
+    `• <b>auto</b> — follow forum-group detection\n\n` +
+    `Pick a mode. Takes effect after /restart.`
+  );
+}
+
+function buildGroupModeKeyboard(current: boolean | undefined): InlineKeyboard {
+  const mark = (active: boolean, label: string) =>
+    active ? `✅ ${label}` : label;
+  return new InlineKeyboard()
+    .text(mark(current === true, "Group"), "gm:on")
+    .text(mark(current === false, "Private"), "gm:off")
+    .text(mark(current === undefined, "Auto"), "gm:auto");
+}
+
+/**
+ * /cleanzombie — delete forum topics that the bot created but no longer tracks.
+ *
+ * Telegram's Bot API has no list-topics method, so:
+ *   /cleanzombie           — log-scan (only finds zombies whose creation is
+ *                            still in /tmp/claude-bot.log).
+ *   /cleanzombie sweep [N] — probes every thread id up to N (default: highest
+ *                            id seen in the log + 20), skipping live ones.
+ *                            Errors from "not found" are ignored; anything
+ *                            the bot owns gets deleted.
+ */
+export async function handleCleanZombie(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const store = getTopicStore();
+  if (!store.chatId) {
+    await ctx.reply("ℹ️ No forum group registered — nothing to clean.");
+    return;
+  }
+
+  const args = (ctx.message?.text || "").split(/\s+/).slice(1);
+  const mode = args[0]?.toLowerCase();
+  const sweepLimitArg = args[1] ? parseInt(args[1], 10) : NaN;
+
+  let logContent = "";
+  try {
+    logContent = await readFile("/tmp/claude-bot.log", "utf-8");
+  } catch {
+    logContent = "";
+  }
+
+  const created = new Set<number>();
+  const deleted = new Set<number>();
+  for (const line of logContent.split("\n")) {
+    const c = line.match(/topic-manager: created topic (\d+)/);
+    if (c) created.add(parseInt(c[1]!, 10));
+    const d = line.match(/topic-manager: deleted topic (\d+)/);
+    if (d) deleted.add(parseInt(d[1]!, 10));
+  }
+
+  const live = new Set(store.topics.map((t) => t.topicId));
+
+  let candidates: number[];
+  if (mode === "sweep") {
+    const maxKnown = Math.max(0, ...created, ...live);
+    const upper =
+      Number.isFinite(sweepLimitArg) && sweepLimitArg > 0
+        ? sweepLimitArg
+        : maxKnown + 20;
+    candidates = [];
+    // Skip id=1 (General topic — cannot be deleted).
+    for (let id = 2; id <= upper; id++) {
+      if (!live.has(id)) candidates.push(id);
+    }
+    await ctx.reply(
+      `🧹 Sweeping topic ids 2..${upper} (${candidates.length} to probe). ` +
+        `This may take a moment…`,
+    );
+  } else {
+    candidates = [...created]
+      .filter((id) => !deleted.has(id) && !live.has(id))
+      .sort((a, b) => a - b);
+    if (candidates.length === 0) {
+      await ctx.reply(
+        `✅ No zombies found via log scan. ${live.size} live topic(s).\n` +
+          `Try <code>/cleanzombie sweep</code> to probe by id range.`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    await ctx.reply(`🧹 Cleaning ${candidates.length} zombie topic(s)…`);
+  }
+
+  let removed = 0;
+  const failures: number[] = [];
+  for (const id of candidates) {
+    try {
+      await ctx.api.deleteForumTopic(store.chatId, id);
+      info(`cleanzombie: deleted topic ${id}`);
+      removed++;
+    } catch (err) {
+      const msg = String(err);
+      if (
+        msg.includes("message thread not found") ||
+        msg.includes("TOPIC_DELETED") ||
+        msg.includes("topic_closed") ||
+        msg.includes("TOPIC_NOT_MODIFIED") ||
+        msg.includes("topic is deleted") ||
+        msg.includes("TOPIC_ID_INVALID")
+      ) {
+        // Not-ours or already-gone — silent skip.
+      } else {
+        failures.push(id);
+        warn(`cleanzombie: delete failed for ${id}: ${err}`);
+      }
+    }
+  }
+
+  let reply = `🧹 Deleted ${removed} topic(s).`;
+  if (failures.length) {
+    reply += `\n⚠️ ${failures.length} error(s), first few: ${failures
+      .slice(0, 5)
+      .join(", ")}`;
+  }
+  await ctx.reply(reply);
+}
+
+/** Callback handler for gm:<on|off|auto> — updates the setting and re-renders. */
+export async function handleGroupModeCallback(
+  ctx: Context,
+  action: string,
+): Promise<void> {
+  let next: boolean | undefined;
+  if (action === "on") next = true;
+  else if (action === "off") next = false;
+  else if (action === "auto") next = undefined;
+  else {
+    await ctx.answerCallbackQuery({ text: "Unknown action" });
+    return;
+  }
+  await saveSetting({ groupMode: next });
+  const label = next === undefined ? "auto" : next ? "group" : "private";
+  try {
+    await ctx.editMessageText(renderGroupModeText(next), {
+      parse_mode: "HTML",
+      reply_markup: buildGroupModeKeyboard(next),
+    });
+  } catch {
+    // If the message can't be edited (too old), ignore.
+  }
+  await ctx.answerCallbackQuery({
+    text: `Set to ${label}. /restart to apply.`,
+  });
 }
 
 // ============== Filesystem Navigation Commands ==============
