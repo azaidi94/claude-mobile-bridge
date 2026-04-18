@@ -9,8 +9,36 @@ process.env.TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "test-token";
 process.env.TELEGRAM_ALLOWED_USERS =
   process.env.TELEGRAM_ALLOWED_USERS || "12345";
 
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterAll,
+  mock,
+} from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { Api } from "grammy";
+
+// Isolate the topic store path — without this, scheduleSave() in the real
+// topic-store module writes to tmpdir()/claude-telegram-topics.json, which is
+// the SAME path the running production bot reads from. A test run will then
+// clobber the live mapping.
+let _topicStoreTmpDir: string;
+beforeAll(async () => {
+  _topicStoreTmpDir = await mkdtemp(join(tmpdir(), "topic-manager-test-"));
+  process.env.CLAUDE_TELEGRAM_TOPICS_FILE = join(
+    _topicStoreTmpDir,
+    "topics.json",
+  );
+});
+afterAll(async () => {
+  delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
+  await rm(_topicStoreTmpDir, { recursive: true, force: true });
+});
 
 // Mock settings
 mock.module("../settings", () => ({
