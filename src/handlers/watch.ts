@@ -427,6 +427,36 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
  * Start auto-watching a session in a topic.
  * Called by topic manager when a topic is created and session is online.
  */
+// Backoff schedule for awaiting a fresh session's first JSONL write.
+// Total wait: ~37s. Brand-new Claude sessions usually populate within 1–3s.
+const AUTO_WATCH_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
+
+/**
+ * Wait for a session's id to populate via the watcher cache.
+ *
+ * Brand-new Claude Code sessions appear in the relay port file before their
+ * JSONL file has its first parseable line, so the initial scan can return
+ * SessionInfo with id="". We poll forceRefresh()/getSession() with backoff
+ * until the id resolves, the session disappears, or retries are exhausted.
+ *
+ * Exported with `_` prefix for tests; not part of the module's public API.
+ */
+export async function _awaitSessionId(
+  sessionName: string,
+  delaysMs: number[] = AUTO_WATCH_RETRY_DELAYS_MS,
+): Promise<import("../sessions/types").SessionInfo | null> {
+  for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
+    await forceRefresh();
+    const info = getSession(sessionName);
+    if (!info) return null;
+    if (info.id) return info;
+    if (attempt < delaysMs.length) {
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]!));
+    }
+  }
+  return null;
+}
+
 export async function startAutoWatch(
   botApi: Api,
   chatId: number,
@@ -438,15 +468,30 @@ export async function startAutoWatch(
     stopWatching(chatId, threadId, botApi, "auto-replace");
   }
 
-  await forceRefresh();
-  const sessionInfo = getSession(sessionName);
+  const sessionInfo = await _awaitSessionId(sessionName);
   if (!sessionInfo?.id) {
-    warn("auto-watch: start failed, missing session id", {
+    warn("auto-watch: start failed, missing session id after retries", {
       chatId,
       threadId,
       sessionName,
     });
     return false;
+  }
+
+  // While we waited, a /watch command may have bound this topic to a different
+  // session. Don't clobber that — auto-watch loses to user intent.
+  const existing = watches.get(watchKey(chatId, threadId));
+  if (existing && existing.sessionName !== sessionName) {
+    info("auto-watch: skipped, topic now bound to different session", {
+      chatId,
+      threadId,
+      requestedSession: sessionName,
+      currentSession: existing.sessionName,
+    });
+    return false;
+  }
+  if (existing) {
+    stopWatching(chatId, threadId, botApi, "auto-replace");
   }
 
   const jsonlPath =
