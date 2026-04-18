@@ -100,6 +100,7 @@ mock.module("../settings", () => ({
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
 }));
 
 // Mock handlers to avoid complex dependencies
@@ -118,6 +119,8 @@ mock.module("../handlers", () => ({
   handleRefresh: mock(() => {}),
   handlePlan: mock(() => {}),
   handlePin: mock(() => {}),
+  handleGroupMode: mock(() => {}),
+  handleCleanZombie: mock(() => {}),
   handleSessions: mock(() => {}),
   handleSkip: mock(() => {}),
   handleQueue: mock(() => {}),

@@ -159,6 +159,8 @@ await bot.api.setMyCommands([
   { command: "usage", description: "Claude Code quota stats" },
   { command: "execute", description: "Start/stop configured scripts" },
   { command: "settings", description: "Persistent settings panel" },
+  { command: "groupmode", description: "Toggle group vs private routing" },
+  { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);

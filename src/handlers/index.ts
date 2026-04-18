@@ -16,6 +16,8 @@ export {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleGroupMode,
+  handleCleanZombie,
   handleSessions,
   offlineSessionCache,
   handlePwd,

@@ -56,6 +56,7 @@ mock.module("../settings", () => ({
   saveSetting: mock(() => Promise.resolve()),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
 }));
 
 // Mock security module directly to avoid cross-test mock contamination

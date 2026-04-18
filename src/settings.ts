@@ -30,6 +30,12 @@ export interface BridgeSettings {
   autoWatchOnSpawn?: boolean;
   defaultModel?: string;
   enablePinnedStatus?: boolean;
+  /**
+   * Routing mode. `true` = supergroup topics (DMs blocked).
+   * `false` = private DM (group messages blocked).
+   * `undefined` = auto (follow forum-group detection at runtime).
+   */
+  groupMode?: boolean;
 }
 
 function resolveSettingsPath(): string {
@@ -59,6 +65,9 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.enablePinnedStatus === "boolean") {
     out.enablePinnedStatus = o.enablePinnedStatus;
+  }
+  if (typeof o.groupMode === "boolean") {
+    out.groupMode = o.groupMode;
   }
   return out;
 }
@@ -127,6 +136,11 @@ export function getDefaultModelSetting(): string | undefined {
 
 export function getEnablePinnedStatus(): boolean {
   return ensure().enablePinnedStatus ?? true;
+}
+
+/** Explicit group-mode override, or undefined for auto-detect. */
+export function getGroupModeSetting(): boolean | undefined {
+  return ensure().groupMode;
 }
 
 /**

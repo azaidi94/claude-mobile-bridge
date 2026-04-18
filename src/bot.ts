@@ -8,6 +8,7 @@
 import { Bot } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { ALLOWED_USERS } from "./config";
+import { getGroupModeSetting } from "./settings";
 import {
   registerChatId,
   getChatIds,
@@ -32,6 +33,8 @@ import {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleGroupMode,
+  handleCleanZombie,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -135,10 +138,24 @@ export function createBot(options: BotOptions): Bot {
           .catch(() => {});
       }
     }
-    // Block DMs when group mode is active
-    if (forumGroupDetected && ctx.chat?.type === "private") {
+    // Explicit setting overrides runtime detection. Only block on explicit
+    // mode choice — in auto mode, let messages through so plain supergroups
+    // (non-forum) aren't silently blocked while detection is still pending.
+    const setting = getGroupModeSetting();
+    const groupMode = setting ?? forumGroupDetected;
+
+    if (groupMode && ctx.chat?.type === "private") {
       if (ctx.message?.text) {
         await ctx.reply("ℹ️ Bot is running in group mode. Use the group chat.");
+      }
+      return;
+    }
+    if (setting === false && ctx.chat?.type === "supergroup") {
+      if (ctx.message?.text) {
+        await ctx.reply(
+          "ℹ️ Bot is running in private mode. Use the DM.\n" +
+            "Switch with /groupmode on in the DM.",
+        );
       }
       return;
     }
@@ -162,6 +179,8 @@ export function createBot(options: BotOptions): Bot {
   bot.command("watch", handleWatch);
   bot.command("unwatch", handleUnwatch);
   bot.command("pin", handlePin);
+  bot.command("groupmode", handleGroupMode);
+  bot.command("cleanzombie", handleCleanZombie);
   bot.command("sessions", handleSessions);
   bot.command("pwd", handlePwd);
   bot.command("cd", handleCd);

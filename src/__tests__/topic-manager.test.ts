@@ -19,6 +19,7 @@ mock.module("../settings", () => ({
   getAutoWatchOnSpawn: () => true,
   getDefaultModelSetting: () => undefined,
   getEnablePinnedStatus: () => true,
+  getGroupModeSetting: () => undefined,
   getOverrides: () => ({}),
   saveSetting: async () => {},
   _reloadForTests: () => {},
