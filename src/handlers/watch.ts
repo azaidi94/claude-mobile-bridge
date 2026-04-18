@@ -423,6 +423,59 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
   }, 5_000);
 }
 
+// Backoff schedule for awaiting a fresh session's first JSONL write.
+// Total wait: ~37s. Brand-new Claude sessions usually populate within 1–3s.
+const AUTO_WATCH_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
+
+/**
+ * Wait for a session's id to populate via the watcher cache.
+ *
+ * Brand-new Claude Code sessions appear in the relay port file before their
+ * JSONL file has its first parseable line, so the initial scan can return
+ * SessionInfo with id="". We poll forceRefresh()/getSession() with backoff
+ * until the id resolves, the session disappears, or retries are exhausted.
+ */
+export async function _awaitSessionId(
+  sessionName: string,
+  delaysMs: number[] = AUTO_WATCH_RETRY_DELAYS_MS,
+): Promise<import("../sessions/types").SessionInfo | null> {
+  for (const delay of [0, ...delaysMs]) {
+    if (delay) await Bun.sleep(delay);
+    await forceRefresh();
+    const info = getSession(sessionName);
+    if (!info) return null;
+    if (info.id) return info;
+  }
+  return null;
+}
+
+/**
+ * Resolve an existing watch against the caller's intended session.
+ * Returns true if the caller should abort (topic bound to a different
+ * session); otherwise stops any same-name watch so the caller can rebuild.
+ */
+function resolveAutoWatchConflict(
+  botApi: Api,
+  chatId: number,
+  threadId: number,
+  sessionName: string,
+  phase: "already" | "now",
+): boolean {
+  const existing = watches.get(watchKey(chatId, threadId));
+  if (!existing) return false;
+  if (existing.sessionName !== sessionName) {
+    info(`auto-watch: skipped, topic ${phase} bound to different session`, {
+      chatId,
+      threadId,
+      requestedSession: sessionName,
+      currentSession: existing.sessionName,
+    });
+    return true;
+  }
+  stopWatching(chatId, threadId, botApi, "auto-replace");
+  return false;
+}
+
 /**
  * Start auto-watching a session in a topic.
  * Called by topic manager when a topic is created and session is online.
@@ -433,19 +486,25 @@ export async function startAutoWatch(
   threadId: number,
   sessionName: string,
 ): Promise<boolean> {
-  // Stop existing watch for THIS (chatId, threadId) if any — don't clobber others.
-  if (watches.has(watchKey(chatId, threadId))) {
-    stopWatching(chatId, threadId, botApi, "auto-replace");
+  // Auto-watch loses to user intent — both for pre-existing /watch bindings
+  // and for /watch races that land while we're waiting on the session id.
+  if (
+    resolveAutoWatchConflict(botApi, chatId, threadId, sessionName, "already")
+  ) {
+    return false;
   }
 
-  await forceRefresh();
-  const sessionInfo = getSession(sessionName);
+  const sessionInfo = await _awaitSessionId(sessionName);
   if (!sessionInfo?.id) {
-    warn("auto-watch: start failed, missing session id", {
+    warn("auto-watch: start failed, missing session id after retries", {
       chatId,
       threadId,
       sessionName,
     });
+    return false;
+  }
+
+  if (resolveAutoWatchConflict(botApi, chatId, threadId, sessionName, "now")) {
     return false;
   }
 
@@ -841,6 +900,14 @@ export function _resetWatchesForTests(): void {
 /** Test seam — register a pre-built WatchState without starting a tailer. */
 export function _registerWatchForTests(state: WatchState): void {
   watches.set(watchKey(state.chatId, state.threadId), state);
+}
+
+/** Test seam — read back a registered WatchState (or undefined). */
+export function _getWatchForTests(
+  chatId: number,
+  threadId: number,
+): WatchState | undefined {
+  return watches.get(watchKey(chatId, threadId));
 }
 
 // ============== Tail Event Display ==============
