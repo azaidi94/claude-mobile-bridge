@@ -1,11 +1,8 @@
 /**
- * Tests for the _awaitSessionId retry helper used by startAutoWatch.
- *
- * Race fixed: when a brand-new Claude session spawns, the relay port file
- * appears before the JSONL file has a parseable first line, so the bot's
- * initial scan returns SessionInfo with id="". startAutoWatch used to give
- * up with "missing session id" and never retry. The helper now polls
- * forceRefresh()/getSession() with backoff until the id resolves.
+ * Race fixed: brand-new Claude sessions show up in the relay port file
+ * before their JSONL has a parseable first line, so initial scans return
+ * SessionInfo with id="". startAutoWatch used to give up immediately; it
+ * now polls via _awaitSessionId and re-checks intent before binding.
  */
 
 import "./ensure-test-env";
@@ -111,22 +108,36 @@ describe("_awaitSessionId", () => {
 describe("startAutoWatch intent-preservation guards", () => {
   const CHAT_ID = 1001;
   const THREAD_ID = 42;
-  const KEY = `${CHAT_ID}:${THREAD_ID}`;
   const fakeBotApi = {} as never;
 
-  beforeEach(() => {
+  const makeWatchState = (sessionName: string): any => ({
+    chatId: CHAT_ID,
+    threadId: THREAD_ID,
+    sessionName,
+    sessionId: "existing-id",
+    sessionDir: "/tmp/x",
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  beforeEach(async () => {
     forceRefreshCalls = 0;
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
   });
 
   test("pre-wait: bails immediately when topic already bound to different session", async () => {
     getSessionImpl = () => SESSION;
-    const { startAutoWatch, _watchesForTest } =
-      await import("../handlers/watch");
-    _watchesForTest.clear();
-    const preExisting = { sessionName: "other-session" } as never;
-    _watchesForTest.set(KEY as never, preExisting);
+    const mod = await import("../handlers/watch");
+    const preExisting = makeWatchState("other-session");
+    mod._registerWatchForTests(preExisting);
 
-    const result = await startAutoWatch(
+    const result = await mod.startAutoWatch(
       fakeBotApi,
       CHAT_ID,
       THREAD_ID,
@@ -134,31 +145,21 @@ describe("startAutoWatch intent-preservation guards", () => {
     );
 
     expect(result).toBe(false);
-    // Pre-wait guard must bail BEFORE calling forceRefresh/_awaitSessionId.
     expect(forceRefreshCalls).toBe(0);
-    // Existing watch must not be clobbered.
-    expect(_watchesForTest.get(KEY as never)).toBe(preExisting);
-    _watchesForTest.clear();
+    expect(mod._getWatchForTests(CHAT_ID, THREAD_ID)).toBe(preExisting);
   });
 
   test("post-wait: stands down when different session gets bound during wait", async () => {
-    const { startAutoWatch, _watchesForTest } =
-      await import("../handlers/watch");
-    _watchesForTest.clear();
-
-    // Simulate a /watch racing in "during the wait" without actually sleeping:
-    // _awaitSessionId resolves on the first attempt, but getSession injects a
-    // different-session watch into the map before returning — exactly the
-    // state startAutoWatch's post-wait guard must handle.
-    const racingWatch = { sessionName: "user-picked" } as never;
+    const mod = await import("../handlers/watch");
+    const racingWatch = makeWatchState("user-picked");
     getSessionImpl = () => {
-      if (!_watchesForTest.has(KEY as never)) {
-        _watchesForTest.set(KEY as never, racingWatch);
+      if (!mod._getWatchForTests(CHAT_ID, THREAD_ID)) {
+        mod._registerWatchForTests(racingWatch);
       }
       return SESSION;
     };
 
-    const result = await startAutoWatch(
+    const result = await mod.startAutoWatch(
       fakeBotApi,
       CHAT_ID,
       THREAD_ID,
@@ -167,8 +168,6 @@ describe("startAutoWatch intent-preservation guards", () => {
 
     expect(result).toBe(false);
     expect(forceRefreshCalls).toBe(1);
-    // Racing watch must survive — auto-watch loses to user intent.
-    expect(_watchesForTest.get(KEY as never)).toBe(racingWatch);
-    _watchesForTest.clear();
+    expect(mod._getWatchForTests(CHAT_ID, THREAD_ID)).toBe(racingWatch);
   });
 });
