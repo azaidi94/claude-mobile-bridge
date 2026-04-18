@@ -138,7 +138,9 @@ export function createBot(options: BotOptions): Bot {
           .catch(() => {});
       }
     }
-    // Resolved mode: explicit setting overrides runtime detection.
+    // Explicit setting overrides runtime detection. Only block on explicit
+    // mode choice — in auto mode, let messages through so plain supergroups
+    // (non-forum) aren't silently blocked while detection is still pending.
     const setting = getGroupModeSetting();
     const groupMode = setting ?? forumGroupDetected;
 
@@ -148,7 +150,7 @@ export function createBot(options: BotOptions): Bot {
       }
       return;
     }
-    if (!groupMode && ctx.chat?.type === "supergroup") {
+    if (setting === false && ctx.chat?.type === "supergroup") {
       if (ctx.message?.text) {
         await ctx.reply(
           "ℹ️ Bot is running in private mode. Use the DM.\n" +
