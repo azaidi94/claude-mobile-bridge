@@ -46,9 +46,10 @@ function waitFor<T>(check: () => T | undefined, timeoutMs = 2000): Promise<T> {
 describe("tasks watcher", () => {
   test("emits task.upsert when a new task file is added", async () => {
     mkdirSync(join(TMP, "tasks"), { recursive: true });
-    const { subscribe } = await loadWatcher();
+    const { subscribe, ready } = await loadWatcher();
     const events: any[] = [];
     const unsub = subscribe(TMP, (e) => events.push(e));
+    await ready(TMP);
 
     const sid = "ffff1111-2222-3333-4444-555566667777";
     const sDir = join(TMP, "tasks", sid);
@@ -92,12 +93,10 @@ describe("tasks watcher", () => {
       }),
     );
 
-    const { subscribe } = await loadWatcher();
+    const { subscribe, ready } = await loadWatcher();
     const events: any[] = [];
     const unsub = subscribe(TMP, (e) => events.push(e));
-
-    // Let the watcher settle on initial scan
-    await new Promise((r) => setTimeout(r, 250));
+    await ready(TMP);
     unlinkSync(file);
 
     const del = await waitFor(() =>
@@ -113,11 +112,10 @@ describe("tasks watcher", () => {
     const sDir = join(TMP, "tasks", sid);
     mkdirSync(sDir, { recursive: true });
 
-    const { subscribe } = await loadWatcher();
+    const { subscribe, ready } = await loadWatcher();
     const events: any[] = [];
     const unsub = subscribe(TMP, (e) => events.push(e));
-
-    await new Promise((r) => setTimeout(r, 250));
+    await ready(TMP);
     rmdirSync(sDir);
 
     const del = await waitFor(() =>

@@ -10,6 +10,7 @@ interface WatcherHandle {
   fsWatcher: FSWatcher;
   emitter: EventEmitter;
   subscribers: number;
+  readyPromise: Promise<void>;
 }
 
 const handles = new Map<string, WatcherHandle>();
@@ -90,7 +91,16 @@ function ensureHandle(claudeDir: string): WatcherHandle {
     warn(`tasks watcher error: ${(err as Error).message}`),
   );
 
-  const handle: WatcherHandle = { fsWatcher, emitter, subscribers: 0 };
+  const readyPromise = new Promise<void>((resolve) => {
+    fsWatcher.once("ready", () => resolve());
+  });
+
+  const handle: WatcherHandle = {
+    fsWatcher,
+    emitter,
+    subscribers: 0,
+    readyPromise,
+  };
   handles.set(claudeDir, handle);
   return handle;
 }
@@ -107,6 +117,11 @@ export function subscribe(
     handle.subscribers -= 1;
     // Intentionally never teardown — cost is one fs watch; avoids thrash.
   };
+}
+
+export function ready(claudeDir: string): Promise<void> {
+  const handle = ensureHandle(claudeDir);
+  return handle.readyPromise;
 }
 
 /** Test helper — fully tear down a watcher so tmpdir can be cleaned. */
