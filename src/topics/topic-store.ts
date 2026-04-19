@@ -22,6 +22,14 @@ function legacyStorePath(): string {
   return join(tmpdir(), "claude-telegram-topics.json");
 }
 
+let dirEnsured = false;
+
+async function ensureStoreDir(path: string): Promise<void> {
+  if (dirEnsured) return;
+  await mkdir(dirname(path), { recursive: true });
+  dirEnsured = true;
+}
+
 let store: TopicStore = { chatId: 0, topics: [] };
 
 export function getTopicStore(): TopicStore {
@@ -71,7 +79,7 @@ export async function loadTopicStore(): Promise<void> {
 export async function saveTopicStore(): Promise<void> {
   const path = storePath();
   try {
-    await mkdir(dirname(path), { recursive: true });
+    await ensureStoreDir(path);
     await writeFile(path, JSON.stringify(store, null, 2));
     debug(`topic-store: saved ${store.topics.length} mapping(s)`);
   } catch (err) {
@@ -125,5 +133,6 @@ export function clearTopicStore(): void {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  dirEnsured = false;
   store = { chatId: 0, topics: [] };
 }
