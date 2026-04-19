@@ -1422,6 +1422,23 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   const mode = args[0]?.toLowerCase();
   const sweepLimitArg = args[1] ? parseInt(args[1], 10) : NaN;
 
+  // Prune store-tracked orphans: mappings whose session no longer has a
+  // live process. Log-scan and sweep only catch topics unknown to the store,
+  // so this step handles the "session died mid-run" case.
+  let reconciled = 0;
+  if (_topicManager && mode !== "sweep") {
+    const before = store.topics.length;
+    const liveSessions = getSessions();
+    try {
+      await _topicManager.reconcile(
+        liveSessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+      );
+      reconciled = Math.max(0, before - getTopicStore().topics.length);
+    } catch (err) {
+      warn(`cleanzombie: reconcile failed: ${err}`);
+    }
+  }
+
   const logPath = process.env.CLEANZOMBIE_LOG_PATH || "/tmp/claude-bot.log";
   let logContent = "";
   try {
@@ -1462,14 +1479,20 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
       .filter((id) => !deleted.has(id) && !live.has(id))
       .sort((a, b) => a - b);
     if (candidates.length === 0) {
+      const prefix =
+        reconciled > 0 ? `🧹 Pruned ${reconciled} orphan mapping(s).\n` : "";
       await ctx.reply(
-        `✅ No zombies found via log scan. ${live.size} live topic(s).\n` +
+        `${prefix}✅ No zombies found via log scan. ${getTopicStore().topics.length} live topic(s).\n` +
           `Try <code>/cleanzombie sweep</code> to probe by id range.`,
         { parse_mode: "HTML" },
       );
       return;
     }
-    await ctx.reply(`🧹 Cleaning ${candidates.length} zombie topic(s)…`);
+    const prefix =
+      reconciled > 0 ? `Pruned ${reconciled} orphan mapping(s). ` : "";
+    await ctx.reply(
+      `🧹 ${prefix}Cleaning ${candidates.length} zombie topic(s)…`,
+    );
   }
 
   let removed = 0;
@@ -1508,6 +1531,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   }
 
   let reply = `🧹 Deleted ${removed} topic(s).`;
+  if (reconciled > 0) reply += ` Pruned ${reconciled} orphan mapping(s).`;
   if (failures.length) {
     reply += `\n⚠️ ${failures.length} error(s), first few: ${failures
       .slice(0, 5)
