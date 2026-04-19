@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import type { SseEvent } from "../api";
 
 interface TerminalProps {
@@ -8,18 +10,44 @@ interface TerminalProps {
 
 function eventClass(type: SseEvent["type"]): string {
   switch (type) {
-    case "text": return "text-terminal-text";
-    case "tool": return "text-terminal-muted text-xs";
-    case "thinking": return "text-terminal-muted italic text-xs";
-    default: return "text-terminal-muted";
+    case "text":
+      return "text-terminal-text";
+    case "tool":
+      return "text-terminal-muted text-xs";
+    case "thinking":
+      return "text-terminal-muted italic text-xs";
+    default:
+      return "text-terminal-muted";
   }
 }
 
 function eventPrefix(type: SseEvent["type"]): string {
   switch (type) {
-    case "tool": return "⚙ ";
-    case "thinking": return "… ";
-    default: return "";
+    case "tool":
+      return "⚙ ";
+    case "thinking":
+      return "… ";
+    default:
+      return "";
+  }
+}
+
+function renderHtml(evt: SseEvent): { __html: string } {
+  try {
+    if (evt.type === "text") {
+      const html = marked.parse(evt.content, {
+        async: false,
+        breaks: true,
+      }) as string;
+      return { __html: DOMPurify.sanitize(html) };
+    }
+    return { __html: DOMPurify.sanitize(evt.content) };
+  } catch {
+    const escaped = evt.content
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return { __html: escaped };
   }
 }
 
@@ -36,9 +64,9 @@ export function Terminal({ events, streaming }: TerminalProps) {
         evt.type !== "segment_end" && evt.type !== "done" ? (
           <div key={i} className={eventClass(evt.type)}>
             <span className="text-terminal-muted">{eventPrefix(evt.type)}</span>
-            {evt.content}
+            <span dangerouslySetInnerHTML={renderHtml(evt)} />
           </div>
-        ) : null
+        ) : null,
       )}
       {streaming && (
         <span className="inline-block w-2 h-4 bg-terminal-green animate-pulse" />
