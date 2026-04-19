@@ -141,4 +141,14 @@ export const api = {
     if (onError) es.onerror = onError;
     return () => es.close();
   },
+
+  async getSessionHistory(sessionId: string, limit = 200): Promise<SseEvent[]> {
+    const res = await fetch(
+      `${BASE}/sessions/${sessionId}/history?limit=${limit}`,
+      { headers: headers() },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { events: SseEvent[] };
+    return body.events;
+  },
 };
