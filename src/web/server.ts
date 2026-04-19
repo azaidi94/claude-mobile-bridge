@@ -13,6 +13,29 @@ const WEB_DIST = resolve(dirname(import.meta.dir), "..", "web", "dist");
 export function startWebServer(): void {
   const port = WEB_PORT ?? 3000;
 
+  if (process.env.WEB_AUTH_BYPASS === "true") {
+    const isLocal =
+      WEB_URL.includes("localhost") ||
+      WEB_URL.includes("127.0.0.1") ||
+      WEB_URL.startsWith("http://0.0.0.0");
+    if (!isLocal) {
+      const line = "═".repeat(70);
+      console.error(`\n${line}`);
+      console.error(
+        "SECURITY WARNING: WEB_AUTH_BYPASS=true with non-local WEB_URL",
+      );
+      console.error(`  URL: ${WEB_URL}`);
+      console.error(
+        "  The Mini App API is publicly reachable WITHOUT authentication.",
+      );
+      console.error(
+        "  Prefer WEB_AUTH_LOOPBACK_BYPASS=true (safe behind reverse proxy),",
+      );
+      console.error("  or WEB_AUTH_BYPASS=false to enforce Telegram initData.");
+      console.error(`${line}\n`);
+    }
+  }
+
   const app = new Hono<{ Bindings: { remoteAddr: string | null } }>();
 
   app.route("/api/sessions", createSessionsRouter());
