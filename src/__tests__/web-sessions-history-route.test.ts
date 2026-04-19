@@ -77,9 +77,7 @@ describe("GET /api/sessions/:id/history", () => {
     writeJsonl(sid, lines);
 
     const app = await buildApp();
-    const res = await app.request(
-      `/api/sessions/${sid}/history?limit=2`,
-    );
+    const res = await app.request(`/api/sessions/${sid}/history?limit=2`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: unknown[] };
     expect(body.events).toHaveLength(2);
