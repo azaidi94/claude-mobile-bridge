@@ -46,7 +46,7 @@ async function readSessionCwd(jsonlPath: string): Promise<string | null> {
 }
 
 /** Find the JSONL file for a given session id under projects/. */
-async function findSessionJsonl(
+export async function findSessionJsonl(
   claudeDir: string,
   sessionId: string,
 ): Promise<string | null> {
