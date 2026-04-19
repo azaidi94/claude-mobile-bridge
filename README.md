@@ -8,9 +8,10 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 ## Features
 
 - **Forum topics** - Each Claude Code session gets its own Telegram topic. Send messages in a topic to talk to that session. The bot creates/deletes topics as sessions come online/offline
+- **Mini App (browser UI)** - Telegram Mini App with Chat, Sessions, Tasks (Kanban), Status, and Agents tabs. History replay, live streaming, markdown rendering
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Channel relay** - Message running desktop sessions without disconnecting them
-- **Live streaming** - Watch Claude work in real-time with tool progress updates
+- **Live streaming** - Watch Claude work in real-time with tool progress updates, in Telegram and the Mini App
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
 - **Extended thinking** - "think" keyword for deeper reasoning, "ultrathink" for 50k tokens
 - **Interrupt with `!`** - Prefix message to interrupt current query
@@ -68,6 +69,7 @@ The bot works best in a **Telegram forum group** where each session gets its own
 | Files    | `/pwd`, `/cd`, `/ls`                               |
 | Quota    | `/usage`                                           |
 | Scripts  | `/execute`                                         |
+| Mini App | `/app`                                             |
 | Settings | `/settings`                                        |
 
 ## Channel Relay
@@ -119,6 +121,76 @@ The script answers **1** when it sees the “local development” line, then kee
 **How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. If no relay-enabled desktop session is found, use `/new` to spawn one or `/list` to pick an existing session.
 
 `/status` shows relay connection state. `/list` shows a 📡 indicator on relay-enabled sessions.
+
+## Mini App
+
+Open the bridge in a browser or inside Telegram as a Mini App. Five tabs:
+
+| Tab      | Purpose                                                                                   |
+| -------- | ----------------------------------------------------------------------------------------- |
+| Chat     | Live terminal-style feed for the active session, with history replay + markdown rendering |
+| Sessions | List live + offline sessions, tap to activate                                             |
+| Tasks    | Kanban board of Claude's TodoWrite items — live updates, filter per session or across all |
+| Status   | CPU / memory / disk / process snapshot of the bot host                                    |
+| Agents   | Spawn a new desktop session into a chosen project directory                               |
+
+### Enable
+
+In `.env`:
+
+```bash
+WEB_ENABLED=true
+WEB_PORT=4242                          # any free port
+WEB_URL=http://localhost:4242          # public HTTPS URL in prod
+# Optional, for opening in Telegram via deep link:
+WEB_APP_SHORT_URL=https://t.me/YourBot/YourShortName
+```
+
+Build the frontend once after install and after every pull:
+
+```bash
+cd web && bun install && bun run build
+```
+
+Dev mode (hot reload):
+
+```bash
+cd web && bun run dev   # Vite at :5173, proxies API to WEB_PORT
+```
+
+Use `/app` from Telegram to get the Mini App link (tap-to-launch button in private chats, plain URL in groups).
+
+### Register the Mini App with BotFather
+
+1. `@BotFather` → `/newapp` → pick your bot → name `Terminal` (or whatever) → short name (e.g. `term`) → icon → short description → **Web App URL**: your `WEB_URL`.
+2. Save the deep link (`https://t.me/YourBot/term`) and set it as `WEB_APP_SHORT_URL` in `.env`.
+3. Optional menu button: `@BotFather` → `/setmenubutton` → select your bot → `Configure menu button` → paste the `WEB_URL`. Gives a one-tap launcher next to the input bar in private chats.
+
+### Production deployment (HTTPS)
+
+Telegram's mobile clients require HTTPS for Mini App buttons. Reverse-proxy the Hono port:
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name bridge.example.com;
+  ssl_certificate     /path/fullchain.pem;
+  ssl_certificate_key /path/privkey.pem;
+
+  location / {
+    proxy_pass http://127.0.0.1:4242;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";      # keeps SSE alive
+    proxy_buffering off;                 # SSE needs unbuffered
+  }
+}
+```
+
+Caddy works similarly with a one-liner. The `X-Forwarded-For` header is required for the loopback auth bypass to work safely (see Security below).
 
 ## Session Auto-Discovery
 
@@ -201,6 +273,19 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 ## Security
 
 See [SECURITY.md](SECURITY.md). User allowlist, path validation, command safety checks, rate limiting, and audit logging.
+
+### Mini App auth
+
+Every `/api/*` request is validated against Telegram's `initData` HMAC (signed with your bot token). The Mini App sends it automatically. Three env flags control overrides:
+
+| Flag                            | Default | Effect                                                                                                                                                                                                                              |
+| ------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WEB_AUTH_BYPASS=true`          | false   | **Nuclear bypass.** All requests allowed. Only safe if `WEB_URL` is strictly localhost                                                                                                                                              |
+| `WEB_AUTH_LOOPBACK_BYPASS=true` | false   | Allows direct-to-port requests from `127.0.0.1` / `::1` **only when** `X-Forwarded-For`/`X-Real-IP` is absent. Safe behind a reverse proxy — the proxy always sets those headers, so public traffic keeps going through normal auth |
+
+Prefer `WEB_AUTH_LOOPBACK_BYPASS` for dev. It lets `curl http://localhost:4242/api/...` succeed on the bot host while rejecting unauthenticated public traffic.
+
+The bot prints a loud startup warning if `WEB_AUTH_BYPASS=true` is set with a non-localhost `WEB_URL`.
 
 ## License
 
