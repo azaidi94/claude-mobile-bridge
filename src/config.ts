@@ -300,6 +300,24 @@ export const WEB_PORT = process.env.WEB_PORT
 export const WEB_ENABLED =
   (process.env.WEB_ENABLED || "false").toLowerCase() === "true";
 
+/**
+ * Public base URL of the Mini App (used by `/app` command + startup warnings).
+ * Defaults to http://localhost:{WEB_PORT}. Override to an HTTPS URL in production.
+ */
+export const WEB_URL =
+  process.env.WEB_URL?.trim() || `http://localhost:${WEB_PORT ?? 3000}`;
+
+/** Optional Telegram deep link (e.g. https://t.me/YourBot/short) for `/app` in groups. */
+export const WEB_APP_SHORT_URL = process.env.WEB_APP_SHORT_URL?.trim() || "";
+
+/**
+ * If true, bypass auth ONLY for direct-to-port requests from loopback
+ * (no X-Forwarded-For / X-Real-IP header, socket peer is 127.0.0.1 / ::1).
+ * Safe behind a reverse proxy because proxies always set X-Forwarded-For.
+ */
+export const WEB_AUTH_LOOPBACK_BYPASS =
+  (process.env.WEB_AUTH_LOOPBACK_BYPASS || "false").toLowerCase() === "true";
+
 // ============== TTS ==============
 
 export const TTS_RESPONSE_FORMAT =
