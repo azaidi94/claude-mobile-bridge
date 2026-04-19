@@ -38,8 +38,26 @@ export function extractInitData(c: Context): string {
   return c.req.header("X-Telegram-Init-Data") ?? c.req.query("initData") ?? "";
 }
 
+function isLoopback(addr: string | null | undefined): boolean {
+  if (!addr) return false;
+  return (
+    addr === "127.0.0.1" ||
+    addr === "::1" ||
+    addr === "::ffff:127.0.0.1" ||
+    addr.startsWith("127.")
+  );
+}
+
 export const authMiddleware = createMiddleware(async (c, next) => {
   if (process.env.WEB_AUTH_BYPASS === "true") return next();
+
+  if (process.env.WEB_AUTH_LOOPBACK_BYPASS === "true") {
+    const fwd = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip");
+    const remote = (c.env as { remoteAddr?: string | null } | undefined)
+      ?.remoteAddr;
+    if (!fwd && isLoopback(remote ?? null)) return next();
+  }
+
   const initData = extractInitData(c);
   if (!initData) return c.json({ error: "Unauthorized" }, 401);
   const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
