@@ -34,6 +34,33 @@ export interface SseEvent {
   segmentId?: number;
 }
 
+export interface TaskSession {
+  id: string;
+  name: string;
+  projectDir: string;
+}
+
+export type TaskStatus = "pending" | "in_progress" | "completed";
+
+export interface TaskPayload {
+  sessionId: string;
+  id: string;
+  subject: string;
+  description: string;
+  status: TaskStatus;
+  updatedAt: number;
+}
+
+export type TaskStreamEvent =
+  | { type: "task.upsert"; sessionId: string; task: TaskPayload }
+  | { type: "task.delete"; sessionId: string; taskId: string }
+  | { type: "session.delete"; sessionId: string };
+
+export interface TasksSnapshot {
+  sessions: TaskSession[];
+  tasks: TaskPayload[];
+}
+
 export const api = {
   async getSessions(): Promise<ApiSession[]> {
     const res = await fetch(`${BASE}/sessions`, { headers: headers() });
@@ -91,5 +118,27 @@ export const api = {
       },
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  },
+
+  async getTasks(): Promise<TasksSnapshot> {
+    const res = await fetch(`${BASE}/tasks`, { headers: headers() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+
+  streamTasks(
+    onEvent: (evt: TaskStreamEvent) => void,
+    onError?: () => void,
+  ): () => void {
+    const initData = encodeURIComponent(getInitData());
+    const url = `${BASE}/tasks/stream?initData=${initData}`;
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      try {
+        onEvent(JSON.parse(e.data));
+      } catch {}
+    };
+    if (onError) es.onerror = onError;
+    return () => es.close();
   },
 };
