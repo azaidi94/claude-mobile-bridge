@@ -223,7 +223,7 @@ import { createReadStream } from "fs";
 import { createInterface } from "readline";
 import { findSessionJsonl } from "../tasks/reader";
 import type { SseEvent } from "../sse";
-import { formatToolCall } from "../../formatting";
+import { formatToolStatus } from "../../formatting";
 import { warn } from "../../logger";
 
 interface JsonlEntry {
@@ -282,9 +282,10 @@ function mapAssistantEntry(entry: JsonlEntry, turnIdx: number): SseEvent[] {
       });
       textSegment += 1;
     } else if (raw.type === "tool_use" && raw.name) {
+      const input = (raw.input ?? {}) as Record<string, unknown>;
       events.push({
         type: "tool",
-        content: formatToolCall(raw.name, raw.input),
+        content: formatToolStatus(raw.name, input),
       });
     }
   }
@@ -334,11 +335,7 @@ export async function readSessionHistory(
 }
 ```
 
-- [ ] **Step 4: Check that `formatToolCall` exists and accepts `(name, input)`**
-
-Open `src/formatting.ts` and search for `formatToolCall`. If the signature differs, adapt the call above to match. If it doesn't exist, find the helper the live stream uses (search for `globalEventBus.emit.*tool` and trace the `content` argument back). Report as NEEDS_CONTEXT if you can't find an appropriate helper — do not invent one.
-
-- [ ] **Step 5: Run tests — verify green**
+- [ ] **Step 4: Run tests — verify green**
 
 ```bash
 bun test src/__tests__/web-sessions-history.test.ts
@@ -346,7 +343,7 @@ bun test src/__tests__/web-sessions-history.test.ts
 
 Expected: all 6 tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/web/sessions/history.ts src/__tests__/web-sessions-history.test.ts
