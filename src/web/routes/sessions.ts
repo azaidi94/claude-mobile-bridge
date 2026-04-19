@@ -12,6 +12,7 @@ import type { SessionInfo } from "../../sessions/types";
 import { session as claudeSession } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
+import { readSessionHistory } from "../sessions/history";
 
 export interface ApiSession {
   id: string;
@@ -167,6 +168,16 @@ export function createSessionsRouter(): Hono {
         "X-Accel-Buffering": "no",
       },
     });
+  });
+
+  app.get("/:id/history", async (c) => {
+    const sessionId = c.req.param("id");
+    const limit = parseInt(c.req.query("limit") ?? "200", 10);
+    const events = await readSessionHistory(
+      sessionId,
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200,
+    );
+    return c.json({ events });
   });
 
   app.post("/:id/message", async (c) => {
