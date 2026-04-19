@@ -88,6 +88,8 @@ mock.module("../config", () => ({
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
   BOT_DIR: "/tmp/test-bot-dir",
+  WEB_URL: "http://localhost:3000",
+  WEB_APP_SHORT_URL: "",
   ...DESKTOP_SPAWN_CONFIG_MOCK,
 }));
 
@@ -132,6 +134,7 @@ mock.module("../handlers", () => ({
   handleUsage: mock(() => {}),
   handleExecute: mock(() => {}),
   handleSettings: mock(() => {}),
+  handleApp: mock(() => {}),
   handleText: mock(() => {}),
   handleVoice: mock(() => {}),
   handlePhoto: mock(() => {}),

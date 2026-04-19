@@ -18,6 +18,8 @@ import {
   isDesktopClaudeSpawnSupported,
   DESKTOP_CLAUDE_DEFAULT_ARGS,
   DESKTOP_CLAUDE_COMMAND_TEMPLATE,
+  WEB_URL,
+  WEB_APP_SHORT_URL,
   type TerminalApp,
 } from "../config";
 import {
@@ -1718,4 +1720,52 @@ export async function handleLs(ctx: Context): Promise<void> {
   } catch {
     await ctx.reply("❌ Cannot read directory.");
   }
+}
+
+/**
+ * /app — reply with a link to open the Mini App.
+ * Private chat: inline keyboard with a web_app button.
+ * Group/topic: plain URL (web_app buttons aren't allowed in groups).
+ * If WEB_APP_SHORT_URL is set, prefer the t.me deep link everywhere — it opens
+ * the registered Mini App without needing the direct HTTPS URL.
+ */
+export async function handleApp(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const [allowed, retryAfter] = rateLimiter.check(userId!);
+  if (!allowed) {
+    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    return;
+  }
+
+  const shortUrl = WEB_APP_SHORT_URL;
+  const url = WEB_URL;
+  const threadId = ctx.message?.message_thread_id;
+
+  if (shortUrl) {
+    await ctx.reply(`Open the Mini App:\n${shortUrl}`, {
+      message_thread_id: threadId,
+      link_preview_options: { is_disabled: true },
+    });
+    return;
+  }
+
+  if (ctx.chat?.type === "private") {
+    await ctx.reply("Open the Mini App:", {
+      reply_markup: new InlineKeyboard().webApp("Open", url),
+    });
+    return;
+  }
+
+  await ctx.reply(
+    `Mini App: ${url}\n(Open inside a private chat with the bot for the tap-to-launch button.)`,
+    {
+      message_thread_id: threadId,
+      link_preview_options: { is_disabled: true },
+    },
+  );
 }

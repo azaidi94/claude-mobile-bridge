@@ -44,6 +44,7 @@ import {
   handleUsage,
   handleExecute,
   handleSettings,
+  handleApp,
   handleText,
   handleVoice,
   handlePhoto,
@@ -222,6 +223,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("pwd", handlePwd);
   bot.command("cd", handleCd);
   bot.command("ls", handleLs);
+  bot.command("app", handleApp);
   bot.command("usage", handleUsage);
   bot.command("execute", handleExecute);
   bot.command("settings", handleSettings);

@@ -57,6 +57,8 @@ mock.module("../config", () => ({
   RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
+  WEB_URL: "http://localhost:3000",
+  WEB_APP_SHORT_URL: "",
 }));
 
 mock.module("../settings", () => ({
@@ -2266,5 +2268,41 @@ describe("killSession: multi-topic", () => {
           s.claudePid === undefined),
     );
     expect(touchesA).toBe(false);
+  });
+});
+
+// ============== /app Command Tests ==============
+
+describe("commands: /app", () => {
+  beforeEach(resetMocks);
+
+  test("replies with URL as plain text in a group chat", async () => {
+    const { handleApp } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456, chatType: "group" });
+
+    await handleApp(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("http://localhost:3000");
+    expect(ctx._replies[0]?.options?.reply_markup).toBeUndefined();
+  });
+
+  test("replies with inline webApp button in private chat", async () => {
+    const { handleApp } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456, chatType: "private" });
+
+    await handleApp(ctx as any);
+
+    expect(ctx._replies[0]?.text).toBe("Open the Mini App:");
+    const markup = ctx._replies[0]?.options?.reply_markup;
+    expect(markup).toBeDefined();
+  });
+
+  test("returns Unauthorized for non-allowed user", async () => {
+    const { handleApp } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999 });
+
+    await handleApp(ctx as any);
+
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 });

@@ -44,6 +44,8 @@ mock.module("../config", () => ({
   RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
+  WEB_URL: "http://localhost:3000",
+  WEB_APP_SHORT_URL: "",
 }));
 
 mock.module("../settings", () => ({
