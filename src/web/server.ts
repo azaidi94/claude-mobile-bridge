@@ -3,6 +3,7 @@ import { serveStatic } from "hono/bun";
 import { createSessionsRouter } from "./routes/sessions";
 import { createAgentsRouter } from "./routes/agents";
 import { createSystemRouter } from "./routes/system";
+import { createTasksRouter } from "./routes/tasks";
 import { WEB_PORT } from "../config";
 import { info } from "../logger";
 import { resolve, dirname } from "path";
@@ -17,6 +18,7 @@ export function startWebServer(): void {
   app.route("/api/sessions", createSessionsRouter());
   app.route("/api/agents", createAgentsRouter());
   app.route("/api/system", createSystemRouter());
+  app.route("/api/tasks", createTasksRouter());
 
   app.use("/*", serveStatic({ root: WEB_DIST }));
 
