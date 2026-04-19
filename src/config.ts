@@ -14,6 +14,15 @@ import { debug, warn, error as logError } from "./logger";
 
 const HOME = homedir();
 
+// ============== Claude Data Directory ==============
+
+/**
+ * Root Claude Code data dir. Tasks are under `{CLAUDE_DIR}/tasks/{session-uuid}/`,
+ * session JSONLs under `{CLAUDE_DIR}/projects/{encodedDir}/{uuid}.jsonl`.
+ * Override via env `CLAUDE_DIR` (primarily for tests).
+ */
+export const CLAUDE_DIR = process.env.CLAUDE_DIR || `${HOME}/.claude`;
+
 // Ensure necessary paths are available for Claude's bash commands
 // LaunchAgents don't inherit the full shell environment
 const EXTRA_PATHS = [
