@@ -169,39 +169,59 @@ function deriveFilenameFromMarkdown(text: string): string {
   return "response.pdf";
 }
 
+function sendHtmlWithPlainFallback(
+  botApi: Api,
+  chatId: number,
+  html: string,
+  plain: string,
+  threadId: number | undefined,
+  label: string,
+): void {
+  botApi
+    .sendMessage(chatId, html, {
+      parse_mode: "HTML",
+      message_thread_id: threadId,
+    })
+    .catch((err) => {
+      warn(`relay sendTextReply ${label}(HTML) failed: ${err}`, {
+        chatId,
+        threadId,
+      });
+      botApi
+        .sendMessage(chatId, plain, { message_thread_id: threadId })
+        .catch((err2) =>
+          warn(`relay sendTextReply ${label}(plain) failed: ${err2}`, {
+            chatId,
+            threadId,
+          }),
+        );
+    });
+}
+
 export function sendTextReply(
   botApi: Api,
   chatId: number,
   text: string,
   threadId?: number,
 ): void {
+  if (!text || !text.trim()) {
+    warn("relay: sendTextReply called with empty text", { chatId, threadId });
+    return;
+  }
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    botApi
-      .sendMessage(chatId, formatted, {
-        parse_mode: "HTML",
-        message_thread_id: threadId,
-      })
-      .catch(() => {
-        botApi
-          .sendMessage(chatId, text, { message_thread_id: threadId })
-          .catch(() => {});
-      });
-  } else {
-    const chunks = splitMessage(text);
-    for (const chunk of chunks) {
-      const chunkHtml = convertMarkdownToHtml(chunk);
-      botApi
-        .sendMessage(chatId, chunkHtml, {
-          parse_mode: "HTML",
-          message_thread_id: threadId,
-        })
-        .catch(() => {
-          botApi
-            .sendMessage(chatId, chunk, { message_thread_id: threadId })
-            .catch(() => {});
-        });
-    }
+    sendHtmlWithPlainFallback(botApi, chatId, formatted, text, threadId, "");
+    return;
+  }
+  for (const chunk of splitMessage(text)) {
+    sendHtmlWithPlainFallback(
+      botApi,
+      chatId,
+      convertMarkdownToHtml(chunk),
+      chunk,
+      threadId,
+      "chunk ",
+    );
   }
 }
 

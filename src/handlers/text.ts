@@ -379,6 +379,11 @@ export async function handleText(ctx: Context): Promise<void> {
   // 2. Check for interrupt prefix
   message = await checkInterrupt(message);
   if (!message.trim()) {
+    await ctx
+      .reply("✖ Empty message after interrupt — nothing to send.", {
+        message_thread_id: threadId,
+      })
+      .catch(() => {});
     return;
   }
 

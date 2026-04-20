@@ -232,12 +232,24 @@ export async function sendWatchRelay(
   });
   if (!client) return false;
 
-  client.sendMessage({
+  const sent = client.sendMessage({
     chat_id: String(chatId),
     user: username,
     text,
     ...(imagePath ? { image_path: imagePath } : {}),
   });
+  if (!sent) {
+    warn("watch: relay send failed", {
+      opId,
+      chatId,
+      threadId,
+      sessionName: state.sessionName,
+      sessionId: state.sessionId,
+      sessionDir: state.sessionDir,
+      durationMs: elapsedMs(startedAt),
+    });
+    return false;
+  }
   info("watch: relay queued", {
     opId,
     chatId,

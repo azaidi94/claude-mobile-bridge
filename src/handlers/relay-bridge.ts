@@ -89,12 +89,24 @@ export async function sendViaRelay(
     }
   }
 
-  client.sendMessage({
+  const sent = client.sendMessage({
     chat_id: String(chatId),
     user: username,
     text: message,
     ...(imagePath ? { image_path: imagePath } : {}),
   });
+  if (!sent) {
+    warn("relay: send failed, not connected", {
+      opId,
+      chatId,
+      sessionDir,
+      sessionId,
+    });
+    tailer?.stop();
+    cleanupCallbacks();
+    typing.stop();
+    return "failed";
+  }
 
   let result: RelayResult = "delivered";
   try {
