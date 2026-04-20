@@ -1422,6 +1422,24 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   const mode = args[0]?.toLowerCase();
   const sweepLimitArg = args[1] ? parseInt(args[1], 10) : NaN;
 
+  // Log-scan only catches topics unknown to the store, so reconcile first
+  // to prune mappings whose session died mid-run.
+  let reconciled = 0;
+  if (_topicManager && mode !== "sweep") {
+    const before = store.topics.length;
+    try {
+      const liveSessions = getSessions();
+      await _topicManager.reconcile(
+        liveSessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+      );
+      reconciled = Math.max(0, before - store.topics.length);
+    } catch (err) {
+      warn(`cleanzombie: reconcile failed: ${err}`);
+    }
+  }
+  const pruneNote =
+    reconciled > 0 ? `Pruned ${reconciled} orphan mapping(s).` : "";
+
   const logPath = process.env.CLEANZOMBIE_LOG_PATH || "/tmp/claude-bot.log";
   let logContent = "";
   try {
@@ -1462,14 +1480,18 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
       .filter((id) => !deleted.has(id) && !live.has(id))
       .sort((a, b) => a - b);
     if (candidates.length === 0) {
+      const prefix = pruneNote ? `🧹 ${pruneNote}\n` : "";
       await ctx.reply(
-        `✅ No zombies found via log scan. ${live.size} live topic(s).\n` +
+        `${prefix}✅ No zombies found via log scan. ${store.topics.length} live topic(s).\n` +
           `Try <code>/cleanzombie sweep</code> to probe by id range.`,
         { parse_mode: "HTML" },
       );
       return;
     }
-    await ctx.reply(`🧹 Cleaning ${candidates.length} zombie topic(s)…`);
+    const prefix = pruneNote ? `${pruneNote} ` : "";
+    await ctx.reply(
+      `🧹 ${prefix}Cleaning ${candidates.length} zombie topic(s)…`,
+    );
   }
 
   let removed = 0;
@@ -1508,6 +1530,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   }
 
   let reply = `🧹 Deleted ${removed} topic(s).`;
+  if (pruneNote) reply += ` ${pruneNote}`;
   if (failures.length) {
     reply += `\n⚠️ ${failures.length} error(s), first few: ${failures
       .slice(0, 5)

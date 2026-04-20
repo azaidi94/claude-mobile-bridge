@@ -3,17 +3,31 @@
  * In-memory cache with sync reads, async writes.
  */
 
-import { readFile, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { readFile, writeFile, mkdir } from "fs/promises";
+import { homedir, tmpdir } from "os";
+import { dirname, join } from "path";
 import type { TopicMapping, TopicStore } from "../types";
-import { debug, warn } from "../logger";
+import { debug, info, warn } from "../logger";
 
 function storePath(): string {
   return (
     process.env.CLAUDE_TELEGRAM_TOPICS_FILE ??
-    join(tmpdir(), "claude-telegram-topics.json")
+    join(homedir(), ".claude-mobile-bridge", "topics.json")
   );
+}
+
+// Previous default location. Kept for one-time migration on load —
+// tmpdir is pruned by macOS, which silently orphans Telegram topics.
+function legacyStorePath(): string {
+  return join(tmpdir(), "claude-telegram-topics.json");
+}
+
+let dirEnsured = false;
+
+async function ensureStoreDir(path: string): Promise<void> {
+  if (dirEnsured) return;
+  await mkdir(dirname(path), { recursive: true });
+  dirEnsured = true;
 }
 
 let store: TopicStore = { chatId: 0, topics: [] };
@@ -29,21 +43,44 @@ export function setChatId(chatId: number): void {
 }
 
 export async function loadTopicStore(): Promise<void> {
+  const primary = storePath();
   try {
-    const data = await readFile(storePath(), "utf-8");
+    const data = await readFile(primary, "utf-8");
     const parsed = JSON.parse(data) as TopicStore;
     if (parsed && Array.isArray(parsed.topics)) {
       store = parsed;
       debug(`topic-store: loaded ${store.topics.length} mapping(s)`);
+      return;
     }
   } catch {
-    // No file yet — start empty
+    // Fall through to legacy check
+  }
+
+  // Migrate from legacy tmpdir location (only when the user hasn't set an
+  // explicit override — otherwise they're pointing at something deliberate).
+  if (!process.env.CLAUDE_TELEGRAM_TOPICS_FILE) {
+    const legacy = legacyStorePath();
+    try {
+      const data = await readFile(legacy, "utf-8");
+      const parsed = JSON.parse(data) as TopicStore;
+      if (parsed && Array.isArray(parsed.topics)) {
+        store = parsed;
+        info(
+          `topic-store: migrated ${store.topics.length} mapping(s) from ${legacy} → ${primary}`,
+        );
+        await saveTopicStore();
+      }
+    } catch {
+      // No legacy file either — start empty
+    }
   }
 }
 
 export async function saveTopicStore(): Promise<void> {
+  const path = storePath();
   try {
-    await writeFile(storePath(), JSON.stringify(store, null, 2));
+    await ensureStoreDir(path);
+    await writeFile(path, JSON.stringify(store, null, 2));
     debug(`topic-store: saved ${store.topics.length} mapping(s)`);
   } catch (err) {
     warn(`topic-store: save failed: ${err}`);
@@ -92,5 +129,10 @@ export function updateTopicMapping(
 }
 
 export function clearTopicStore(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  dirEnsured = false;
   store = { chatId: 0, topics: [] };
 }
