@@ -169,6 +169,35 @@ function deriveFilenameFromMarkdown(text: string): string {
   return "response.pdf";
 }
 
+function sendHtmlWithPlainFallback(
+  botApi: Api,
+  chatId: number,
+  html: string,
+  plain: string,
+  threadId: number | undefined,
+  label: string,
+): void {
+  botApi
+    .sendMessage(chatId, html, {
+      parse_mode: "HTML",
+      message_thread_id: threadId,
+    })
+    .catch((err) => {
+      warn(`relay sendTextReply ${label}(HTML) failed: ${err}`, {
+        chatId,
+        threadId,
+      });
+      botApi
+        .sendMessage(chatId, plain, { message_thread_id: threadId })
+        .catch((err2) =>
+          warn(`relay sendTextReply ${label}(plain) failed: ${err2}`, {
+            chatId,
+            threadId,
+          }),
+        );
+    });
+}
+
 export function sendTextReply(
   botApi: Api,
   chatId: number,
@@ -181,46 +210,18 @@ export function sendTextReply(
   }
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    botApi
-      .sendMessage(chatId, formatted, {
-        parse_mode: "HTML",
-        message_thread_id: threadId,
-      })
-      .catch((err) => {
-        warn(`relay sendTextReply (HTML) failed: ${err}`, { chatId, threadId });
-        botApi
-          .sendMessage(chatId, text, { message_thread_id: threadId })
-          .catch((err2) =>
-            warn(`relay sendTextReply (plain) failed: ${err2}`, {
-              chatId,
-              threadId,
-            }),
-          );
-      });
-  } else {
-    const chunks = splitMessage(text);
-    for (const chunk of chunks) {
-      const chunkHtml = convertMarkdownToHtml(chunk);
-      botApi
-        .sendMessage(chatId, chunkHtml, {
-          parse_mode: "HTML",
-          message_thread_id: threadId,
-        })
-        .catch((err) => {
-          warn(`relay sendTextReply chunk (HTML) failed: ${err}`, {
-            chatId,
-            threadId,
-          });
-          botApi
-            .sendMessage(chatId, chunk, { message_thread_id: threadId })
-            .catch((err2) =>
-              warn(`relay sendTextReply chunk (plain) failed: ${err2}`, {
-                chatId,
-                threadId,
-              }),
-            );
-        });
-    }
+    sendHtmlWithPlainFallback(botApi, chatId, formatted, text, threadId, "");
+    return;
+  }
+  for (const chunk of splitMessage(text)) {
+    sendHtmlWithPlainFallback(
+      botApi,
+      chatId,
+      convertMarkdownToHtml(chunk),
+      chunk,
+      threadId,
+      "chunk ",
+    );
   }
 }
 

@@ -65,8 +65,30 @@ export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
   let forumGroupDetected = false;
 
-  // Stall detection — warn if a handler runs longer than 30s (blocks the
-  // sequentialize queue for the same chat thread). Helps surface silent stalls.
+  // Sequentialize non-command messages per chat thread (prevents race conditions)
+  bot.use(
+    sequentialize((ctx) => {
+      // Commands bypass sequentialization
+      if (ctx.message?.text?.startsWith("/")) {
+        return undefined;
+      }
+      // Messages with ! prefix bypass queue (interrupt)
+      if (ctx.message?.text?.startsWith("!")) {
+        return undefined;
+      }
+      // Callback queries not sequentialized
+      if (ctx.callbackQuery) {
+        return undefined;
+      }
+      const threadId = ctx.message?.message_thread_id;
+      return threadId
+        ? `${ctx.chat?.id}:${threadId}`
+        : ctx.chat?.id?.toString();
+    }),
+  );
+
+  // Stall detection — warn if a handler runs longer than 30s. Placed after
+  // sequentialize so the timer measures handler execution only, not queue wait.
   bot.use(async (ctx, next) => {
     const startedAt = Date.now();
     const chatId = ctx.chat?.id;
@@ -96,28 +118,6 @@ export function createBot(options: BotOptions): Bot {
       clearTimeout(stallTimer);
     }
   });
-
-  // Sequentialize non-command messages per chat thread (prevents race conditions)
-  bot.use(
-    sequentialize((ctx) => {
-      // Commands bypass sequentialization
-      if (ctx.message?.text?.startsWith("/")) {
-        return undefined;
-      }
-      // Messages with ! prefix bypass queue (interrupt)
-      if (ctx.message?.text?.startsWith("!")) {
-        return undefined;
-      }
-      // Callback queries not sequentialized
-      if (ctx.callbackQuery) {
-        return undefined;
-      }
-      const threadId = ctx.message?.message_thread_id;
-      return threadId
-        ? `${ctx.chat?.id}:${threadId}`
-        : ctx.chat?.id?.toString();
-    }),
-  );
 
   // Register chat IDs of allowed users for proactive notifications
   bot.use(async (ctx, next) => {
