@@ -116,8 +116,8 @@ export class RelayClient {
     user: string;
     text: string;
     image_path?: string;
-  }): void {
-    this.send({ type: "message", ...params });
+  }): boolean {
+    return this.send({ type: "message", ...params });
   }
 
   onReply(cb: ReplyCallback, chatId?: string): void {
@@ -152,12 +152,18 @@ export class RelayClient {
     this.disconnectCallbacks = this.disconnectCallbacks.filter((c) => c !== cb);
   }
 
-  private send(msg: Record<string, unknown>): void {
+  private send(msg: Record<string, unknown>): boolean {
     if (!this.socket || this.socket.destroyed || !this._isConnected) {
-      warn("relay: cannot send, not connected");
-      return;
+      warn("relay: cannot send, not connected", { type: msg.type });
+      return false;
     }
-    this.socket.write(JSON.stringify(msg) + "\n");
+    try {
+      this.socket.write(JSON.stringify(msg) + "\n");
+      return true;
+    } catch (err) {
+      warn("relay: socket write failed", err, { type: msg.type });
+      return false;
+    }
   }
 
   private handleMessage(msg: { type: string; [key: string]: unknown }): void {
@@ -165,10 +171,18 @@ export class RelayClient {
 
     switch (msg.type) {
       case "reply": {
+        const text = String(msg.text || "");
+        const files = (msg.files as string[]) ?? [];
+        if (!text.trim() && files.length === 0) {
+          warn("relay: dropping empty-text reply with no files", {
+            chatId: msgChatId,
+          });
+          break;
+        }
         const reply: RelayReply = {
           chat_id: msgChatId,
-          text: String(msg.text || ""),
-          files: (msg.files as string[]) ?? [],
+          text,
+          files,
           send_as_pdf: Boolean(msg.send_as_pdf),
           pdf_filename: msg.pdf_filename ? String(msg.pdf_filename) : undefined,
         };
@@ -179,10 +193,18 @@ export class RelayClient {
       }
 
       case "edit_message": {
+        const text = String(msg.text || "");
+        if (!text.trim()) {
+          warn("relay: dropping empty-text edit_message", {
+            chatId: msgChatId,
+            messageId: msg.message_id,
+          });
+          break;
+        }
         const edit: RelayEditMessage = {
           chat_id: msgChatId,
           message_id: String(msg.message_id || ""),
-          text: String(msg.text || ""),
+          text,
         };
         for (const { cb, chatId } of this.editCallbacks) {
           if (!chatId || chatId === msgChatId) cb(edit);

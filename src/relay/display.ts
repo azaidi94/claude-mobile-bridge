@@ -175,6 +175,10 @@ export function sendTextReply(
   text: string,
   threadId?: number,
 ): void {
+  if (!text || !text.trim()) {
+    warn("relay: sendTextReply called with empty text", { chatId, threadId });
+    return;
+  }
   const formatted = convertMarkdownToHtml(text);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
     botApi
@@ -182,10 +186,16 @@ export function sendTextReply(
         parse_mode: "HTML",
         message_thread_id: threadId,
       })
-      .catch(() => {
+      .catch((err) => {
+        warn(`relay sendTextReply (HTML) failed: ${err}`, { chatId, threadId });
         botApi
           .sendMessage(chatId, text, { message_thread_id: threadId })
-          .catch(() => {});
+          .catch((err2) =>
+            warn(`relay sendTextReply (plain) failed: ${err2}`, {
+              chatId,
+              threadId,
+            }),
+          );
       });
   } else {
     const chunks = splitMessage(text);
@@ -196,10 +206,19 @@ export function sendTextReply(
           parse_mode: "HTML",
           message_thread_id: threadId,
         })
-        .catch(() => {
+        .catch((err) => {
+          warn(`relay sendTextReply chunk (HTML) failed: ${err}`, {
+            chatId,
+            threadId,
+          });
           botApi
             .sendMessage(chatId, chunk, { message_thread_id: threadId })
-            .catch(() => {});
+            .catch((err2) =>
+              warn(`relay sendTextReply chunk (plain) failed: ${err2}`, {
+                chatId,
+                threadId,
+              }),
+            );
         });
     }
   }

@@ -195,18 +195,16 @@ export class SessionTailer {
 
           if (block.type === "tool_use") {
             const input = (block.input as Record<string, unknown>) || {};
-            // Detect channel-relay reply/edit/react → emit as relay_reply
+            // Detect channel-relay reply/edit/react → emit as relay_reply.
+            // TCP path owns Telegram delivery; never render these as tool-progress.
             if (
               block.name === "mcp__channel-relay__reply" ||
               block.name === "mcp__channel-relay__edit_message"
             ) {
               const text = String(input.text || "");
-              if (text) {
-                events.push({ type: "relay_reply", content: text });
-                continue;
-              }
+              if (text) events.push({ type: "relay_reply", content: text });
+              continue;
             }
-            // Skip relay react tool (just an emoji, not worth displaying)
             if (block.name === "mcp__channel-relay__react") continue;
 
             const toolDisplay = formatToolStatus(block.name, input);

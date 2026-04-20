@@ -18,7 +18,7 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
-import { error as logError, info } from "./logger";
+import { error as logError, info, warn } from "./logger";
 import {
   handleStart,
   handleHelp,
@@ -64,6 +64,38 @@ export interface BotOptions {
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
   let forumGroupDetected = false;
+
+  // Stall detection — warn if a handler runs longer than 30s (blocks the
+  // sequentialize queue for the same chat thread). Helps surface silent stalls.
+  bot.use(async (ctx, next) => {
+    const startedAt = Date.now();
+    const chatId = ctx.chat?.id;
+    const threadId = ctx.message?.message_thread_id;
+    const kind = ctx.callbackQuery
+      ? "callback"
+      : ctx.message?.text
+        ? "text"
+        : ctx.message?.voice
+          ? "voice"
+          : ctx.message?.photo
+            ? "photo"
+            : ctx.message?.document
+              ? "document"
+              : "other";
+    const stallTimer = setTimeout(() => {
+      warn("bot: handler still running after 30s", {
+        chatId,
+        threadId,
+        kind,
+        elapsedMs: Date.now() - startedAt,
+      });
+    }, 30_000);
+    try {
+      await next();
+    } finally {
+      clearTimeout(stallTimer);
+    }
+  });
 
   // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
@@ -145,17 +177,22 @@ export function createBot(options: BotOptions): Bot {
     const groupMode = setting ?? forumGroupDetected;
 
     if (groupMode && ctx.chat?.type === "private") {
-      if (ctx.message?.text) {
-        await ctx.reply("ℹ️ Bot is running in group mode. Use the group chat.");
+      if (ctx.message) {
+        await ctx
+          .reply("ℹ️ Bot is running in group mode. Use the group chat.")
+          .catch(() => {});
       }
       return;
     }
     if (setting === false && ctx.chat?.type === "supergroup") {
-      if (ctx.message?.text) {
-        await ctx.reply(
-          "ℹ️ Bot is running in private mode. Use the DM.\n" +
-            "Switch with /groupmode on in the DM.",
-        );
+      if (ctx.message) {
+        await ctx
+          .reply(
+            "ℹ️ Bot is running in private mode. Use the DM.\n" +
+              "Switch with /groupmode on in the DM.",
+            { message_thread_id: ctx.message.message_thread_id },
+          )
+          .catch(() => {});
       }
       return;
     }

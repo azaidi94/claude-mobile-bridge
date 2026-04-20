@@ -66,9 +66,29 @@ function getParentClaudeSessionId(ppid = process.ppid): string | undefined {
 
 let connectedClient: Socket | null = null;
 
-function sendToBot(msg: Record<string, unknown>): void {
-  if (!connectedClient || connectedClient.destroyed) return;
-  connectedClient.write(JSON.stringify(msg) + "\n");
+function sendToBot(msg: Record<string, unknown>): boolean {
+  if (!connectedClient || connectedClient.destroyed) {
+    process.stderr.write(
+      `channel-relay: sendToBot failed — bot not connected (type=${msg.type})\n`,
+    );
+    return false;
+  }
+  try {
+    connectedClient.write(JSON.stringify(msg) + "\n");
+    return true;
+  } catch (err) {
+    process.stderr.write(
+      `channel-relay: sendToBot write failed: ${err} (type=${msg.type})\n`,
+    );
+    return false;
+  }
+}
+
+function errorResult(text: string) {
+  return {
+    content: [{ type: "text" as const, text }],
+    isError: true,
+  };
 }
 
 const tcpServer = createServer((socket) => {
@@ -147,26 +167,31 @@ function handleBotMessage(msg: {
   text?: string;
   image_path?: string;
 }): void {
-  if (msg.type === "message" && msg.text) {
-    pruneExpiredRequests();
-    const requestId = generateRequestId();
-    const chatId = msg.chat_id || "";
-    validRequestIds.set(requestId, Date.now());
-
-    mcp.notification({
-      method: "notifications/claude/channel",
-      params: {
-        content: msg.text,
-        meta: {
-          chat_id: chatId,
-          request_id: requestId,
-          user: msg.user || "telegram",
-          ts: new Date().toISOString(),
-          ...(msg.image_path ? { image_path: msg.image_path } : {}),
-        },
-      },
-    });
+  if (msg.type !== "message") return;
+  if (!msg.text) {
+    process.stderr.write(
+      `channel-relay: dropped inbound message with empty text (chat_id=${msg.chat_id || "?"})\n`,
+    );
+    return;
   }
+  pruneExpiredRequests();
+  const requestId = generateRequestId();
+  const chatId = msg.chat_id || "";
+  validRequestIds.set(requestId, Date.now());
+
+  mcp.notification({
+    method: "notifications/claude/channel",
+    params: {
+      content: msg.text,
+      meta: {
+        chat_id: chatId,
+        request_id: requestId,
+        user: msg.user || "telegram",
+        ts: new Date().toISOString(),
+        ...(msg.image_path ? { image_path: msg.image_path } : {}),
+      },
+    },
+  });
 }
 
 // ── MCP server ─────────────────────────────────────────────────────────
@@ -273,19 +298,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       // Validate request_id — prevents reply tool being used for terminal input
       if (!validRequestIds.has(request_id)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: "REJECTED: invalid request_id. This tool is only for responding to <channel> messages. For terminal input, respond normally as text output.",
-            },
-          ],
-          isError: true,
-        };
+        return errorResult(
+          "REJECTED: invalid request_id. This tool is only for responding to <channel> messages. For terminal input, respond normally as text output.",
+        );
       }
+
+      // Reject empty-text replies unless files are attached — prevents silent
+      // "🔧 channel-relay: reply" placeholder and other empty-send bugs.
+      if (!text.trim() && files.length === 0) {
+        return errorResult(
+          "REJECTED: reply text is empty. Provide a non-empty text field (or attach files). Do not call the reply tool with empty text.",
+        );
+      }
+
       validRequestIds.delete(request_id);
 
-      sendToBot({
+      const sent = sendToBot({
         type: "reply",
         chat_id,
         text,
@@ -293,6 +321,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         send_as_pdf,
         pdf_filename,
       });
+
+      if (!sent) {
+        return errorResult(
+          `FAILED: reply not delivered — bot connection unavailable (chat_id=${chat_id}). The message was NOT sent to Telegram.`,
+        );
+      }
 
       return {
         content: [{ type: "text" as const, text: `Sent reply to ${chat_id}` }],
@@ -304,7 +338,23 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const message_id = String(args.message_id || "");
       const text = String(args.text || "");
 
-      sendToBot({ type: "edit_message", chat_id, message_id, text });
+      if (!text.trim()) {
+        return errorResult(
+          "REJECTED: edit_message text is empty. Provide non-empty replacement text.",
+        );
+      }
+
+      const sent = sendToBot({
+        type: "edit_message",
+        chat_id,
+        message_id,
+        text,
+      });
+      if (!sent) {
+        return errorResult(
+          `FAILED: edit not delivered — bot connection unavailable (message_id=${message_id}).`,
+        );
+      }
 
       return {
         content: [
@@ -318,7 +368,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const message_id = String(args.message_id || "");
       const emoji = String(args.emoji || "");
 
-      sendToBot({ type: "react", chat_id, message_id, emoji });
+      if (!emoji) {
+        return errorResult("REJECTED: react emoji is empty.");
+      }
+
+      const sent = sendToBot({ type: "react", chat_id, message_id, emoji });
+      if (!sent) {
+        return errorResult(
+          `FAILED: react not delivered — bot connection unavailable (message_id=${message_id}).`,
+        );
+      }
 
       return {
         content: [
