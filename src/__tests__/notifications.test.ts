@@ -20,6 +20,7 @@ import {
   getChatIds,
   createNotificationHandler,
   suppressDirNotifications,
+  setSessionCleanupCallback,
 } from "../sessions/notifications";
 
 const TEST_CHAT_ID = 999_888_777;
@@ -94,6 +95,23 @@ describe("notifications: suppressDirNotifications", () => {
     await Bun.sleep(FLAP_BUFFER_MS + 200);
 
     expect(broadcastsContaining(sendMessage, "kill-remove").length).toBe(0);
+  });
+
+  test("suppressed removed still fires cleanup callback so orphan watches clear", async () => {
+    const { api } = makeFakeApi();
+    const handler = createNotificationHandler(api);
+    const dir = "/tmp/kill-cleanup-dir";
+    const cleaned: string[] = [];
+
+    setSessionCleanupCallback((name) => cleaned.push(name));
+    try {
+      suppressDirNotifications(dir);
+      handler({ added: [], removed: [{ name: "kill-cleanup", dir }] });
+      // Cleanup fires synchronously on the suppressed branch, no flap wait.
+      expect(cleaned).toEqual(["kill-cleanup"]);
+    } finally {
+      setSessionCleanupCallback(() => {});
+    }
   });
 
   test("suppression cancels an already-pending notification", async () => {

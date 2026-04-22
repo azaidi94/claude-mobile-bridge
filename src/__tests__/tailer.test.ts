@@ -232,6 +232,31 @@ describe("tailer: parseLine", () => {
     const events = tailer.parseLine(line);
     expect(events).toHaveLength(0);
   });
+
+  test("emits turn_boundary for channel-relay user message", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content:
+          '<channel source="channel-relay" chat_id="-1" request_id="r1" user="u" ts="2026-04-22T15:00:00Z">\nhello\n</channel>',
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("turn_boundary");
+    expect(events[0]!.content).toBe("");
+  });
+
+  test("does not emit turn_boundary for empty user content", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: "" },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(0);
+  });
 });
 
 // ============== findSessionJsonlPath ==============

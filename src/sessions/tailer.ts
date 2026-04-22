@@ -14,13 +14,15 @@ import { PROJECTS_DIR } from "./watcher";
 
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
+const CHANNEL_RELAY_TAG = '<channel source="channel-relay"';
 
 export type TailEventType =
   | "text"
   | "tool"
   | "thinking"
   | "user"
-  | "relay_reply";
+  | "relay_reply"
+  | "turn_boundary";
 
 export interface TailEvent {
   type: TailEventType;
@@ -158,8 +160,15 @@ export class SessionTailer {
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         const text = this.extractUserText(entry.message?.content);
-        if (!text || text.includes('<channel source="channel-relay"'))
-          return [];
+        if (!text) return [];
+
+        // Channel-relay-injected messages mark a new turn. Emit a boundary
+        // event so the display pipeline can reset currentTextMsg — otherwise
+        // if Claude skips the reply tool and just outputs text, the next
+        // turn's text streams edit the previous turn's Telegram message.
+        if (text.includes(CHANNEL_RELAY_TAG)) {
+          return [{ type: "turn_boundary", content: "" }];
+        }
 
         // Local command output (e.g. /model, /cost) — strip tags and ANSI codes
         const cmdMatch = text.match(
@@ -341,7 +350,7 @@ export async function getLastSessionMessage(
                 : null;
           if (
             text &&
-            !text.includes('<channel source="channel-relay"') &&
+            !text.includes(CHANNEL_RELAY_TAG) &&
             !text.includes("<local-command-stdout>")
           ) {
             lastUser = text.trim();

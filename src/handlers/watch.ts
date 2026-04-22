@@ -520,6 +520,19 @@ export async function startAutoWatch(
     return false;
   }
 
+  // Final liveness check: session may have been killed while we awaited the
+  // id. Without this, a kill callback racing with startup reconcile can land
+  // an orphan watch in the map — its sessionDir then mutes drift detection
+  // for any sibling watch via the "sole owner" guard.
+  if (!getSession(sessionName)) {
+    info("auto-watch: session disappeared during setup, aborting", {
+      chatId,
+      threadId,
+      sessionName,
+    });
+    return false;
+  }
+
   const jsonlPath =
     (await findSessionJsonlPath(sessionInfo.id)) ??
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
@@ -705,6 +718,18 @@ export async function startWatchingSession(
 
   if (!sessionInfo?.id) {
     warn("watch: start failed, missing session id", {
+      chatId,
+      threadId,
+      targetName,
+    });
+    return false;
+  }
+
+  // Final liveness check: session may have been killed while we awaited the
+  // id. Skip watch creation so we don't leave an orphan whose sessionDir
+  // mutes drift detection on sibling watches via the "sole owner" guard.
+  if (!getSession(targetName)) {
+    info("watch: session disappeared during setup, aborting", {
       chatId,
       threadId,
       targetName,
@@ -1055,16 +1080,7 @@ export function handleTailEvent(
       if (state.finalReplyReceived !== undefined) {
         state.finalReplyReceived = true;
       }
-
-      if (state.currentToolMsg) {
-        botApi
-          .deleteMessage(chatId, state.currentToolMsg.message_id)
-          .catch(() => {});
-        state.currentToolMsg = null;
-      }
-      if (state.currentTextMsg && !state.segmentDone) {
-        finalizeTextMessage(botApi, state);
-      }
+      resetDisplaySegment(botApi, state);
 
       const ws = state as WatchState;
       if (ws.suppressRelayReplyText) {
@@ -1072,23 +1088,17 @@ export function handleTailEvent(
       } else {
         sendTextReply(botApi, chatId, event.content);
       }
+      break;
+    }
 
-      state.currentTextMsg = null;
-      state.currentTextContent = "";
-      state.segmentDone = true;
+    case "turn_boundary": {
+      // No user-visible output: the user's own Telegram msg is already shown.
+      resetDisplaySegment(botApi, state);
       break;
     }
 
     case "user": {
-      if (state.currentTextMsg && !state.segmentDone) {
-        finalizeTextMessage(botApi, state);
-      }
-      if (state.currentToolMsg) {
-        botApi
-          .deleteMessage(chatId, state.currentToolMsg.message_id)
-          .catch(() => {});
-        state.currentToolMsg = null;
-      }
+      resetDisplaySegment(botApi, state);
 
       const preview =
         event.content.length > 300
@@ -1106,13 +1116,25 @@ export function handleTailEvent(
             .sendMessage(chatId, `🖥 Desktop:\n${preview}`, threadOpts)
             .catch(() => {});
         });
-
-      state.currentTextMsg = null;
-      state.currentTextContent = "";
-      state.segmentDone = true;
       break;
     }
   }
+}
+
+/** Finalize pending text, drop pending tool msg, clear per-segment state. */
+function resetDisplaySegment(botApi: Api, state: TailDisplayState): void {
+  if (state.currentTextMsg && !state.segmentDone) {
+    finalizeTextMessage(botApi, state);
+  }
+  if (state.currentToolMsg) {
+    botApi
+      .deleteMessage(state.chatId, state.currentToolMsg.message_id)
+      .catch(() => {});
+    state.currentToolMsg = null;
+  }
+  state.currentTextMsg = null;
+  state.currentTextContent = "";
+  state.segmentDone = true;
 }
 
 export function finalizeTextMessage(

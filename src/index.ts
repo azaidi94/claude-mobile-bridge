@@ -18,6 +18,7 @@ import {
   updatePinnedStatus,
   createNotificationHandler,
   setSessionOfflineCallback,
+  setSessionCleanupCallback,
   getActiveSession,
   getGitBranch,
   getSessions,
@@ -26,6 +27,7 @@ import {
   notifySessionOffline,
   setTopicManager,
   startAutoWatch,
+  stopWatchByName,
 } from "./handlers";
 import {
   loadTopicStore,
@@ -98,6 +100,11 @@ session.onModeChange = (isPlanMode) => {
 
 // Wire up watch handler's offline callback for resume flow
 setSessionOfflineCallback(notifySessionOffline);
+// Kill-suppressed removals still need to tear down any orphan watch so
+// drift detection isn't muted on the surviving sibling.
+setSessionCleanupCallback((sessionName) => {
+  stopWatchByName(sessionName, undefined, "session-gone");
+});
 
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);

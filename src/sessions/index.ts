@@ -25,6 +25,7 @@ export {
   createNotificationHandler,
   getChatIds,
   setSessionOfflineCallback,
+  setSessionCleanupCallback,
   suppressDirNotifications,
 } from "./notifications";
 

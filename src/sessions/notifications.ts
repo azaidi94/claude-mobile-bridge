@@ -138,6 +138,17 @@ export function setSessionOfflineCallback(
   onSessionOfflineCallback = callback;
 }
 
+// Cleanup-only callback invoked when a session is removed but notifications
+// are suppressed (killed dirs). The offline-message path is skipped but
+// watches still need tearing down or they orphan and block sibling drift.
+let onSessionCleanupCallback: ((sessionName: string) => void) | null = null;
+
+export function setSessionCleanupCallback(
+  callback: (sessionName: string) => void,
+): void {
+  onSessionCleanupCallback = callback;
+}
+
 /**
  * Create the onChange callback for the watcher.
  * Buffers notifications for FLAP_BUFFER_MS to suppress rapid on/off flapping.
@@ -193,6 +204,7 @@ export function createNotificationHandler(
     for (const session of diff.removed) {
       if (suppressedDirs.has(session.dir)) {
         info(`notify: suppressed remove for killed ${session.name}`);
+        onSessionCleanupCallback?.(session.name);
         continue;
       }
       const existing = pending.get(session.dir);
