@@ -1,4 +1,4 @@
-type Tab = "chat" | "sessions" | "status" | "agents";
+type Tab = "chat" | "sessions" | "tasks" | "status" | "agents";
 
 interface BottomNavProps {
   active: Tab;
@@ -8,6 +8,7 @@ interface BottomNavProps {
 const TABS: Array<{ id: Tab; icon: string; label: string }> = [
   { id: "chat", icon: "⌨", label: "Chat" },
   { id: "sessions", icon: "▤", label: "Sessions" },
+  { id: "tasks", icon: "▦", label: "Tasks" },
   { id: "status", icon: "◉", label: "Status" },
   { id: "agents", icon: "◈", label: "Agents" },
 ];

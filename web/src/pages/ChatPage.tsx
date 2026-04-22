@@ -22,7 +22,17 @@ export function ChatPage() {
   useEffect(() => {
     if (!activeId) return;
     unsubRef.current?.();
-    setEvents([]);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const hist = await api.getSessionHistory(activeId);
+        if (!cancelled) setEvents(hist);
+      } catch {
+        if (!cancelled) setEvents([]);
+      }
+    })();
+
     setStreaming(false);
     const unsub = api.streamSession(activeId, (evt) => {
       if (evt.type === "done") {
@@ -33,7 +43,11 @@ export function ChatPage() {
       }
     });
     unsubRef.current = unsub;
-    return unsub;
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [activeId]);
 
   const send = useCallback(async () => {

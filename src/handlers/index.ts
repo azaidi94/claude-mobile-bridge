@@ -23,6 +23,7 @@ export {
   handlePwd,
   handleCd,
   handleLs,
+  handleApp,
   setTopicManager,
   isTopicChat,
 } from "./commands";

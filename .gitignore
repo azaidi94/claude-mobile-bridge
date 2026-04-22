@@ -54,3 +54,5 @@ web/dist/
 web/node_modules/
 .superpowers/
 
+restart.sh
+.env.dev
