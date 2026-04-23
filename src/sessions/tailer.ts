@@ -246,7 +246,11 @@ export class SessionTailer {
               block.name === "mcp__channel-relay__edit_message"
             ) {
               const text = String(input.text || "");
-              if (text) events.push({ type: "relay_reply", content: text });
+              const originChat =
+                typeof input.chat_id === "string" ? input.chat_id : undefined;
+              if (text) {
+                events.push({ type: "relay_reply", content: text, originChat });
+              }
               continue;
             }
             if (block.name === "mcp__channel-relay__react") continue;

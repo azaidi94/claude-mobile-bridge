@@ -317,6 +317,54 @@ describe("tailer: parseLine", () => {
     expect(events[0]).toMatchObject({ type: "user", content: "Fix the bug" });
     expect(events[0]!.originChat).toBeUndefined();
   });
+
+  test("mcp__channel-relay__reply emits relay_reply event with originChat from input.chat_id", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "mcp__channel-relay__reply",
+            input: { request_id: "r1", chat_id: "web", text: "hello back" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "relay_reply",
+      content: "hello back",
+      originChat: "web",
+    });
+  });
+
+  test("mcp__channel-relay__edit_message also carries originChat", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "mcp__channel-relay__edit_message",
+            input: {
+              chat_id: "-1003968796171",
+              message_id: 42,
+              text: "edited",
+            },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "relay_reply",
+      content: "edited",
+      originChat: "-1003968796171",
+    });
+  });
 });
 
 // ============== findSessionJsonlPath ==============
