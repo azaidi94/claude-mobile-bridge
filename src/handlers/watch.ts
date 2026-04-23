@@ -37,6 +37,52 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
+import { globalEventBus, type SseEvent } from "../web/sse";
+
+// ============== SSE Bridge ==============
+
+interface SseBus {
+  emit(sessionId: string, event: SseEvent): void;
+}
+
+/**
+ * Map a TailEvent to an SseEvent and emit it to the session's SSE bus.
+ * Skips own-origin events (the web client optimistically added its own send;
+ * echoing via SSE would duplicate). Web-specific drop: turn_boundary has no
+ * display-reset semantics in the web renderer.
+ */
+export function bridgeTailToSse(
+  bus: SseBus,
+  sessionId: string,
+  event: TailEvent,
+): void {
+  if (event.originChat === "web") return;
+
+  switch (event.type) {
+    case "user":
+      bus.emit(sessionId, { type: "text", content: `› ${event.content}` });
+      return;
+    case "text":
+      bus.emit(sessionId, { type: "text", content: event.content });
+      return;
+    case "tool":
+      bus.emit(sessionId, {
+        type: "tool",
+        content: event.content,
+        toolName: event.toolName,
+        toolInput: event.toolInput,
+      });
+      return;
+    case "thinking":
+      bus.emit(sessionId, { type: "thinking", content: event.content });
+      return;
+    case "relay_reply":
+      bus.emit(sessionId, { type: "text", content: event.content });
+      return;
+    case "turn_boundary":
+      return;
+  }
+}
 
 // ============== Shared Tail Display State ==============
 
@@ -411,9 +457,10 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       return;
     }
     watchState.tailer?.stop();
-    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
-      handleTailEvent(botApi, watchState, event, watchState.threadId),
-    );
+    const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
+      handleTailEvent(botApi, watchState, event, watchState.threadId);
+      bridgeTailToSse(globalEventBus, watchState.sessionId, event);
+    });
     watchState.tailer = newTailer;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
@@ -539,6 +586,7 @@ export async function startAutoWatch(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
   const watchState: WatchState = buildWatchState({
     sessionName,
@@ -746,6 +794,7 @@ export async function startWatchingSession(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
   // Spawn-initiated watches: the seeded sessionId is almost certainly
   // the watcher's stale-JSONL fallback for this dir. When the real id
