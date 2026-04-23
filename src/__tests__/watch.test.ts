@@ -405,6 +405,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
 
   test("relay_reply with originChat === ownChat sends nothing (TCP dedup preserved)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -418,6 +419,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
 
   test("relay_reply with originChat === undefined sends nothing (dedup for own-path)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -441,5 +443,43 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
     );
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("from web");
+  });
+
+  test("relay_reply own-chat WITHOUT suppressRelayReplyText falls back to tailer send", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    // flag is NOT set → TCP hasn't delivered → tailer must send
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "relay_reply",
+        content: "fallback",
+        originChat: "-1003968796171",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("fallback");
+  });
+
+  test("relay_reply own-chat WITH suppressRelayReplyText skips send and resets flag", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "relay_reply",
+        content: "tcp-already-sent",
+        originChat: "-1003968796171",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+    expect((state as any).suppressRelayReplyText).toBe(false);
   });
 });

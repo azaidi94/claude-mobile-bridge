@@ -1126,25 +1126,33 @@ export function handleTailEvent(
       const ownChat = String(chatId);
       const isForeignOrigin =
         event.originChat !== undefined && event.originChat !== ownChat;
+      const ws = state as WatchState;
 
       if (isForeignOrigin) {
-        // Foreign-origin reply: TCP fast path delivered to the origin surface,
-        // not to this Telegram chat. Render the reply text here.
-        const formatted = convertMarkdownToHtml(event.content);
-        botApi
-          .sendMessage(chatId, formatted, {
-            parse_mode: "HTML",
-            ...threadOpts,
-          })
-          .catch((err) => {
-            debug(`tail relay_reply foreign: ${err}`);
-            botApi
-              .sendMessage(chatId, event.content, threadOpts)
-              .catch(() => {});
-          });
+        // TCP fast path delivered to the origin surface (e.g. chat_id=web),
+        // not to this Telegram chat. Fan the reply here.
+        sendTextReply(
+          botApi,
+          chatId,
+          event.content,
+          threadOpts.message_thread_id,
+        );
+      } else if (ws.suppressRelayReplyText) {
+        // Own-origin and TCP's onReply already fired. Reset the flag, don't
+        // duplicate.
+        ws.suppressRelayReplyText = false;
+      } else {
+        // Own-origin but TCP didn't deliver (failure or race). Tailer is the
+        // fallback so the Telegram topic still sees the reply.
+        sendTextReply(
+          botApi,
+          chatId,
+          event.content,
+          threadOpts.message_thread_id,
+        );
       }
 
-      // Existing cleanup (preserves TCP-path dedup for own-origin).
+      // Existing cleanup.
       if (state.finalReplyReceived !== undefined) {
         state.finalReplyReceived = true;
       }
