@@ -387,6 +387,29 @@ describe("tailer: parseLine", () => {
       toolInput: { file_path: "/x/y.ts" },
     });
   });
+
+  test("permission-mode entry emits permission_mode event", () => {
+    const line = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "plan",
+      sessionId: "sess-1",
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "permission_mode",
+      content: "plan",
+      permissionMode: "plan",
+    });
+  });
+
+  test("permission-mode entry without a string permissionMode is dropped", () => {
+    const line = JSON.stringify({
+      type: "permission-mode",
+      sessionId: "sess-1",
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
 });
 
 // ============== findSessionJsonlPath ==============

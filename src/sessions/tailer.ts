@@ -235,6 +235,18 @@ export class SessionTailer {
         return [{ type: "user", content: text }];
       }
 
+      if (entry.type === "permission-mode") {
+        const mode = entry.permissionMode;
+        if (typeof mode !== "string") return [];
+        return [
+          {
+            type: "permission_mode",
+            content: mode,
+            permissionMode: mode as TailEvent["permissionMode"],
+          },
+        ];
+      }
+
       // Assistant message — emit all blocks
       if (entry.type === "assistant") {
         const content = entry.message?.content;
