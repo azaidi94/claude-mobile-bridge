@@ -176,6 +176,75 @@ const PROMOTE_ON_SUCCESS = new Set([
   "WebSearch",
 ]);
 
+/**
+ * Show the tail of a multi-line text block with a "+N lines (tap to expand)"
+ * affordance. Mirrors Claude Code's "ctrl+o to expand" pattern from the TUI.
+ */
+function CollapsibleTail({
+  content,
+  tailLines,
+  bodyClass,
+}: {
+  content: string;
+  tailLines: number;
+  bodyClass: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = content.split("\n");
+  if (lines.length <= tailLines) {
+    return <pre className={bodyClass}>{content}</pre>;
+  }
+  const display = expanded ? content : lines.slice(-tailLines).join("\n");
+  const hidden = lines.length - tailLines;
+  return (
+    <div>
+      <pre className={bodyClass}>{display}</pre>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="text-[11px] text-terminal-muted/80 hover:text-terminal-text mt-0.5 cursor-pointer"
+      >
+        {expanded ? "− collapse" : `… +${hidden} lines (tap to expand)`}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Show a head preview of a long string with a "+N chars (tap to expand)"
+ * affordance. Used for error messages whose stack traces are huge.
+ */
+function CollapsibleText({
+  content,
+  previewChars,
+  bodyClass,
+}: {
+  content: string;
+  previewChars: number;
+  bodyClass: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (content.length <= previewChars) {
+    return <pre className={bodyClass}>{content}</pre>;
+  }
+  const display = expanded ? content : content.slice(0, previewChars) + "…";
+  const hidden = content.length - previewChars;
+  return (
+    <div>
+      <pre className={bodyClass}>{display}</pre>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="text-[11px] text-terminal-muted/80 hover:text-terminal-text mt-0.5 cursor-pointer"
+      >
+        {expanded
+          ? "− collapse"
+          : `… +${hidden.toLocaleString()} chars (tap to expand)`}
+      </button>
+    </div>
+  );
+}
+
 function ToolResultBody({
   name,
   result,
@@ -183,13 +252,15 @@ function ToolResultBody({
   name: string;
   result: { content: string; isError: boolean };
 }) {
-  // Errors always render — first 200 chars in red.
+  // Errors always render — preview first 200 chars; full content available
+  // on tap if the message is longer.
   if (result.isError) {
-    const msg = result.content.slice(0, 200);
     return (
-      <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-red-950/40 text-red-300 p-1 rounded">
-        {msg || "(no error message)"}
-      </pre>
+      <CollapsibleText
+        content={result.content || "(no error message)"}
+        previewChars={200}
+        bodyClass="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-red-950/40 text-red-300 p-1 rounded"
+      />
     );
   }
 
@@ -197,13 +268,12 @@ function ToolResultBody({
   if (!PROMOTE_ON_SUCCESS.has(name)) return null;
 
   if (name === "Bash") {
-    const lines = result.content.split("\n");
-    const tail = lines.slice(-5);
-    const more = lines.length > 5 ? `\n+${lines.length - 5} lines` : "";
     return (
-      <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-terminal-bg/60 text-terminal-text p-1 rounded">
-        {tail.join("\n") + more}
-      </pre>
+      <CollapsibleTail
+        content={result.content}
+        tailLines={5}
+        bodyClass="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-terminal-bg/60 text-terminal-text p-1 rounded"
+      />
     );
   }
 
@@ -211,34 +281,69 @@ function ToolResultBody({
     const lineCount = result.content.split("\n").filter((l) => l.trim()).length;
     const label = name === "Grep" ? "matches" : "files";
     return (
-      <div className="text-[11px] text-terminal-muted italic">
-        Found {lineCount} {label}
-      </div>
+      <ExpandableSummary
+        summary={`Found ${lineCount} ${label}`}
+        full={result.content}
+      />
     );
   }
 
   if (name === "Task" || name === "Agent") {
-    // Try to parse "tool uses · tokens · elapsed" out of the result text.
     const m = result.content.match(
       /(\d+)\s*tool[_\s]?uses?.*?([\d.]+k?)\s*tokens?.*?([\d.]+s)/i,
     );
-    return (
-      <div className="text-[11px] text-terminal-muted italic">
-        {m ? `Done · ${m[1]} tools · ${m[2]} tokens · ${m[3]}` : "Done"}
-      </div>
-    );
+    const summary = m
+      ? `Done · ${m[1]} tools · ${m[2]} tokens · ${m[3]}`
+      : "Done";
+    return <ExpandableSummary summary={summary} full={result.content} />;
   }
 
   if (name === "WebFetch" || name === "WebSearch") {
-    const len = result.content.length;
     return (
-      <div className="text-[11px] text-terminal-muted italic">
-        {len.toLocaleString()} chars returned
-      </div>
+      <ExpandableSummary
+        summary={`${result.content.length.toLocaleString()} chars returned`}
+        full={result.content}
+      />
     );
   }
 
   return null;
+}
+
+/**
+ * One-line italic summary with a tap-to-reveal full body. Used for tools where
+ * the summary is the headline (Grep count, Agent metrics, WebFetch byte count)
+ * but you sometimes want to see the raw result content.
+ */
+function ExpandableSummary({
+  summary,
+  full,
+}: {
+  summary: string;
+  full: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (!full.trim()) {
+    return (
+      <div className="text-[11px] text-terminal-muted italic">{summary}</div>
+    );
+  }
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="text-[11px] text-terminal-muted italic hover:text-terminal-text cursor-pointer text-left"
+      >
+        {summary} {expanded ? "(tap to collapse)" : "(tap to expand)"}
+      </button>
+      {expanded && (
+        <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-terminal-bg/60 text-terminal-text p-1 rounded mt-1">
+          {full}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 /** Compact key:value list of input fields, each value clipped. */
