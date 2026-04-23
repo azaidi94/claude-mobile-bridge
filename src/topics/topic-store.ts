@@ -77,6 +77,17 @@ export async function loadTopicStore(): Promise<void> {
 }
 
 export async function saveTopicStore(): Promise<void> {
+  // Guard against clobbering the production store with default-state writes.
+  // chatId===0 means no forum has been detected yet; there is nothing
+  // meaningful to persist, and a save at this point would overwrite a
+  // pre-existing valid file with an empty-default payload. The observed
+  // pollution vector: a test triggers scheduleSave() while env isolation is
+  // active, test teardown unsets CLAUDE_TELEGRAM_TOPICS_FILE, then the 100ms
+  // debounced timer fires and writes to ~/.claude-mobile-bridge/topics.json.
+  if (store.chatId === 0) {
+    debug(`topic-store: skip save (chatId=0, nothing to persist)`);
+    return;
+  }
   const path = storePath();
   try {
     await ensureStoreDir(path);

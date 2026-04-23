@@ -36,6 +36,11 @@ beforeAll(async () => {
   );
 });
 afterAll(async () => {
+  // Cancel any pending 100ms debounced save and reset in-memory state so
+  // post-teardown saves (from other test files in the same bun-test process)
+  // can't write leaked state to the real ~/.claude-mobile-bridge/topics.json.
+  const { clearTopicStore } = await import("../topics/topic-store");
+  clearTopicStore();
   delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
   await rm(_topicStoreTmpDir, { recursive: true, force: true });
 });
