@@ -576,3 +576,87 @@ describe("watch: handleTailEvent tool_result", () => {
     expect(sent[0]!.text).toContain("ENOENT");
   });
 });
+
+describe("watch: handleTailEvent permission_mode", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("first permission_mode emits a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Plan mode");
+  });
+
+  test("duplicate consecutive permission_mode is deduplicated", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+  });
+
+  test("permission_mode default is not emitted as a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "permission_mode",
+        content: "default",
+        permissionMode: "default",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+});

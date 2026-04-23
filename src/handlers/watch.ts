@@ -1164,6 +1164,24 @@ export function handleTailEvent(
       break;
     }
 
+    case "permission_mode": {
+      const ws = state as WatchState;
+      const mode = event.permissionMode;
+      if (!mode || mode === "default") break;
+      if (ws.lastPermissionMode === mode) break; // dedup
+      ws.lastPermissionMode = mode;
+      const labels: Record<string, string> = {
+        plan: "Plan mode on",
+        acceptEdits: "Auto-accept on",
+        bypassPermissions: "Bypass permissions on",
+      };
+      const label = labels[mode] ?? `${mode} mode`;
+      botApi
+        .sendMessage(chatId, `⚙ ${label}`, threadOpts)
+        .catch((err) => debug(`tail permission_mode: ${err}`));
+      break;
+    }
+
     case "text": {
       if (state.currentToolMsg) {
         botApi
