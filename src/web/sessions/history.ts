@@ -25,16 +25,37 @@ function getClaudeDir(): string {
   return process.env.CLAUDE_DIR || `${process.env.HOME}/.claude`;
 }
 
+// Channel-relay-wrapped messages come from the web UI or Telegram
+// (<channel source="channel-relay" chat_id=…>). Untagged user entries are
+// native terminal-typed input in the desktop Claude TUI. Telegram renders
+// the former as the user's own message and the latter prefixed "🖥 Desktop:";
+// the web UI mirrors that distinction via text prefixes the Terminal
+// component then groups into "user" vs "desktop" turns.
+const CHANNEL_TAG_RE = /^<channel\s[^>]*>([\s\S]*?)<\/channel>\s*$/;
+
+function classifyUserText(raw: string): SseEvent | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const m = trimmed.match(CHANNEL_TAG_RE);
+  if (m) {
+    const inner = m[1]!.trim();
+    return inner ? { type: "text", content: `› ${inner}` } : null;
+  }
+  return { type: "text", content: `🖥 ${trimmed}` };
+}
+
 function mapUserEntry(entry: JsonlEntry): SseEvent[] {
   const content = entry.message?.content;
   if (typeof content === "string") {
-    return content.trim() ? [{ type: "text", content: `› ${content}` }] : [];
+    const ev = classifyUserText(content);
+    return ev ? [ev] : [];
   }
   if (!Array.isArray(content)) return [];
   const events: SseEvent[] = [];
   for (const block of content as Array<{ type?: string; text?: string }>) {
     if (block.type === "text" && typeof block.text === "string") {
-      events.push({ type: "text", content: `› ${block.text}` });
+      const ev = classifyUserText(block.text);
+      if (ev) events.push(ev);
     }
     // tool_result intentionally skipped
   }
@@ -62,10 +83,30 @@ function mapAssistantEntry(entry: JsonlEntry, turnIdx: number): SseEvent[] {
       textSegment += 1;
     } else if (raw.type === "tool_use" && raw.name) {
       const input = (raw.input ?? {}) as Record<string, unknown>;
-      events.push({
-        type: "tool",
-        content: formatToolStatus(raw.name, input),
-      });
+
+      // Channel-relay reply/edit: user-visible reply text lives in input.text,
+      // not a separate text block (see src/sessions/tailer.ts).
+      if (
+        raw.name === "mcp__channel-relay__reply" ||
+        raw.name === "mcp__channel-relay__edit_message"
+      ) {
+        const text = typeof input.text === "string" ? input.text : "";
+        if (text) {
+          events.push({
+            type: "text",
+            content: text,
+            segmentId: turnIdx * 100 + textSegment,
+          });
+          textSegment += 1;
+        }
+      } else if (raw.name !== "mcp__channel-relay__react") {
+        events.push({
+          type: "tool",
+          content: formatToolStatus(raw.name, input),
+          toolName: raw.name,
+          toolInput: input,
+        });
+      }
     }
   }
   return events;
