@@ -660,3 +660,62 @@ describe("watch: handleTailEvent permission_mode", () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe("watch: handleTailEvent hook_summary", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("hook_summary with errors emits a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "hook_summary",
+        content: "lint failed",
+        hook: {
+          hookCount: 1,
+          errorCount: 1,
+          preventedContinuation: true,
+          firstError: "lint failed",
+          failingHookName: "lint",
+        },
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("lint");
+    expect(sent[0]!.text).toContain("blocked");
+  });
+});

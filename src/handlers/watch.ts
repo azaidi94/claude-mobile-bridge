@@ -1182,6 +1182,25 @@ export function handleTailEvent(
       break;
     }
 
+    case "hook_summary": {
+      const h = event.hook;
+      if (!h) break;
+      const verb = h.preventedContinuation ? "blocked the run" : "failed";
+      const tag = h.failingHookName
+        ? ` <code>${escapeHtml(h.failingHookName)}</code>`
+        : "";
+      const trail = h.firstError
+        ? `: ${escapeHtml(h.firstError.slice(0, 200))}`
+        : "";
+      botApi
+        .sendMessage(chatId, `🪝 stop hook${tag} ${verb}${trail}`, {
+          parse_mode: "HTML",
+          ...threadOpts,
+        })
+        .catch((err) => debug(`tail hook_summary: ${err}`));
+      break;
+    }
+
     case "text": {
       if (state.currentToolMsg) {
         botApi
