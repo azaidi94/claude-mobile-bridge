@@ -257,4 +257,48 @@ describe("Terminal", () => {
     const { container } = render(<Terminal events={events} streaming={false} />);
     expect(container.textContent).toContain("ENOENT");
   });
+
+  test("permission_mode plan shows yellow banner", () => {
+    const events: SseEvent[] = [
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toMatch(/Plan mode/i);
+  });
+
+  test("permission_mode default shows no banner", () => {
+    const events: SseEvent[] = [
+      { type: "permission_mode", content: "default", permissionMode: "default" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).not.toMatch(/Plan mode|Auto-accept|Bypass/i);
+  });
+
+  test("most recent permission_mode wins (later events override earlier)", () => {
+    const events: SseEvent[] = [
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      { type: "permission_mode", content: "default", permissionMode: "default" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).not.toMatch(/Plan mode/i);
+  });
+
+  test("hook_summary renders as inline card with hook name and error", () => {
+    const events: SseEvent[] = [
+      {
+        type: "hook_summary",
+        content: "lint failed",
+        hook: {
+          hookCount: 1,
+          errorCount: 1,
+          preventedContinuation: true,
+          firstError: "lint failed",
+          failingHookName: "lint",
+        },
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("lint");
+    expect(container.textContent).toContain("lint failed");
+  });
 });

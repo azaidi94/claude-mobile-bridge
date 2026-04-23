@@ -452,6 +452,59 @@ const SUPPRESSED_TOOLS = new Set([
   "TodoWrite",
 ]);
 
+function PermissionModeBanner({ events }: { events: SseEvent[] }) {
+  // Find the latest permission_mode event in the stream.
+  let latest: SseEvent["permissionMode"] | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type === "permission_mode") {
+      latest = e.permissionMode;
+      break;
+    }
+  }
+  if (!latest || latest === "default") return null;
+  const labels: Record<string, { text: string; cls: string }> = {
+    plan: {
+      text: "📋 Plan mode — agent will not modify files",
+      cls: "bg-yellow-500/15 border-yellow-400/40 text-yellow-300",
+    },
+    acceptEdits: {
+      text: "✅ Auto-accept edits",
+      cls: "bg-green-500/15 border-green-400/40 text-green-300",
+    },
+    bypassPermissions: {
+      text: "⚙ Bypass permissions",
+      cls: "bg-terminal-muted/15 border-terminal-muted/40 text-terminal-muted",
+    },
+  };
+  const conf = labels[latest];
+  if (!conf) return null;
+  return (
+    <div className={`px-2 py-1 text-[11px] border ${conf.cls} rounded mb-2`}>
+      {conf.text}
+    </div>
+  );
+}
+
+function HookSummaryCard({ event }: { event: SseEvent }) {
+  if (event.type !== "hook_summary" || !event.hook) return null;
+  const h = event.hook;
+  return (
+    <div className="my-2 px-2 py-1 border border-red-400/40 bg-red-950/30 rounded text-[11px]">
+      <div className="text-red-300 font-semibold">
+        🪝 stop hook
+        {h.failingHookName ? ` ${h.failingHookName}` : ""}
+        {h.preventedContinuation ? " blocked the run" : " failed"}
+      </div>
+      {h.firstError && (
+        <div className="text-terminal-text mt-1 whitespace-pre-wrap">
+          {h.firstError.slice(0, 200)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function groupIntoTurns(events: SseEvent[]): Turn[] {
   const turns: Turn[] = [];
   events.forEach((evt, idx) => {
@@ -568,6 +621,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
 
   return (
     <div className="flex-1 overflow-y-auto p-3 text-sm leading-snug">
+      <PermissionModeBanner events={events} />
       {turns.map((turn, ti) => {
         const isCollapsed = collapsed.has(ti);
         const theme = PANE_THEMES[turn.role];
@@ -606,6 +660,11 @@ export function Terminal({ events, streaming }: TerminalProps) {
           </div>
         );
       })}
+      {events
+        .filter((e) => e.type === "hook_summary")
+        .map((e, i) => (
+          <HookSummaryCard key={`hook-${i}`} event={e} />
+        ))}
       {streaming && (
         <span className="inline-block w-2 h-4 bg-terminal-green animate-pulse" />
       )}
