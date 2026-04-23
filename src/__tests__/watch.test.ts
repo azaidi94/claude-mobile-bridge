@@ -365,3 +365,81 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     expect(sent[0]!.text).toContain("-200999");
   });
 });
+
+describe("watch: handleTailEvent relay_reply origin filter", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: unknown;
+    }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  test("relay_reply with originChat === ownChat sends nothing (TCP dedup preserved)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "hello", originChat: "-1003968796171" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("relay_reply with originChat === undefined sends nothing (dedup for own-path)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "hello" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("relay_reply with foreign originChat ('web') sends the text to this Telegram chat", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "from web", originChat: "web" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("from web");
+  });
+});

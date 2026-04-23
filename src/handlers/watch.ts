@@ -1074,20 +1074,32 @@ export function handleTailEvent(
     }
 
     case "relay_reply": {
-      // Only RelayDisplayState initialises finalReplyReceived (to false);
-      // WatchState leaves it undefined. Setting it here lets wireRelayDisplay
-      // (TCP path) skip text delivery when the tailer wins the race.
+      const ownChat = String(chatId);
+      const isForeignOrigin =
+        event.originChat !== undefined && event.originChat !== ownChat;
+
+      if (isForeignOrigin) {
+        // Foreign-origin reply: TCP fast path delivered to the origin surface,
+        // not to this Telegram chat. Render the reply text here.
+        const formatted = convertMarkdownToHtml(event.content);
+        botApi
+          .sendMessage(chatId, formatted, {
+            parse_mode: "HTML",
+            ...threadOpts,
+          })
+          .catch((err) => {
+            debug(`tail relay_reply foreign: ${err}`);
+            botApi
+              .sendMessage(chatId, event.content, threadOpts)
+              .catch(() => {});
+          });
+      }
+
+      // Existing cleanup (preserves TCP-path dedup for own-origin).
       if (state.finalReplyReceived !== undefined) {
         state.finalReplyReceived = true;
       }
       resetDisplaySegment(botApi, state);
-
-      const ws = state as WatchState;
-      if (ws.suppressRelayReplyText) {
-        ws.suppressRelayReplyText = false;
-      } else {
-        sendTextReply(botApi, chatId, event.content);
-      }
       break;
     }
 
