@@ -365,6 +365,28 @@ describe("tailer: parseLine", () => {
       originChat: "-1003968796171",
     });
   });
+
+  test("native tool_use carries toolName and toolInput on the tool event", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "/x/y.ts" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool",
+      toolName: "Read",
+      toolInput: { file_path: "/x/y.ts" },
+    });
+  });
 });
 
 // ============== findSessionJsonlPath ==============

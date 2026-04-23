@@ -256,7 +256,12 @@ export class SessionTailer {
             if (block.name === "mcp__channel-relay__react") continue;
 
             const toolDisplay = formatToolStatus(block.name, input);
-            events.push({ type: "tool", content: toolDisplay });
+            events.push({
+              type: "tool",
+              content: toolDisplay,
+              toolName: block.name,
+              toolInput: input,
+            });
           }
 
           if (block.type === "text" && block.text) {
