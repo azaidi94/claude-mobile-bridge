@@ -1051,6 +1051,19 @@ export function handleTailEvent(
     }
 
     case "tool": {
+      // Bookkeeping tools (Tasks tab handles state changes; create/get/list/stop
+      // are noise in the chat stream). TaskUpdate stays — its status emoji
+      // (✅/⏳/❌) is a useful inline signal on mobile where there's no panel.
+      if (
+        event.toolName === "TaskCreate" ||
+        event.toolName === "TaskGet" ||
+        event.toolName === "TaskList" ||
+        event.toolName === "TaskStop" ||
+        event.toolName === "TodoWrite"
+      ) {
+        break;
+      }
+
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)

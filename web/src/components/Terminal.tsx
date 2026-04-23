@@ -336,10 +336,23 @@ interface Turn {
 const USER_PREFIX = "› ";
 const DESKTOP_PREFIX = "🖥 ";
 
+// Bookkeeping tools that get their own UI surface elsewhere (Tasks tab) —
+// rendering them inline in the chat view is duplicate noise. Matches Claude
+// Code TUI's own behaviour: it has a Tasks panel, the chat stream stays clean.
+const SUPPRESSED_TOOLS = new Set([
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskGet",
+  "TaskList",
+  "TaskStop",
+  "TodoWrite",
+]);
+
 function groupIntoTurns(events: SseEvent[]): Turn[] {
   const turns: Turn[] = [];
   events.forEach((evt, idx) => {
     if (evt.type === "segment_end" || evt.type === "done") return;
+    if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
     if (evt.type === "text") {
       if (evt.content.startsWith(USER_PREFIX)) {
         const stripped: SseEvent = {
