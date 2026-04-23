@@ -1098,6 +1098,12 @@ export function handleTailEvent(
     }
 
     case "user": {
+      const ownChat = String(chatId);
+      if (event.originChat === ownChat) {
+        // TCP fast-path already delivered this user's own Telegram message.
+        break;
+      }
+
       resetDisplaySegment(botApi, state);
 
       const preview =
@@ -1105,15 +1111,29 @@ export function handleTailEvent(
           ? event.content.slice(0, 300) + "…"
           : event.content;
       const formatted = convertMarkdownToHtml(preview);
+
+      let labelHtml: string;
+      let labelPlain: string;
+      if (event.originChat === undefined) {
+        labelHtml = `🖥 <b>Desktop:</b>`;
+        labelPlain = `🖥 Desktop:`;
+      } else if (event.originChat === "web") {
+        labelHtml = `🌐 <b>Web:</b>`;
+        labelPlain = `🌐 Web:`;
+      } else {
+        labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
+        labelPlain = `💬 Chat ${event.originChat}:`;
+      }
+
       botApi
-        .sendMessage(chatId, `🖥 <b>Desktop:</b>\n${formatted}`, {
+        .sendMessage(chatId, `${labelHtml}\n${formatted}`, {
           parse_mode: "HTML",
           ...threadOpts,
         })
         .catch((err) => {
           debug(`tail user: ${err}`);
           botApi
-            .sendMessage(chatId, `🖥 Desktop:\n${preview}`, threadOpts)
+            .sendMessage(chatId, `${labelPlain}\n${preview}`, threadOpts)
             .catch(() => {});
         });
       break;

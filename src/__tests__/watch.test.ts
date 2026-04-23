@@ -266,3 +266,102 @@ describe("handleWatch: General-chat rejection", () => {
     expect(replies[0]).toContain("per-topic");
   });
 });
+
+describe("watch: handleTailEvent user-event origin filter", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: unknown;
+    }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  test("user event with originChat === ownChat is skipped (TCP dedup)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "hi", originChat: "-1003968796171" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("user event with originChat === 'web' renders with 🌐 Web label", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "hmmm", originChat: "web" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("🌐");
+    expect(sent[0]!.text).toContain("Web");
+    expect(sent[0]!.text).toContain("hmmm");
+  });
+
+  test("user event with originChat undefined renders Desktop (terminal-typed)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "native input" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("🖥");
+    expect(sent[0]!.text).toContain("Desktop");
+    expect(sent[0]!.text).toContain("native input");
+  });
+
+  test("user event from a foreign Telegram chat renders 💬 Chat label", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "cross-chat", originChat: "-200999" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("💬");
+    expect(sent[0]!.text).toContain("Chat");
+    expect(sent[0]!.text).toContain("-200999");
+  });
+});
