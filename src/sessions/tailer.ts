@@ -247,6 +247,34 @@ export class SessionTailer {
         ];
       }
 
+      if (entry.type === "system" && entry.subtype === "stop_hook_summary") {
+        const hookCount = Number(entry.hookCount) || 0;
+        const errorCount = Array.isArray(entry.hookErrors)
+          ? entry.hookErrors.length
+          : 0;
+        const preventedContinuation = Boolean(entry.preventedContinuation);
+        if (errorCount === 0 && !preventedContinuation) return [];
+        const firstError =
+          errorCount > 0
+            ? String(entry.hookErrors[0]?.error ?? entry.hookErrors[0] ?? "")
+            : undefined;
+        const failingHookName =
+          errorCount > 0 ? String(entry.hookErrors[0]?.name ?? "") : undefined;
+        return [
+          {
+            type: "hook_summary",
+            content: firstError ?? `${hookCount} hook(s) ran`,
+            hook: {
+              hookCount,
+              errorCount,
+              preventedContinuation,
+              firstError,
+              failingHookName,
+            },
+          },
+        ];
+      }
+
       // Assistant message — emit all blocks
       if (entry.type === "assistant") {
         const content = entry.message?.content;

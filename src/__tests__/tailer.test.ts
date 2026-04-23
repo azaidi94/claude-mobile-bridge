@@ -410,6 +410,49 @@ describe("tailer: parseLine", () => {
     });
     expect(tailer.parseLine(line)).toEqual([]);
   });
+
+  test("system stop_hook_summary with errors emits hook_summary event", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "stop_hook_summary",
+      hookCount: 3,
+      hookErrors: [{ name: "lint", error: "Unfixable lint error" }],
+      preventedContinuation: true,
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "hook_summary",
+      content: "Unfixable lint error",
+      hook: {
+        hookCount: 3,
+        errorCount: 1,
+        preventedContinuation: true,
+        firstError: "Unfixable lint error",
+        failingHookName: "lint",
+      },
+    });
+  });
+
+  test("system stop_hook_summary with no errors and no prevention is dropped", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "stop_hook_summary",
+      hookCount: 2,
+      hookErrors: [],
+      preventedContinuation: false,
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("system entries with other subtypes are ignored", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "turn_duration",
+      durationMs: 2300,
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
 });
 
 // ============== findSessionJsonlPath ==============
