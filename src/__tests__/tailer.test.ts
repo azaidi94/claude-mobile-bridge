@@ -243,9 +243,11 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]!.type).toBe("turn_boundary");
     expect(events[0]!.content).toBe("");
+    expect(events[1]!.type).toBe("user");
+    expect(events[1]!.content).toBe("hello");
   });
 
   test("does not emit turn_boundary for empty user content", () => {
@@ -256,6 +258,64 @@ describe("tailer: parseLine", () => {
 
     const events = tailer.parseLine(line);
     expect(events).toHaveLength(0);
+  });
+
+  test("channel-tagged user message emits turn_boundary AND user event with originChat", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              '<channel source="channel-relay" chat_id="web" request_id="r1" ' +
+              'user="web" ts="2026-04-23T09:44:29.709Z">hmmm</channel>',
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "turn_boundary" });
+    expect(events[1]).toMatchObject({
+      type: "user",
+      content: "hmmm",
+      originChat: "web",
+    });
+  });
+
+  test("channel-tagged user message with Telegram chat id captures it as originChat", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              '<channel source="channel-relay" chat_id="-1003968796171" ' +
+              'request_id="r2" user="azaidiuk" ts="2026-04-23T10:00:00.000Z">hello from tg</channel>',
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      type: "user",
+      content: "hello from tg",
+      originChat: "-1003968796171",
+    });
+  });
+
+  test("native (non-tagged) user message emits user event with originChat undefined", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: "Fix the bug" },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "user", content: "Fix the bug" });
+    expect(events[0]!.originChat).toBeUndefined();
   });
 });
 

@@ -16,6 +16,20 @@ const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
 const CHANNEL_RELAY_TAG = '<channel source="channel-relay"';
 
+/** Channel-relay wrapper attribute extractor. */
+function extractOriginChatFromTag(text: string): string | undefined {
+  const m = text.match(/<channel\s[^>]*\bchat_id="([^"]+)"/);
+  return m ? m[1] : undefined;
+}
+
+/** Strip the `<channel …>…</channel>` wrapper, leaving inner text. */
+function stripChannelTag(text: string): string {
+  return text
+    .replace(/^<channel\s[^>]*>\n?/, "")
+    .replace(/\n?<\/channel>\s*$/, "")
+    .trim();
+}
+
 export type TailEventType =
   | "text"
   | "tool"
@@ -177,12 +191,18 @@ export class SessionTailer {
         const text = this.extractUserText(entry.message?.content);
         if (!text) return [];
 
-        // Channel-relay-injected messages mark a new turn. Emit a boundary
-        // event so the display pipeline can reset currentTextMsg — otherwise
-        // if Claude skips the reply tool and just outputs text, the next
-        // turn's text streams edit the previous turn's Telegram message.
+        // Channel-relay-wrapped message. Emit turn_boundary (display-reset marker
+        // consumed by Telegram's watch.ts) AND a `user` event with the stripped
+        // text, tagged with originChat so each surface can dedup against its own
+        // TCP fast-path delivery.
         if (text.includes(CHANNEL_RELAY_TAG)) {
-          return [{ type: "turn_boundary", content: "" }];
+          const originChat = extractOriginChatFromTag(text);
+          const inner = stripChannelTag(text);
+          const events: TailEvent[] = [{ type: "turn_boundary", content: "" }];
+          if (inner) {
+            events.push({ type: "user", content: inner, originChat });
+          }
+          return events;
         }
 
         // Local command output (e.g. /model, /cost) — strip tags and ANSI codes
