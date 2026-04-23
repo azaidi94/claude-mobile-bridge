@@ -1094,18 +1094,12 @@ export function handleTailEvent(
         }
       }
 
-      // Bookkeeping tools (Tasks tab handles state changes; create/get/list/stop
-      // are noise in the chat stream). TaskUpdate stays — its status emoji
-      // (✅/⏳/❌) is a useful inline signal on mobile where there's no panel.
-      if (
-        event.toolName === "TaskCreate" ||
-        event.toolName === "TaskGet" ||
-        event.toolName === "TaskList" ||
-        event.toolName === "TaskStop" ||
-        event.toolName === "TodoWrite"
-      ) {
-        break;
-      }
+      // Note: bookkeeping tools (TaskCreate/Update/Get/List/Stop/TodoWrite)
+      // are suppressed on the WEB UI side via Terminal.tsx SUPPRESSED_TOOLS,
+      // but rendered on Telegram so the rolling-status indicator continues to
+      // tick during subagent-driven workflows. (Was previously suppressed in
+      // both surfaces; user reverted Telegram side 2026-04-23 because it
+      // killed the visible activity feedback in Telegram topics.)
 
       if (state.currentToolMsg) {
         botApi
@@ -1150,16 +1144,30 @@ export function handleTailEvent(
 
       if (!shouldPromote) break;
 
+      // Follow the same delete-and-resend rhythm as case "tool" so the
+      // promoted result message becomes the new in-flight indicator: the
+      // previous tool message visibly explodes (Telegram client animation),
+      // the result message takes its place, and the next tool/text will
+      // cycle it out the same way. Tracking as currentToolMsg + adding to
+      // progressMessages keeps it in the rolling-status chain.
+      if (state.currentToolMsg) {
+        botApi
+          .deleteMessage(chatId, state.currentToolMsg.message_id)
+          .catch(() => {});
+        state.currentToolMsg = null;
+      }
+
       const summary = formatToolResultSummary(
         toolName,
         event.content,
         Boolean(event.isError),
       );
-      // Send a fresh message. Do NOT track as currentToolMsg (so it survives
-      // the next text/tool delete) and do NOT add to progressMessages (so
-      // resetDisplaySegment doesn't sweep it).
       botApi
         .sendMessage(chatId, summary, { parse_mode: "HTML", ...threadOpts })
+        .then((msg) => {
+          state.currentToolMsg = msg;
+          trackProgress(msg);
+        })
         .catch((err) => debug(`tail tool_result: ${err}`));
       break;
     }
