@@ -29,9 +29,30 @@ export interface SystemStats {
 }
 
 export interface SseEvent {
-  type: "text" | "tool" | "thinking" | "segment_end" | "done" | "send_file";
+  type:
+    | "text"
+    | "tool"
+    | "thinking"
+    | "segment_end"
+    | "done"
+    | "send_file"
+    | "tool_result"
+    | "permission_mode"
+    | "hook_summary";
   content: string;
   segmentId?: number;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  toolUseId?: string;
+  isError?: boolean;
+  permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  hook?: {
+    hookCount: number;
+    errorCount: number;
+    preventedContinuation: boolean;
+    firstError?: string;
+    failingHookName?: string;
+  };
 }
 
 export interface TaskSession {

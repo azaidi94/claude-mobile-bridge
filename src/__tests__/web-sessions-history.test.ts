@@ -36,7 +36,7 @@ describe("readSessionHistory", () => {
     expect(events).toEqual([]);
   });
 
-  test("maps a user string message to a prefixed text event", async () => {
+  test("native (non-channel-tagged) user text is prefixed with 🖥 for Desktop turn", async () => {
     const sid = "sid-user-string";
     writeFixture(sid, [
       { type: "user", message: { role: "user", content: "hello" } },
@@ -44,18 +44,115 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 100);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "text", content: "› hello" });
+    expect(events[0]).toMatchObject({ type: "text", content: "🖥 hello" });
   });
 
-  test("skips user tool_result messages", async () => {
+  test("channel-relay-tagged user text is stripped and prefixed with › for You turn", async () => {
+    const sid = "sid-user-channel";
+    writeFixture(sid, [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                '<channel source="channel-relay" chat_id="web" request_id="r1" user="web" ts="2026-04-23T09:44:29.709Z">' +
+                "hmmm" +
+                "</channel>",
+            },
+          ],
+        },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "text", content: "› hmmm" });
+  });
+
+  test("tool_result content blocks surface as tool_result SseEvents", async () => {
     const sid = "sid-tool-result";
     writeFixture(sid, [
       {
         type: "user",
         message: {
           role: "user",
-          content: [{ type: "tool_result", tool_use_id: "t1", content: "42" }],
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_xyz",
+              content: "120 lines",
+              is_error: false,
+            },
+          ],
         },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "120 lines",
+      toolUseId: "tu_xyz",
+      isError: false,
+    });
+  });
+
+  test("permission-mode top-level entry surfaces as permission_mode SseEvent", async () => {
+    const sid = "sid-perm-mode";
+    writeFixture(sid, [
+      {
+        type: "permission-mode",
+        permissionMode: "plan",
+        sessionId: sid,
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "permission_mode",
+      permissionMode: "plan",
+    });
+  });
+
+  test("system stop_hook_summary with errors surfaces as hook_summary SseEvent", async () => {
+    const sid = "sid-hook";
+    writeFixture(sid, [
+      {
+        type: "system",
+        subtype: "stop_hook_summary",
+        hookCount: 1,
+        hookErrors: [{ name: "lint", error: "boom" }],
+        preventedContinuation: true,
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "hook_summary",
+      content: "boom",
+      hook: {
+        errorCount: 1,
+        preventedContinuation: true,
+        failingHookName: "lint",
+      },
+    });
+  });
+
+  test("system stop_hook_summary without errors is dropped", async () => {
+    const sid = "sid-hook-clean";
+    writeFixture(sid, [
+      {
+        type: "system",
+        subtype: "stop_hook_summary",
+        hookCount: 1,
+        hookErrors: [],
+        preventedContinuation: false,
       },
     ]);
     const { readSessionHistory } = await load();
@@ -90,6 +187,64 @@ describe("readSessionHistory", () => {
     expect(events[2]!.content).toContain("Read"); // formatted tool string
   });
 
+  test("surfaces mcp__channel-relay__reply as text from input.text", async () => {
+    const sid = "sid-relay-reply";
+    writeFixture(sid, [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__channel-relay__reply",
+              input: {
+                request_id: "r1",
+                chat_id: "c1",
+                text: "hello from Claude",
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "text",
+      content: "hello from Claude",
+    });
+  });
+
+  test("surfaces mcp__channel-relay__edit_message as text and skips react", async () => {
+    const sid = "sid-relay-edit-react";
+    writeFixture(sid, [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              name: "mcp__channel-relay__edit_message",
+              input: { chat_id: "c1", message_id: 1, text: "edited" },
+            },
+            {
+              type: "tool_use",
+              name: "mcp__channel-relay__react",
+              input: { chat_id: "c1", message_id: 1, emoji: "👍" },
+            },
+          ],
+        },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "text", content: "edited" });
+  });
+
   test("ignores noise entries (attachment, permission-mode, malformed)", async () => {
     const sid = "sid-noise";
     const path = join(TMP, "projects", "-p");
@@ -109,7 +264,7 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 100);
     expect(events).toHaveLength(1);
-    expect(events[0]!.content).toBe("› kept");
+    expect(events[0]!.content).toBe("🖥 kept");
   });
 
   test("caps to the last N events when limit is exceeded", async () => {
@@ -122,7 +277,7 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 10);
     expect(events).toHaveLength(10);
-    expect(events[0]!.content).toBe("› msg40");
-    expect(events[9]!.content).toBe("› msg49");
+    expect(events[0]!.content).toBe("🖥 msg40");
+    expect(events[9]!.content).toBe("🖥 msg49");
   });
 });

@@ -16,17 +16,73 @@ const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 200;
 const CHANNEL_RELAY_TAG = '<channel source="channel-relay"';
 
+/** Channel-relay wrapper attribute extractor. */
+function extractOriginChatFromTag(text: string): string | undefined {
+  const m = text.match(/<channel\s[^>]*\bchat_id="([^"]+)"/);
+  return m ? m[1] : undefined;
+}
+
+/** Strip the `<channel …>…</channel>` wrapper, leaving inner text. */
+function stripChannelTag(text: string): string {
+  return text
+    .replace(/^<channel\s[^>]*>\n?/, "")
+    .replace(/\n?<\/channel>\s*$/, "")
+    .trim();
+}
+
+/** Flatten a tool_result content (string or text-block array) into a single string. */
+export function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b: { type?: string; text?: string }) =>
+        b?.type === "text" && typeof b.text === "string" ? b.text : "",
+      )
+      .filter((t) => t.length > 0)
+      .join("\n");
+  }
+  return "";
+}
+
 export type TailEventType =
+  | "user"
   | "text"
   | "tool"
   | "thinking"
-  | "user"
+  | "turn_boundary"
   | "relay_reply"
-  | "turn_boundary";
+  | "tool_result"
+  | "permission_mode"
+  | "hook_summary";
 
 export interface TailEvent {
   type: TailEventType;
-  content: string; // formatted display text
+  content: string;
+  /**
+   * Surface-of-origin for channel-relay-routed events.
+   * - "web" for web UI sends
+   * - A Telegram chat id as string (e.g. "-1003968796171") for Telegram sends
+   * - undefined for native-to-session events
+   */
+  originChat?: string;
+  /** For "tool" events: the raw MCP tool name (e.g. "Read", "Bash"). */
+  toolName?: string;
+  /** For "tool" events: the raw tool input object as recorded in the JSONL. */
+  toolInput?: Record<string, unknown>;
+  /** For "tool_result" events: pairs the result with its tool_use block. */
+  toolUseId?: string;
+  /** For "tool_result" events: true when the tool reported failure. */
+  isError?: boolean;
+  /** For "permission_mode" events: the new permission mode value. */
+  permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  /** For "hook_summary" events: parsed details of the stop-hook run. */
+  hook?: {
+    hookCount: number;
+    errorCount: number;
+    preventedContinuation: boolean;
+    firstError?: string;
+    failingHookName?: string;
+  };
 }
 
 export type TailCallback = (event: TailEvent) => void;
@@ -159,15 +215,69 @@ export class SessionTailer {
 
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
+        // Tool_result content blocks must be emitted before extractUserText runs,
+        // since tool_result-only content yields no text and would be dropped.
+        const rawContent = entry.message?.content;
+        if (Array.isArray(rawContent)) {
+          const resultEvents: TailEvent[] = [];
+          for (const block of rawContent as Array<{
+            type?: string;
+            tool_use_id?: string;
+            content?: unknown;
+            is_error?: boolean;
+          }>) {
+            if (block.type !== "tool_result") continue;
+            const toolUseId = String(block.tool_use_id ?? "");
+            if (!toolUseId) continue;
+            resultEvents.push({
+              type: "tool_result",
+              content: extractToolResultText(block.content),
+              toolUseId,
+              isError: Boolean(block.is_error),
+            });
+          }
+          if (resultEvents.length > 0) {
+            const onlyToolResults = (
+              rawContent as Array<{ type?: string }>
+            ).every((b) => b.type === "tool_result");
+            if (onlyToolResults) return resultEvents;
+            // Mixed: append any user-text events too
+            const text = this.extractUserText(rawContent);
+            if (text) {
+              if (text.includes(CHANNEL_RELAY_TAG)) {
+                const originChat = extractOriginChatFromTag(text);
+                const inner = stripChannelTag(text);
+                resultEvents.push({ type: "turn_boundary", content: "" });
+                if (inner) {
+                  resultEvents.push({
+                    type: "user",
+                    content: inner,
+                    originChat,
+                  });
+                }
+              } else {
+                resultEvents.push({ type: "user", content: text });
+              }
+            }
+            return resultEvents;
+          }
+        }
+
         const text = this.extractUserText(entry.message?.content);
         if (!text) return [];
 
-        // Channel-relay-injected messages mark a new turn. Emit a boundary
-        // event so the display pipeline can reset currentTextMsg — otherwise
-        // if Claude skips the reply tool and just outputs text, the next
-        // turn's text streams edit the previous turn's Telegram message.
+        // Channel-relay-wrapped message. Emit turn_boundary (display-reset marker
+        // consumed by Telegram's watch.ts) AND a `user` event with the stripped
+        // text, tagged with originChat so each surface can dedup against its own
+        // TCP fast-path delivery.
         if (text.includes(CHANNEL_RELAY_TAG)) {
-          return [{ type: "turn_boundary", content: "" }];
+          const originChat = extractOriginChatFromTag(text);
+          const inner = stripChannelTag(text);
+          const events: TailEvent[] = [{ type: "turn_boundary", content: "" }];
+          if (inner) {
+            events.push({ type: "user", content: inner, originChat });
+          }
+          return events;
         }
 
         // Local command output (e.g. /model, /cost) — strip tags and ANSI codes
@@ -185,6 +295,46 @@ export class SessionTailer {
         }
 
         return [{ type: "user", content: text }];
+      }
+
+      if (entry.type === "permission-mode") {
+        const mode = entry.permissionMode;
+        if (typeof mode !== "string") return [];
+        return [
+          {
+            type: "permission_mode",
+            content: mode,
+            permissionMode: mode as TailEvent["permissionMode"],
+          },
+        ];
+      }
+
+      if (entry.type === "system" && entry.subtype === "stop_hook_summary") {
+        const hookCount = Number(entry.hookCount) || 0;
+        const errorCount = Array.isArray(entry.hookErrors)
+          ? entry.hookErrors.length
+          : 0;
+        const preventedContinuation = Boolean(entry.preventedContinuation);
+        if (errorCount === 0 && !preventedContinuation) return [];
+        const firstError =
+          errorCount > 0
+            ? String(entry.hookErrors[0]?.error ?? entry.hookErrors[0] ?? "")
+            : undefined;
+        const failingHookName =
+          errorCount > 0 ? String(entry.hookErrors[0]?.name ?? "") : undefined;
+        return [
+          {
+            type: "hook_summary",
+            content: firstError ?? `${hookCount} hook(s) ran`,
+            hook: {
+              hookCount,
+              errorCount,
+              preventedContinuation,
+              firstError,
+              failingHookName,
+            },
+          },
+        ];
       }
 
       // Assistant message — emit all blocks
@@ -211,13 +361,23 @@ export class SessionTailer {
               block.name === "mcp__channel-relay__edit_message"
             ) {
               const text = String(input.text || "");
-              if (text) events.push({ type: "relay_reply", content: text });
+              const originChat =
+                typeof input.chat_id === "string" ? input.chat_id : undefined;
+              if (text) {
+                events.push({ type: "relay_reply", content: text, originChat });
+              }
               continue;
             }
             if (block.name === "mcp__channel-relay__react") continue;
 
             const toolDisplay = formatToolStatus(block.name, input);
-            events.push({ type: "tool", content: toolDisplay });
+            events.push({
+              type: "tool",
+              content: toolDisplay,
+              toolName: block.name,
+              toolInput: input,
+              toolUseId: block.id,
+            });
           }
 
           if (block.type === "text" && block.text) {

@@ -43,6 +43,20 @@ export function startWebServer(): void {
   app.route("/api/system", createSystemRouter());
   app.route("/api/tasks", createTasksRouter());
 
+  // Cache-Control headers. Hashed assets in /assets/ are safe to cache forever
+  // (the filename changes per build); index.html must always revalidate or the
+  // Telegram mini-app webview will keep serving an old shell that references
+  // a stale JS hash, and new deploys won't show up.
+  app.use("/*", async (c, next) => {
+    await next();
+    const path = c.req.path;
+    if (path.startsWith("/assets/")) {
+      c.header("Cache-Control", "public, max-age=31536000, immutable");
+    } else if (path === "/" || !path.includes(".") || path.endsWith(".html")) {
+      c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+    }
+  });
+
   app.use("/*", serveStatic({ root: WEB_DIST }));
 
   app.get("*", async (c) => {
@@ -50,6 +64,7 @@ export function startWebServer(): void {
     const text = await Bun.file(indexPath)
       .text()
       .catch(() => "Mini App not built. Run: cd web && bun run build");
+    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.html(text);
   });
 

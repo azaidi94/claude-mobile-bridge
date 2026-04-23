@@ -192,6 +192,23 @@ describe("topic-store", () => {
     expect(getTopicStore().topics[1]!.sessionName).toBe("s2");
   });
 
+  test("saveTopicStore skips write when chatId is 0 (anti-pollution guard)", async () => {
+    const { addTopicMapping, saveTopicStore, clearTopicStore } =
+      await import("../topics/topic-store");
+    clearTopicStore();
+
+    // Simulate in-memory state with chatId still 0 (never detected a forum).
+    // This is exactly the state that previously clobbered the production
+    // ~/.claude-mobile-bridge/topics.json when a debounced save fired after
+    // a test teardown removed the CLAUDE_TELEGRAM_TOPICS_FILE env override.
+    addTopicMapping(makeMapping({ sessionName: "leaked", topicId: 99 }));
+
+    await saveTopicStore();
+
+    // File must NOT exist — the guard should have refused the write.
+    expect(existsSync(storePath)).toBe(false);
+  });
+
   test("loadTopicStore handles missing file gracefully", async () => {
     const { loadTopicStore, getTopicStore, clearTopicStore } =
       await import("../topics/topic-store");

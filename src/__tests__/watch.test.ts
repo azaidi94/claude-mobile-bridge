@@ -266,3 +266,509 @@ describe("handleWatch: General-chat rejection", () => {
     expect(replies[0]).toContain("per-topic");
   });
 });
+
+describe("watch: handleTailEvent user-event origin filter", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: unknown;
+    }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  test("user event with originChat === ownChat is skipped (TCP dedup)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "hi", originChat: "-1003968796171" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("user event with originChat === 'web' renders with 🌐 Web label", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "hmmm", originChat: "web" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("🌐");
+    expect(sent[0]!.text).toContain("Web");
+    expect(sent[0]!.text).toContain("hmmm");
+  });
+
+  test("user event with originChat undefined renders Desktop (terminal-typed)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "native input" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("🖥");
+    expect(sent[0]!.text).toContain("Desktop");
+    expect(sent[0]!.text).toContain("native input");
+  });
+
+  test("user event from a foreign Telegram chat renders 💬 Chat label", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "user", content: "cross-chat", originChat: "-200999" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("💬");
+    expect(sent[0]!.text).toContain("Chat");
+    expect(sent[0]!.text).toContain("-200999");
+  });
+});
+
+describe("watch: handleTailEvent relay_reply origin filter", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: unknown;
+    }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  test("relay_reply with originChat === ownChat sends nothing (TCP dedup preserved)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "hello", originChat: "-1003968796171" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("relay_reply with originChat === undefined sends nothing (dedup for own-path)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "hello" },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("relay_reply with foreign originChat ('web') sends the text to this Telegram chat", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "relay_reply", content: "from web", originChat: "web" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("from web");
+  });
+
+  test("relay_reply own-chat WITHOUT suppressRelayReplyText falls back to tailer send", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    // flag is NOT set → TCP hasn't delivered → tailer must send
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "relay_reply",
+        content: "fallback",
+        originChat: "-1003968796171",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("fallback");
+  });
+
+  test("relay_reply own-chat WITH suppressRelayReplyText skips send and resets flag", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "relay_reply",
+        content: "tcp-already-sent",
+        originChat: "-1003968796171",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+    expect((state as any).suppressRelayReplyText).toBe(false);
+  });
+});
+
+describe("watch: handleTailEvent tool_result", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("tool_result for Bash promotes (sends combined message)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_x", "Bash"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "out",
+        toolUseId: "tu_x",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Bash");
+  });
+
+  test("tool_result for Bash strips trailing newline before picking last line", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_b", "Bash"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "first line\nlast useful line\n",
+        toolUseId: "tu_b",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("last useful line");
+    // Multi-line output should also advertise the extra-lines count.
+    expect(sent[0]!.text).toContain("+1 lines");
+  });
+
+  test("tool_result for Read does NOT send (ephemeral, suppressed)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_y", "Read"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "file",
+        toolUseId: "tu_y",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("tool_result with isError always promotes regardless of tool", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_z", "Read"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "ENOENT",
+        toolUseId: "tu_z",
+        isError: true,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("ENOENT");
+  });
+});
+
+describe("watch: handleTailEvent permission_mode", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("first permission_mode emits a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Plan mode");
+  });
+
+  test("duplicate consecutive permission_mode is deduplicated", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+  });
+
+  test("permission_mode default is not emitted as a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "permission_mode",
+        content: "default",
+        permissionMode: "default",
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("plan → default → plan cycle re-emits the second plan", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "permission_mode",
+        content: "default",
+        permissionMode: "default",
+      },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.text).toContain("Plan mode");
+    expect(sent[1]!.text).toContain("Plan mode");
+  });
+});
+
+describe("watch: handleTailEvent hook_summary", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("hook_summary with errors emits a message", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "hook_summary",
+        content: "lint failed",
+        hook: {
+          hookCount: 1,
+          errorCount: 1,
+          preventedContinuation: true,
+          firstError: "lint failed",
+          failingHookName: "lint",
+        },
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("lint");
+    expect(sent[0]!.text).toContain("blocked");
+  });
+});

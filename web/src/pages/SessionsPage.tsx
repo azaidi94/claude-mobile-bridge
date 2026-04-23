@@ -51,9 +51,11 @@ export function SessionsPage({ onSwitchToChat }: SessionsPageProps) {
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {loading && <p className="text-terminal-muted text-xs p-2">Loading...</p>}
         {sessions.map((session) => (
-          <div
+          <button
+            type="button"
             key={session.id || session.name}
-            className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+            onClick={() => handleActivate(session)}
+            className={`w-full text-left flex items-center gap-3 p-3 rounded-lg border transition-colors hover:bg-terminal-bg/40 focus:outline-none focus:border-terminal-green ${
               session.active ? "border-terminal-green bg-terminal-surface" : "border-terminal-border bg-terminal-surface"
             }`}
           >
@@ -68,15 +70,14 @@ export function SessionsPage({ onSwitchToChat }: SessionsPageProps) {
                 {session.dir} · {timeSince(session.lastActivity)}
               </div>
             </div>
-            <button
-              onClick={() => handleActivate(session)}
+            <span
               className={`text-xs px-2 py-1 rounded border flex-shrink-0 ${
                 session.active ? "border-terminal-green text-terminal-green" : "border-terminal-border text-terminal-muted"
               }`}
             >
               {session.active ? "active" : session.live ? "switch" : "resume"}
-            </button>
-          </div>
+            </span>
+          </button>
         ))}
       </div>
     </div>

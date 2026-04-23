@@ -158,7 +158,7 @@ describe("tailer: parseLine", () => {
     expect(events[0]!.content).toBe("Fix the bug");
   });
 
-  test("skips user tool_result-only messages", () => {
+  test("emits tool_result event for user tool_result-only messages", () => {
     const line = JSON.stringify({
       type: "user",
       message: {
@@ -167,7 +167,12 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "abc",
+      content: "ok",
+    });
   });
 
   test("skips sidechain messages", () => {
@@ -243,9 +248,11 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]!.type).toBe("turn_boundary");
     expect(events[0]!.content).toBe("");
+    expect(events[1]!.type).toBe("user");
+    expect(events[1]!.content).toBe("hello");
   });
 
   test("does not emit turn_boundary for empty user content", () => {
@@ -256,6 +263,200 @@ describe("tailer: parseLine", () => {
 
     const events = tailer.parseLine(line);
     expect(events).toHaveLength(0);
+  });
+
+  test("channel-tagged user message emits turn_boundary AND user event with originChat", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              '<channel source="channel-relay" chat_id="web" request_id="r1" ' +
+              'user="web" ts="2026-04-23T09:44:29.709Z">hmmm</channel>',
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "turn_boundary" });
+    expect(events[1]).toMatchObject({
+      type: "user",
+      content: "hmmm",
+      originChat: "web",
+    });
+  });
+
+  test("channel-tagged user message with Telegram chat id captures it as originChat", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              '<channel source="channel-relay" chat_id="-1003968796171" ' +
+              'request_id="r2" user="azaidiuk" ts="2026-04-23T10:00:00.000Z">hello from tg</channel>',
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      type: "user",
+      content: "hello from tg",
+      originChat: "-1003968796171",
+    });
+  });
+
+  test("native (non-tagged) user message emits user event with originChat undefined", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: "Fix the bug" },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "user", content: "Fix the bug" });
+    expect(events[0]!.originChat).toBeUndefined();
+  });
+
+  test("mcp__channel-relay__reply emits relay_reply event with originChat from input.chat_id", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "mcp__channel-relay__reply",
+            input: { request_id: "r1", chat_id: "web", text: "hello back" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "relay_reply",
+      content: "hello back",
+      originChat: "web",
+    });
+  });
+
+  test("mcp__channel-relay__edit_message also carries originChat", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "mcp__channel-relay__edit_message",
+            input: {
+              chat_id: "-1003968796171",
+              message_id: 42,
+              text: "edited",
+            },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "relay_reply",
+      content: "edited",
+      originChat: "-1003968796171",
+    });
+  });
+
+  test("native tool_use carries toolName and toolInput on the tool event", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "/x/y.ts" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool",
+      toolName: "Read",
+      toolInput: { file_path: "/x/y.ts" },
+    });
+  });
+
+  test("permission-mode entry emits permission_mode event", () => {
+    const line = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "plan",
+      sessionId: "sess-1",
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "permission_mode",
+      content: "plan",
+      permissionMode: "plan",
+    });
+  });
+
+  test("permission-mode entry without a string permissionMode is dropped", () => {
+    const line = JSON.stringify({
+      type: "permission-mode",
+      sessionId: "sess-1",
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("system stop_hook_summary with errors emits hook_summary event", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "stop_hook_summary",
+      hookCount: 3,
+      hookErrors: [{ name: "lint", error: "Unfixable lint error" }],
+      preventedContinuation: true,
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "hook_summary",
+      content: "Unfixable lint error",
+      hook: {
+        hookCount: 3,
+        errorCount: 1,
+        preventedContinuation: true,
+        firstError: "Unfixable lint error",
+        failingHookName: "lint",
+      },
+    });
+  });
+
+  test("system stop_hook_summary with no errors and no prevention is dropped", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "stop_hook_summary",
+      hookCount: 2,
+      hookErrors: [],
+      preventedContinuation: false,
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("system entries with other subtypes are ignored", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "turn_duration",
+      durationMs: 2300,
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
   });
 });
 
@@ -411,5 +612,100 @@ describe("tailer: lifecycle", () => {
       tailer.stop();
       await rm(lateFile, { force: true });
     }
+  });
+});
+
+// ============== tool_result events ==============
+
+describe("tailer: parseLine – tool_result events", () => {
+  let tailer: SessionTailer;
+
+  beforeEach(() => {
+    tailer = new SessionTailer("/dev/null", () => {});
+  });
+
+  test("user message with single tool_result emits tool_result event", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_123",
+            content: "file contents here",
+            is_error: false,
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "file contents here",
+      toolUseId: "tu_123",
+      isError: false,
+    });
+  });
+
+  test("user message with tool_result whose content is a block array flattens text", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_456",
+            content: [
+              { type: "text", text: "first" },
+              { type: "text", text: "second" },
+            ],
+            is_error: true,
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "first\nsecond",
+      toolUseId: "tu_456",
+      isError: true,
+    });
+  });
+
+  test("user message with multiple tool_result blocks emits one event per block", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "a", content: "one" },
+          { type: "tool_result", tool_use_id: "b", content: "two" },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "a",
+      content: "one",
+    });
+    expect(events[1]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "b",
+      content: "two",
+    });
+  });
+
+  test("tool_result without tool_use_id is dropped", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", content: "orphan" }],
+      },
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
   });
 });

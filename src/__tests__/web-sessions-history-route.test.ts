@@ -64,7 +64,7 @@ describe("GET /api/sessions/:id/history", () => {
       events: Array<{ type: string; content: string }>;
     };
     expect(body.events).toHaveLength(2);
-    expect(body.events[0]!.content).toBe("› hello from user");
+    expect(body.events[0]!.content).toBe("🖥 hello from user");
     expect(body.events[1]!.type).toBe("text");
   });
 

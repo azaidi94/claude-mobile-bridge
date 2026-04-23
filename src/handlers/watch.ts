@@ -14,7 +14,11 @@ import type { SessionOverride } from "../sessions/types";
 import { session } from "../session";
 import { ALLOWED_USERS, STREAMING_THROTTLE_MS } from "../config";
 import { isAuthorized } from "../security";
-import { escapeHtml, convertMarkdownToHtml } from "../formatting";
+import {
+  escapeHtml,
+  convertMarkdownToHtml,
+  formatToolResultSummary,
+} from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
@@ -37,6 +41,75 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
+import { globalEventBus, type SseEvent } from "../web/sse";
+
+// ============== SSE Bridge ==============
+
+interface SseBus {
+  emit(sessionId: string, event: SseEvent): void;
+}
+
+/**
+ * Map a TailEvent to an SseEvent and emit it to the session's SSE bus.
+ * Skips own-origin events (the web client optimistically added its own send;
+ * echoing via SSE would duplicate). Web-specific drop: turn_boundary has no
+ * display-reset semantics in the web renderer.
+ */
+export function bridgeTailToSse(
+  bus: SseBus,
+  sessionId: string,
+  event: TailEvent,
+): void {
+  if (event.originChat === "web") return;
+
+  switch (event.type) {
+    case "user":
+      bus.emit(sessionId, { type: "text", content: `› ${event.content}` });
+      return;
+    case "text":
+      bus.emit(sessionId, { type: "text", content: event.content });
+      return;
+    case "tool":
+      bus.emit(sessionId, {
+        type: "tool",
+        content: event.content,
+        toolName: event.toolName,
+        toolInput: event.toolInput,
+        toolUseId: event.toolUseId,
+      });
+      return;
+    case "thinking":
+      bus.emit(sessionId, { type: "thinking", content: event.content });
+      return;
+    case "relay_reply":
+      bus.emit(sessionId, { type: "text", content: event.content });
+      return;
+    case "turn_boundary":
+      return;
+    case "tool_result":
+      bus.emit(sessionId, {
+        type: "tool_result",
+        content: event.content,
+        toolUseId: event.toolUseId,
+        isError: event.isError,
+      });
+      return;
+    case "permission_mode":
+      bus.emit(sessionId, {
+        type: "permission_mode",
+        content: event.permissionMode ?? "",
+        permissionMode: event.permissionMode,
+      });
+      return;
+    case "hook_summary":
+      bus.emit(sessionId, {
+        type: "hook_summary",
+        content: event.content,
+        hook: event.hook,
+      });
+      return;
+  }
+}
 
 // ============== Shared Tail Display State ==============
 
@@ -52,6 +125,12 @@ export interface TailDisplayState {
   progressMessages?: Message[];
   /** Optional: stop showing progress after final reply (used by relay). */
   finalReplyReceived?: boolean;
+  /** Watch-only: maps toolUseId → toolName for tool_result correlation. */
+  toolUseRegistry?: Map<string, string>;
+  /** Watch-only: last permission mode emitted (for dedup). */
+  lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  /** Watch-only: suppress the next relay_reply text (PDF replaces it). */
+  suppressRelayReplyText?: boolean;
 }
 
 // ============== Watch State ==============
@@ -65,8 +144,6 @@ interface WatchState extends TailDisplayState {
   lastEventTime: number;
   /** Topic thread ID — all messages go to this thread. */
   threadId: number;
-  /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
-  suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
   relayCleanup?: () => void;
   /** Interval that detects when the desktop session starts a new conversation. */
@@ -85,6 +162,19 @@ interface WatchState extends TailDisplayState {
 // Active watches: "chatId:threadId" -> WatchState
 type WatchKey = `${number}:${number}`;
 const watches = new Map<WatchKey, WatchState>();
+
+// Tools whose successful results get promoted to their own Telegram message
+// (survive subsequent text streaming). Dense tools (Read/Write/Edit) stay
+// ephemeral. Errors always promote, regardless of tool.
+const PROMOTE_ON_SUCCESS = new Set([
+  "Bash",
+  "Grep",
+  "Glob",
+  "Task",
+  "Agent",
+  "WebFetch",
+  "WebSearch",
+]);
 
 // Recently-killed session ids. A sibling sharing the dir could otherwise
 // drift onto the dying session's JSONL (still the newest for a moment).
@@ -411,9 +501,10 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       return;
     }
     watchState.tailer?.stop();
-    const newTailer = new SessionTailer(newPath, (event: TailEvent) =>
-      handleTailEvent(botApi, watchState, event, watchState.threadId),
-    );
+    const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
+      handleTailEvent(botApi, watchState, event, watchState.threadId);
+      bridgeTailToSse(globalEventBus, watchState.sessionId, event);
+    });
     watchState.tailer = newTailer;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
@@ -539,6 +630,7 @@ export async function startAutoWatch(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
   const watchState: WatchState = buildWatchState({
     sessionName,
@@ -746,6 +838,7 @@ export async function startWatchingSession(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
   // Spawn-initiated watches: the seeded sessionId is almost certainly
   // the watcher's stale-JSONL fallback for this dir. When the real id
@@ -1002,6 +1095,24 @@ export function handleTailEvent(
     }
 
     case "tool": {
+      // Register this tool_use so a later tool_result can look up its name.
+      if (event.toolUseId && event.toolName) {
+        if (!state.toolUseRegistry) state.toolUseRegistry = new Map();
+        state.toolUseRegistry.set(event.toolUseId, event.toolName);
+        // Bound the registry to last 100 entries to avoid unbounded growth.
+        if (state.toolUseRegistry.size > 100) {
+          const firstKey = state.toolUseRegistry.keys().next().value;
+          if (firstKey !== undefined) state.toolUseRegistry.delete(firstKey);
+        }
+      }
+
+      // Note: bookkeeping tools (TaskCreate/Update/Get/List/Stop/TodoWrite)
+      // are suppressed on the WEB UI side via Terminal.tsx SUPPRESSED_TOOLS,
+      // but rendered on Telegram so the rolling-status indicator continues to
+      // tick during subagent-driven workflows. (Was previously suppressed in
+      // both surfaces; user reverted Telegram side 2026-04-23 because it
+      // killed the visible activity feedback in Telegram topics.)
+
       if (state.currentToolMsg) {
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
@@ -1022,6 +1133,87 @@ export function handleTailEvent(
           trackProgress(msg);
         })
         .catch((err) => debug(`tail tool: ${err}`));
+      break;
+    }
+
+    case "tool_result": {
+      const toolName = state.toolUseRegistry?.get(event.toolUseId ?? "");
+      const shouldPromote =
+        event.isError === true || PROMOTE_ON_SUCCESS.has(toolName ?? "");
+
+      // Free the registry entry regardless of promotion decision.
+      state.toolUseRegistry?.delete(event.toolUseId ?? "");
+
+      if (!shouldPromote) break;
+
+      // Follow the same delete-and-resend rhythm as case "tool" so the
+      // promoted result message becomes the new in-flight indicator: the
+      // previous tool message visibly explodes (Telegram client animation),
+      // the result message takes its place, and the next tool/text will
+      // cycle it out the same way. Tracking as currentToolMsg + adding to
+      // progressMessages keeps it in the rolling-status chain.
+      if (state.currentToolMsg) {
+        botApi
+          .deleteMessage(chatId, state.currentToolMsg.message_id)
+          .catch(() => {});
+        state.currentToolMsg = null;
+      }
+
+      const summary = formatToolResultSummary(
+        toolName,
+        event.content,
+        Boolean(event.isError),
+      );
+      botApi
+        .sendMessage(chatId, summary, { parse_mode: "HTML", ...threadOpts })
+        .then((msg) => {
+          state.currentToolMsg = msg;
+          trackProgress(msg);
+        })
+        .catch((err) => debug(`tail tool_result: ${err}`));
+      break;
+    }
+
+    case "permission_mode": {
+      const mode = event.permissionMode;
+      if (!mode) break;
+      if (mode === "default") {
+        // Reset dedup so a subsequent non-default mode (e.g. plan → default →
+        // plan) still notifies. Without this, the second "plan" is silently
+        // dropped because lastPermissionMode was never cleared.
+        state.lastPermissionMode = undefined;
+        break;
+      }
+      if (state.lastPermissionMode === mode) break; // dedup
+      state.lastPermissionMode = mode;
+      const labels: Record<string, string> = {
+        plan: "Plan mode on",
+        acceptEdits: "Auto-accept on",
+        bypassPermissions: "Bypass permissions on",
+      };
+      const label = labels[mode] ?? `${mode} mode`;
+      botApi
+        .sendMessage(chatId, `⚙ ${label}`, threadOpts)
+        .catch((err) => debug(`tail permission_mode: ${err}`));
+      break;
+    }
+
+    case "hook_summary": {
+      const h = event.hook;
+      if (!h) break;
+      const verb = h.preventedContinuation ? "blocked the run" : "failed";
+      const tag = h.failingHookName
+        ? ` <code>${escapeHtml(h.failingHookName)}</code>`
+        : "";
+      const trail = h.firstError
+        ? `: ${escapeHtml(h.firstError.slice(0, 200))}`
+        : "";
+      botApi
+        .sendMessage(chatId, `🪝 stop hook${tag} ${verb}${trail}`, {
+          parse_mode: "HTML",
+          ...threadOpts,
+        })
+        .catch((err) => debug(`tail hook_summary: ${err}`));
       break;
     }
 
@@ -1074,20 +1266,39 @@ export function handleTailEvent(
     }
 
     case "relay_reply": {
-      // Only RelayDisplayState initialises finalReplyReceived (to false);
-      // WatchState leaves it undefined. Setting it here lets wireRelayDisplay
-      // (TCP path) skip text delivery when the tailer wins the race.
+      const ownChat = String(chatId);
+      const isForeignOrigin =
+        event.originChat !== undefined && event.originChat !== ownChat;
+
+      if (isForeignOrigin) {
+        // TCP fast path delivered to the origin surface (e.g. chat_id=web),
+        // not to this Telegram chat. Fan the reply here.
+        sendTextReply(
+          botApi,
+          chatId,
+          event.content,
+          threadOpts.message_thread_id,
+        );
+      } else if (state.suppressRelayReplyText) {
+        // Own-origin and TCP's onReply already fired. Reset the flag, don't
+        // duplicate.
+        state.suppressRelayReplyText = false;
+      } else {
+        // Own-origin but TCP didn't deliver (failure or race). Tailer is the
+        // fallback so the Telegram topic still sees the reply.
+        sendTextReply(
+          botApi,
+          chatId,
+          event.content,
+          threadOpts.message_thread_id,
+        );
+      }
+
+      // Existing cleanup.
       if (state.finalReplyReceived !== undefined) {
         state.finalReplyReceived = true;
       }
       resetDisplaySegment(botApi, state);
-
-      const ws = state as WatchState;
-      if (ws.suppressRelayReplyText) {
-        ws.suppressRelayReplyText = false;
-      } else {
-        sendTextReply(botApi, chatId, event.content);
-      }
       break;
     }
 
@@ -1098,6 +1309,12 @@ export function handleTailEvent(
     }
 
     case "user": {
+      const ownChat = String(chatId);
+      if (event.originChat === ownChat) {
+        // TCP fast-path already delivered this user's own Telegram message.
+        break;
+      }
+
       resetDisplaySegment(botApi, state);
 
       const preview =
@@ -1105,15 +1322,29 @@ export function handleTailEvent(
           ? event.content.slice(0, 300) + "…"
           : event.content;
       const formatted = convertMarkdownToHtml(preview);
+
+      let labelHtml: string;
+      let labelPlain: string;
+      if (event.originChat === undefined) {
+        labelHtml = `🖥 <b>Desktop:</b>`;
+        labelPlain = `🖥 Desktop:`;
+      } else if (event.originChat === "web") {
+        labelHtml = `🌐 <b>Web:</b>`;
+        labelPlain = `🌐 Web:`;
+      } else {
+        labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
+        labelPlain = `💬 Chat ${event.originChat}:`;
+      }
+
       botApi
-        .sendMessage(chatId, `🖥 <b>Desktop:</b>\n${formatted}`, {
+        .sendMessage(chatId, `${labelHtml}\n${formatted}`, {
           parse_mode: "HTML",
           ...threadOpts,
         })
         .catch((err) => {
           debug(`tail user: ${err}`);
           botApi
-            .sendMessage(chatId, `🖥 Desktop:\n${preview}`, threadOpts)
+            .sendMessage(chatId, `${labelPlain}\n${preview}`, threadOpts)
             .catch(() => {});
         });
       break;

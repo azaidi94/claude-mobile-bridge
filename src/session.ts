@@ -565,7 +565,10 @@ class ClaudeSession {
                 !toolName.startsWith("mcp__ask-user") &&
                 toolName !== "TodoWrite"
               ) {
-                await statusCallback("tool", toolDisplay);
+                await statusCallback("tool", toolDisplay, undefined, {
+                  toolName,
+                  toolInput,
+                });
               }
 
               // Check for pending ask_user requests after ask-user MCP tool
