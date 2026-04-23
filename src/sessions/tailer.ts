@@ -30,6 +30,20 @@ function stripChannelTag(text: string): string {
     .trim();
 }
 
+/** Flatten a tool_result content (string or text-block array) into a single string. */
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b: { type?: string; text?: string }) =>
+        b?.type === "text" && typeof b.text === "string" ? b.text : "",
+      )
+      .filter((t) => t.length > 0)
+      .join("\n");
+  }
+  return "";
+}
+
 export type TailEventType =
   | "user"
   | "text"
@@ -201,6 +215,54 @@ export class SessionTailer {
 
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
+        // Tool_result content blocks must be emitted before extractUserText runs,
+        // since tool_result-only content yields no text and would be dropped.
+        const rawContent = entry.message?.content;
+        if (Array.isArray(rawContent)) {
+          const resultEvents: TailEvent[] = [];
+          for (const block of rawContent as Array<{
+            type?: string;
+            tool_use_id?: string;
+            content?: unknown;
+            is_error?: boolean;
+          }>) {
+            if (block.type !== "tool_result") continue;
+            const toolUseId = String(block.tool_use_id ?? "");
+            if (!toolUseId) continue;
+            resultEvents.push({
+              type: "tool_result",
+              content: extractToolResultText(block.content),
+              toolUseId,
+              isError: Boolean(block.is_error),
+            });
+          }
+          if (resultEvents.length > 0) {
+            const onlyToolResults = (
+              rawContent as Array<{ type?: string }>
+            ).every((b) => b.type === "tool_result");
+            if (onlyToolResults) return resultEvents;
+            // Mixed: append any user-text events too
+            const text = this.extractUserText(rawContent);
+            if (text) {
+              if (text.includes(CHANNEL_RELAY_TAG)) {
+                const originChat = extractOriginChatFromTag(text);
+                const inner = stripChannelTag(text);
+                resultEvents.push({ type: "turn_boundary", content: "" });
+                if (inner) {
+                  resultEvents.push({
+                    type: "user",
+                    content: inner,
+                    originChat,
+                  });
+                }
+              } else {
+                resultEvents.push({ type: "user", content: text });
+              }
+            }
+            return resultEvents;
+          }
+        }
+
         const text = this.extractUserText(entry.message?.content);
         if (!text) return [];
 

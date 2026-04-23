@@ -158,7 +158,7 @@ describe("tailer: parseLine", () => {
     expect(events[0]!.content).toBe("Fix the bug");
   });
 
-  test("skips user tool_result-only messages", () => {
+  test("emits tool_result event for user tool_result-only messages", () => {
     const line = JSON.stringify({
       type: "user",
       message: {
@@ -167,7 +167,12 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "abc",
+      content: "ok",
+    });
   });
 
   test("skips sidechain messages", () => {
@@ -607,5 +612,100 @@ describe("tailer: lifecycle", () => {
       tailer.stop();
       await rm(lateFile, { force: true });
     }
+  });
+});
+
+// ============== tool_result events ==============
+
+describe("tailer: parseLine – tool_result events", () => {
+  let tailer: SessionTailer;
+
+  beforeEach(() => {
+    tailer = new SessionTailer("/dev/null", () => {});
+  });
+
+  test("user message with single tool_result emits tool_result event", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_123",
+            content: "file contents here",
+            is_error: false,
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "file contents here",
+      toolUseId: "tu_123",
+      isError: false,
+    });
+  });
+
+  test("user message with tool_result whose content is a block array flattens text", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_456",
+            content: [
+              { type: "text", text: "first" },
+              { type: "text", text: "second" },
+            ],
+            is_error: true,
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "first\nsecond",
+      toolUseId: "tu_456",
+      isError: true,
+    });
+  });
+
+  test("user message with multiple tool_result blocks emits one event per block", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "a", content: "one" },
+          { type: "tool_result", tool_use_id: "b", content: "two" },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "a",
+      content: "one",
+    });
+    expect(events[1]).toMatchObject({
+      type: "tool_result",
+      toolUseId: "b",
+      content: "two",
+    });
+  });
+
+  test("tool_result without tool_use_id is dropped", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", content: "orphan" }],
+      },
+    });
+    expect(tailer.parseLine(line)).toEqual([]);
   });
 });
