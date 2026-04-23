@@ -10,6 +10,7 @@ export type StatusCallback = (
   type: "thinking" | "tool" | "text" | "segment_end" | "done" | "send_file",
   content: string,
   segmentId?: number,
+  meta?: { toolName?: string; toolInput?: Record<string, unknown> },
 ) => Promise<void>;
 
 // Rate limit bucket for token bucket algorithm

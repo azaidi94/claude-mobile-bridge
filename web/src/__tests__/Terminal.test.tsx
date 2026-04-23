@@ -40,6 +40,74 @@ describe("Terminal", () => {
     expect(container.textContent).toContain("shown");
   });
 
+  test("renders Edit tool as diff block with line numbers and - / + markers", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Editing file.ts",
+        toolName: "Edit",
+        toolInput: {
+          file_path: "/src/foo/bar/file.ts",
+          old_string: "const x = 1",
+          new_string: "const x = 2",
+        },
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("Edit(");
+    expect(container.textContent).toContain("file.ts");
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect(pre!.textContent).toContain("const x = 1");
+    expect(pre!.textContent).toContain("const x = 2");
+    // Has at least one removed and one added row
+    expect(pre!.querySelectorAll(".bg-red-950\\/40").length).toBeGreaterThan(0);
+    expect(pre!.querySelectorAll(".bg-green-950\\/40").length).toBeGreaterThan(0);
+  });
+
+  test("diff shows unchanged context lines between removals and additions", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Editing",
+        toolName: "Edit",
+        toolInput: {
+          file_path: "/f.ts",
+          old_string: "a\nb\nc",
+          new_string: "a\nB\nc",
+        },
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    const pre = container.querySelector("pre");
+    // 'a' and 'c' should appear as context (no bg color), only 'b' removed and 'B' added
+    expect(pre!.querySelectorAll(".bg-red-950\\/40").length).toBe(1);
+    expect(pre!.querySelectorAll(".bg-green-950\\/40").length).toBe(1);
+  });
+
+  test("renders Bash tool with command in a code block", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Running",
+        toolName: "Bash",
+        toolInput: { command: "bun test", description: "Run tests" },
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("Bash(bun test)");
+    expect(container.textContent).toContain("Run tests");
+    expect(container.querySelector("pre")?.textContent).toBe("bun test");
+  });
+
+  test("falls back to italic one-liner when tool event has no toolName", () => {
+    const events: SseEvent[] = [
+      { type: "tool", content: "<b>Read:</b> foo.txt" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.querySelector("b")?.textContent).toBe("Read:");
+  });
+
   test("strips <script> via DOMPurify", () => {
     const events: SseEvent[] = [
       { type: "tool", content: `<b>ok</b><script>window.x=1</script>` },

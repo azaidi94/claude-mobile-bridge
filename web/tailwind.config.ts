@@ -10,7 +10,7 @@ export default {
           surface: "#111111",
           border: "#222222",
           green: "#00ff88",
-          muted: "#666666",
+          muted: "#9a9a9a",
           text: "#cccccc",
         },
       },

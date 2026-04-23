@@ -32,6 +32,8 @@ export interface SseEvent {
   type: "text" | "tool" | "thinking" | "segment_end" | "done" | "send_file";
   content: string;
   segmentId?: number;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 export interface TaskSession {
