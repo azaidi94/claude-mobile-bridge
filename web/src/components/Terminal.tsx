@@ -27,7 +27,7 @@ function eventPrefix(type: SseEvent["type"]): string {
     case "tool":
       return "⚙ ";
     case "thinking":
-      return "… ";
+      return "∴ ";
     default:
       return "";
   }
@@ -139,6 +139,49 @@ function DiffLines({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   );
 }
 
+const HEADER_MAX = 40;
+
+function clampHeader(s: string): string {
+  return s.length > HEADER_MAX ? `${s.slice(0, HEADER_MAX - 1)}…` : s;
+}
+
+/** First non-comment, non-blank line of a multi-line bash command. */
+function firstExecutableBashLine(cmd: string): string {
+  for (const line of cmd.split("\n")) {
+    const t = line.trim();
+    if (t && !t.startsWith("#")) return line;
+  }
+  // All comments / blank: fall back to first non-empty line so the user sees
+  // SOMETHING rather than "Bash()".
+  return cmd.split("\n").find((l) => l.trim()) ?? "";
+}
+
+/**
+ * Strip "mcp__" prefix and turn "__" into "." so tool names read as
+ * "<server>.<tool>" (e.g. "channel-relay.reply"). Falls through unchanged
+ * for non-mcp names.
+ */
+function prettifyMcpName(name: string): string {
+  if (!name.startsWith("mcp__")) return name;
+  return name.slice(5).replace(/__/g, ".");
+}
+
+/** Compact key:value list of input fields, each value clipped. */
+function summariseInput(
+  input: Record<string, unknown>,
+  perValueMax = 20,
+): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(input)) {
+    if (v === undefined || v === null) continue;
+    let val = typeof v === "string" ? v : JSON.stringify(v);
+    val = val.replace(/\s+/g, " ").trim();
+    if (val.length > perValueMax) val = val.slice(0, perValueMax - 1) + "…";
+    parts.push(`${k}: ${val}`);
+  }
+  return parts.join(", ");
+}
+
 function ToolBlock({
   name,
   input,
@@ -146,25 +189,57 @@ function ToolBlock({
   name: string;
   input: Record<string, unknown>;
 }) {
-  const header = (() => {
-    if (["Read", "Write", "Edit", "MultiEdit"].includes(name)) {
-      return `${name}(${shortPath(str(input.file_path, "file"))})`;
-    }
-    if (name === "Bash") {
-      const cmd = str(input.command).split("\n")[0] ?? "";
-      const preview = cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd;
-      return `Bash(${preview})`;
-    }
-    if (name === "Glob" || name === "Grep") {
-      return `${name}(${str(input.pattern, "…")})`;
-    }
-    if (name === "WebFetch") return `WebFetch(${str(input.url, "…")})`;
-    if (name === "WebSearch") return `WebSearch(${str(input.query, "…")})`;
-    if (name === "Task" || name === "Agent") {
-      return `${name}(${str(input.description, str(input.subagent_type, "…"))})`;
-    }
-    return name;
-  })();
+  const header = clampHeader(
+    (() => {
+      if (["Read", "Write", "Edit"].includes(name)) {
+        const path = shortPath(str(input.file_path, "file"));
+        // Read with offset/limit shows line range so the reader knows the
+        // model isn't reading the whole file (Claude Code TUI does the same).
+        if (
+          name === "Read" &&
+          typeof input.offset === "number" &&
+          typeof input.limit === "number"
+        ) {
+          const start = input.offset;
+          const end = start + input.limit - 1;
+          return `Read(${path}:${start}-${end})`;
+        }
+        return `${name}(${path})`;
+      }
+      if (name === "MultiEdit") {
+        const path = shortPath(str(input.file_path, "file"));
+        const n = Array.isArray(input.edits) ? input.edits.length : 0;
+        return n > 1
+          ? `MultiEdit(${path} ×${n})`
+          : `MultiEdit(${path})`;
+      }
+      if (name === "Bash") {
+        // Lines-then-chars: the executable line wins; the global clamp does
+        // the chars cut. Multi-line scripts still show their command in body.
+        return `Bash(${firstExecutableBashLine(str(input.command))})`;
+      }
+      if (name === "Glob" || name === "Grep") {
+        const path = typeof input.path === "string" ? input.path : "";
+        const pat = str(input.pattern, "…");
+        return path
+          ? `${name}("${pat}" in ${shortPath(path)})`
+          : `${name}("${pat}")`;
+      }
+      if (name === "WebFetch") return `WebFetch(${str(input.url, "…")})`;
+      if (name === "WebSearch") return `WebSearch(${str(input.query, "…")})`;
+      if (name === "Task" || name === "Agent") {
+        return `${name}(${str(input.description, str(input.subagent_type, "…"))})`;
+      }
+      // MCP tools: render as `server.tool(key: value, …)` so the user sees
+      // what the model is actually calling. Generic for any mcp__ tool.
+      if (name.startsWith("mcp__")) {
+        const pretty = prettifyMcpName(name);
+        const summary = summariseInput(input);
+        return summary ? `${pretty}(${summary})` : pretty;
+      }
+      return name;
+    })(),
+  );
 
   const body = (() => {
     if (name === "Edit") {
@@ -384,7 +459,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
               )}
             </button>
             {!isCollapsed && (
-              <div className="px-3 py-2 space-y-1">
+              <div className="px-3 py-2 space-y-1 text-[11px] leading-snug">
                 {turn.role === "assistant" ? (
                   turn.items.map(({ evt, idx }) => renderEventBody(evt, idx))
                 ) : (
