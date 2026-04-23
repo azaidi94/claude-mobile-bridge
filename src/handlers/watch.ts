@@ -14,7 +14,11 @@ import type { SessionOverride } from "../sessions/types";
 import { session } from "../session";
 import { ALLOWED_USERS, STREAMING_THROTTLE_MS } from "../config";
 import { isAuthorized } from "../security";
-import { escapeHtml, convertMarkdownToHtml } from "../formatting";
+import {
+  escapeHtml,
+  convertMarkdownToHtml,
+  formatToolResultSummary,
+} from "../formatting";
 import {
   SessionTailer,
   findSessionJsonlPath,
@@ -149,6 +153,10 @@ interface WatchState extends TailDisplayState {
    * once, then resume normal behavior.
    */
   suppressNextIdChangeNotice?: boolean;
+  /** Maps toolUseId → toolName for tool_result correlation. */
+  toolUseRegistry?: Map<string, string>;
+  /** Last permission mode emitted (for dedup in case "permission_mode"). */
+  lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -1074,6 +1082,18 @@ export function handleTailEvent(
     }
 
     case "tool": {
+      // Register this tool_use so a later tool_result can look up its name.
+      if (event.toolUseId && event.toolName) {
+        const ws = state as WatchState;
+        if (!ws.toolUseRegistry) ws.toolUseRegistry = new Map();
+        ws.toolUseRegistry.set(event.toolUseId, event.toolName);
+        // Bound the registry to last 100 entries to avoid unbounded growth.
+        if (ws.toolUseRegistry.size > 100) {
+          const firstKey = ws.toolUseRegistry.keys().next().value;
+          if (firstKey !== undefined) ws.toolUseRegistry.delete(firstKey);
+        }
+      }
+
       // Bookkeeping tools (Tasks tab handles state changes; create/get/list/stop
       // are noise in the chat stream). TaskUpdate stays — its status emoji
       // (✅/⏳/❌) is a useful inline signal on mobile where there's no panel.
@@ -1107,6 +1127,40 @@ export function handleTailEvent(
           trackProgress(msg);
         })
         .catch((err) => debug(`tail tool: ${err}`));
+      break;
+    }
+
+    case "tool_result": {
+      const ws = state as WatchState;
+      const toolName = ws.toolUseRegistry?.get(event.toolUseId ?? "");
+      const PROMOTE_ON_SUCCESS = new Set([
+        "Bash",
+        "Grep",
+        "Glob",
+        "Task",
+        "Agent",
+        "WebFetch",
+        "WebSearch",
+      ]);
+      const shouldPromote =
+        event.isError === true || PROMOTE_ON_SUCCESS.has(toolName ?? "");
+
+      // Free the registry entry regardless of promotion decision.
+      ws.toolUseRegistry?.delete(event.toolUseId ?? "");
+
+      if (!shouldPromote) break;
+
+      const summary = formatToolResultSummary(
+        toolName,
+        event.content,
+        Boolean(event.isError),
+      );
+      // Send a fresh message. Do NOT track as currentToolMsg (so it survives
+      // the next text/tool delete) and do NOT add to progressMessages (so
+      // resetDisplaySegment doesn't sweep it).
+      botApi
+        .sendMessage(chatId, summary, { parse_mode: "HTML", ...threadOpts })
+        .catch((err) => debug(`tail tool_result: ${err}`));
       break;
     }
 

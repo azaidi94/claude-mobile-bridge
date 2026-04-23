@@ -483,3 +483,96 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
     expect((state as any).suppressRelayReplyText).toBe(false);
   });
 });
+
+describe("watch: handleTailEvent tool_result", () => {
+  function makeMockApi() {
+    const sent: Array<{ chatId: number | string; text: string }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string) => {
+        sent.push({ chatId, text });
+        return Promise.resolve({ message_id: 1 });
+      },
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent };
+  }
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("tool_result for Bash promotes (sends combined message)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_x", "Bash"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "out",
+        toolUseId: "tu_x",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Bash");
+  });
+
+  test("tool_result for Read does NOT send (ephemeral, suppressed)", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_y", "Read"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "file",
+        toolUseId: "tu_y",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  test("tool_result with isError always promotes regardless of tool", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_z", "Read"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "ENOENT",
+        toolUseId: "tu_z",
+        isError: true,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("ENOENT");
+  });
+});

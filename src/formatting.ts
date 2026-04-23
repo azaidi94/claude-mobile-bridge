@@ -356,6 +356,45 @@ export function formatToolStatus(
 }
 
 /**
+ * Format a combined "tool + result" message for Telegram. Called by the watch
+ * handler when a tool_result arrives for a promoted tool or any errored tool.
+ */
+export function formatToolResultSummary(
+  toolName: string | undefined,
+  resultContent: string,
+  isError: boolean,
+): string {
+  const safeName = toolName ?? "tool";
+  if (isError) {
+    return `❌ <b>${escapeHtml(safeName)}</b>: ${escapeHtml(truncate(resultContent, 200))}`;
+  }
+  if (toolName === "Bash") {
+    const lines = resultContent.split("\n");
+    const lastLine = (lines[lines.length - 1] ?? "").trim();
+    const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : "";
+    return `▶️ <b>Bash</b>: ${code(truncate(lastLine, 80))}${more}`;
+  }
+  if (toolName === "Grep" || toolName === "Glob") {
+    const count = resultContent.split("\n").filter((l) => l.trim()).length;
+    const label = toolName === "Grep" ? "matches" : "files";
+    return `🔎 <b>${toolName}</b>: ${count} ${label}`;
+  }
+  if (toolName === "Task" || toolName === "Agent") {
+    const m = resultContent.match(
+      /(\d+)\s*tool[_\s]?uses?.*?([\d.]+k?)\s*tokens?.*?([\d.]+s)/i,
+    );
+    return m
+      ? `🎯 <b>${toolName} done</b>: ${m[1]} tools · ${m[2]} tokens · ${m[3]}`
+      : `🎯 <b>${toolName} done</b>`;
+  }
+  if (toolName === "WebFetch" || toolName === "WebSearch") {
+    return `🌐 <b>${toolName}</b>: ${resultContent.length.toLocaleString()} chars returned`;
+  }
+  // Unknown promoted tool: generic "done".
+  return `✅ <b>${escapeHtml(safeName)}</b>: ${escapeHtml(truncate(resultContent, 80))}`;
+}
+
+/**
  * Format a timestamp as relative time (e.g. "5m ago").
  */
 export function formatTimeAgo(timestamp: number): string {
