@@ -177,25 +177,27 @@ const PROMOTE_ON_SUCCESS = new Set([
 ]);
 
 /**
- * Show the tail of a multi-line text block with a "+N lines (tap to expand)"
- * affordance. Mirrors Claude Code's "ctrl+o to expand" pattern from the TUI.
+ * Show the first N lines of a multi-line text block with a
+ * "… +N lines (tap to expand)" affordance. Mirrors Claude Code's
+ * "ctrl+o to expand" pattern from the TUI — head, not tail, because for
+ * generic command output the start is usually the structural context.
  */
-function CollapsibleTail({
+function CollapsibleHead({
   content,
-  tailLines,
+  headLines,
   bodyClass,
 }: {
   content: string;
-  tailLines: number;
+  headLines: number;
   bodyClass: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const lines = content.split("\n");
-  if (lines.length <= tailLines) {
+  if (lines.length <= headLines) {
     return <pre className={bodyClass}>{content}</pre>;
   }
-  const display = expanded ? content : lines.slice(-tailLines).join("\n");
-  const hidden = lines.length - tailLines;
+  const display = expanded ? content : lines.slice(0, headLines).join("\n");
+  const hidden = lines.length - headLines;
   return (
     <div>
       <pre className={bodyClass}>{display}</pre>
@@ -269,9 +271,9 @@ function ToolResultBody({
 
   if (name === "Bash") {
     return (
-      <CollapsibleTail
+      <CollapsibleHead
         content={result.content}
-        tailLines={5}
+        headLines={3}
         bodyClass="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-terminal-bg/60 text-terminal-text p-1 rounded"
       />
     );

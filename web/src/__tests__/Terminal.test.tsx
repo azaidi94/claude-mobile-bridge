@@ -172,7 +172,7 @@ describe("Terminal", () => {
     expect(container.querySelector(".text-red-400")).toBeNull();
   });
 
-  test("Bash success result shows last 5 lines and +N indicator", () => {
+  test("Bash success result shows first 3 lines and +N indicator", () => {
     const longOutput = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n");
     const events: SseEvent[] = [
       {
@@ -190,10 +190,10 @@ describe("Terminal", () => {
       },
     ];
     const { container } = render(<Terminal events={events} streaming={false} />);
-    expect(container.textContent).toContain("line 12");
-    expect(container.textContent).toContain("line 8");
-    expect(container.textContent).not.toContain("line 1\n");
-    expect(container.textContent).toMatch(/\+7 lines/);
+    expect(container.textContent).toContain("line 1");
+    expect(container.textContent).toContain("line 3");
+    expect(container.textContent).not.toContain("line 12");
+    expect(container.textContent).toMatch(/\+9 lines/);
   });
 
   test("Grep success result shows match count summary", () => {
