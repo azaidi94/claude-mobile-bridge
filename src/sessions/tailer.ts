@@ -26,7 +26,22 @@ export type TailEventType =
 
 export interface TailEvent {
   type: TailEventType;
-  content: string; // formatted display text
+  content: string;
+  /**
+   * Surface-of-origin for channel-relay-routed events.
+   * - "web" for web UI sends
+   * - A Telegram chat id as string (e.g. "-1003968796171") for Telegram sends
+   * - undefined for native-to-session events (terminal-typed user, Claude thinking,
+   *   native tool_use that isn't a channel-relay MCP op)
+   *
+   * Each surface renders `event.originChat !== this.ownChat` to dedup against
+   * the TCP fast path that already delivered own-origin messages.
+   */
+  originChat?: string;
+  /** For "tool" events: the raw MCP tool name (e.g. "Read", "Bash"). */
+  toolName?: string;
+  /** For "tool" events: the raw tool input object as recorded in the JSONL. */
+  toolInput?: Record<string, unknown>;
 }
 
 export type TailCallback = (event: TailEvent) => void;
