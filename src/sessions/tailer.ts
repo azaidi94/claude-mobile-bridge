@@ -31,12 +31,15 @@ function stripChannelTag(text: string): string {
 }
 
 export type TailEventType =
+  | "user"
   | "text"
   | "tool"
   | "thinking"
-  | "user"
+  | "turn_boundary"
   | "relay_reply"
-  | "turn_boundary";
+  | "tool_result"
+  | "permission_mode"
+  | "hook_summary";
 
 export interface TailEvent {
   type: TailEventType;
@@ -45,17 +48,27 @@ export interface TailEvent {
    * Surface-of-origin for channel-relay-routed events.
    * - "web" for web UI sends
    * - A Telegram chat id as string (e.g. "-1003968796171") for Telegram sends
-   * - undefined for native-to-session events (terminal-typed user, Claude thinking,
-   *   native tool_use that isn't a channel-relay MCP op)
-   *
-   * Each surface renders `event.originChat !== this.ownChat` to dedup against
-   * the TCP fast path that already delivered own-origin messages.
+   * - undefined for native-to-session events
    */
   originChat?: string;
   /** For "tool" events: the raw MCP tool name (e.g. "Read", "Bash"). */
   toolName?: string;
   /** For "tool" events: the raw tool input object as recorded in the JSONL. */
   toolInput?: Record<string, unknown>;
+  /** For "tool_result" events: pairs the result with its tool_use block. */
+  toolUseId?: string;
+  /** For "tool_result" events: true when the tool reported failure. */
+  isError?: boolean;
+  /** For "permission_mode" events: the new permission mode value. */
+  permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  /** For "hook_summary" events: parsed details of the stop-hook run. */
+  hook?: {
+    hookCount: number;
+    errorCount: number;
+    preventedContinuation: boolean;
+    firstError?: string;
+    failingHookName?: string;
+  };
 }
 
 export type TailCallback = (event: TailEvent) => void;
