@@ -22,7 +22,9 @@ export default function App() {
           <TasksPage onSwitchToChat={() => setTab("chat")} />
         )}
         {tab === "status" && <StatusPage />}
-        {tab === "agents" && <AgentsPage />}
+        {tab === "agents" && (
+          <AgentsPage onSwitchToChat={() => setTab("chat")} />
+        )}
       </div>
       <BottomNav active={tab} onChange={setTab} />
     </div>

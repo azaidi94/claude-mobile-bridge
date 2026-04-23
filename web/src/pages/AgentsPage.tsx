@@ -1,7 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, type ApiSession } from "../api";
 
-export function AgentsPage() {
+interface AgentsPageProps {
+  onSwitchToChat: () => void;
+}
+
+export function AgentsPage({ onSwitchToChat }: AgentsPageProps) {
   const [sessions, setSessions] = useState<ApiSession[]>([]);
   const [spawnDir, setSpawnDir] = useState("");
   const [spawning, setSpawning] = useState(false);
@@ -32,6 +36,15 @@ export function AgentsPage() {
     }
   };
 
+  const activate = async (session: ApiSession) => {
+    try {
+      await api.activateSession(session.name);
+      onSwitchToChat();
+    } catch {
+      // stay on page if activation fails
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-2 border-b border-terminal-border bg-terminal-surface">
@@ -59,7 +72,12 @@ export function AgentsPage() {
         </div>
         {error && <p className="text-red-400 text-xs">{error}</p>}
         {sessions.map((session) => (
-          <div key={session.id || session.name} className="border border-terminal-green/30 bg-terminal-surface rounded-lg p-3">
+          <button
+            type="button"
+            key={session.id || session.name}
+            onClick={() => activate(session)}
+            className="w-full text-left border border-terminal-green/30 bg-terminal-surface rounded-lg p-3 transition-colors hover:bg-terminal-bg/40 focus:outline-none focus:border-terminal-green"
+          >
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm text-terminal-text font-mono">{session.name}</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-terminal-bg/50 text-terminal-green border border-terminal-green/40">
@@ -67,7 +85,7 @@ export function AgentsPage() {
               </span>
             </div>
             <div className="text-xs text-terminal-muted truncate">{session.dir}</div>
-          </div>
+          </button>
         ))}
         {sessions.length === 0 && (
           <p className="text-terminal-muted text-xs text-center py-8">No agents running</p>
