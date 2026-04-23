@@ -72,15 +72,87 @@ describe("readSessionHistory", () => {
     expect(events[0]).toMatchObject({ type: "text", content: "› hmmm" });
   });
 
-  test("skips user tool_result messages", async () => {
+  test("tool_result content blocks surface as tool_result SseEvents", async () => {
     const sid = "sid-tool-result";
     writeFixture(sid, [
       {
         type: "user",
         message: {
           role: "user",
-          content: [{ type: "tool_result", tool_use_id: "t1", content: "42" }],
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_xyz",
+              content: "120 lines",
+              is_error: false,
+            },
+          ],
         },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool_result",
+      content: "120 lines",
+      toolUseId: "tu_xyz",
+      isError: false,
+    });
+  });
+
+  test("permission-mode top-level entry surfaces as permission_mode SseEvent", async () => {
+    const sid = "sid-perm-mode";
+    writeFixture(sid, [
+      {
+        type: "permission-mode",
+        permissionMode: "plan",
+        sessionId: sid,
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "permission_mode",
+      permissionMode: "plan",
+    });
+  });
+
+  test("system stop_hook_summary with errors surfaces as hook_summary SseEvent", async () => {
+    const sid = "sid-hook";
+    writeFixture(sid, [
+      {
+        type: "system",
+        subtype: "stop_hook_summary",
+        hookCount: 1,
+        hookErrors: [{ name: "lint", error: "boom" }],
+        preventedContinuation: true,
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "hook_summary",
+      content: "boom",
+      hook: {
+        errorCount: 1,
+        preventedContinuation: true,
+        failingHookName: "lint",
+      },
+    });
+  });
+
+  test("system stop_hook_summary without errors is dropped", async () => {
+    const sid = "sid-hook-clean";
+    writeFixture(sid, [
+      {
+        type: "system",
+        subtype: "stop_hook_summary",
+        hookCount: 1,
+        hookErrors: [],
+        preventedContinuation: false,
       },
     ]);
     const { readSessionHistory } = await load();

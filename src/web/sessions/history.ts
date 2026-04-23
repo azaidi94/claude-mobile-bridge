@@ -11,6 +11,11 @@ interface JsonlEntry {
     role?: "user" | "assistant";
     content?: string | unknown[];
   };
+  subtype?: string;
+  permissionMode?: unknown;
+  hookCount?: number;
+  hookErrors?: unknown;
+  preventedContinuation?: boolean;
 }
 
 interface AssistantBlock {
@@ -23,6 +28,19 @@ interface AssistantBlock {
 
 function getClaudeDir(): string {
   return process.env.CLAUDE_DIR || `${process.env.HOME}/.claude`;
+}
+
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b: { type?: string; text?: string }) =>
+        b?.type === "text" && typeof b.text === "string" ? b.text : "",
+      )
+      .filter((t) => t.length > 0)
+      .join("\n");
+  }
+  return "";
 }
 
 // Channel-relay-wrapped messages come from the web UI or Telegram
@@ -52,12 +70,26 @@ function mapUserEntry(entry: JsonlEntry): SseEvent[] {
   }
   if (!Array.isArray(content)) return [];
   const events: SseEvent[] = [];
-  for (const block of content as Array<{ type?: string; text?: string }>) {
+  for (const block of content as Array<{
+    type?: string;
+    text?: string;
+    tool_use_id?: string;
+    content?: unknown;
+    is_error?: boolean;
+  }>) {
     if (block.type === "text" && typeof block.text === "string") {
       const ev = classifyUserText(block.text);
       if (ev) events.push(ev);
+    } else if (block.type === "tool_result") {
+      const toolUseId = String(block.tool_use_id ?? "");
+      if (!toolUseId) continue;
+      events.push({
+        type: "tool_result",
+        content: extractToolResultText(block.content),
+        toolUseId,
+        isError: Boolean(block.is_error),
+      });
     }
-    // tool_result intentionally skipped
   }
   return events;
 }
@@ -142,6 +174,36 @@ export async function readSessionHistory(
       ) {
         all.push(...mapAssistantEntry(entry, turnIdx));
         turnIdx += 1;
+      } else if (entry.type === "permission-mode") {
+        const mode = entry.permissionMode;
+        if (typeof mode === "string") {
+          all.push({
+            type: "permission_mode",
+            content: mode,
+            permissionMode: mode as SseEvent["permissionMode"],
+          });
+        }
+      } else if (entry.type === "system") {
+        if (entry.subtype === "stop_hook_summary") {
+          const errors = Array.isArray(entry.hookErrors)
+            ? (entry.hookErrors as Array<{ name?: string; error?: string }>)
+            : [];
+          const preventedContinuation = Boolean(entry.preventedContinuation);
+          if (errors.length > 0 || preventedContinuation) {
+            all.push({
+              type: "hook_summary",
+              content:
+                errors[0]?.error ?? `${entry.hookCount ?? 0} hook(s) ran`,
+              hook: {
+                hookCount: entry.hookCount ?? 0,
+                errorCount: errors.length,
+                preventedContinuation,
+                firstError: errors[0]?.error,
+                failingHookName: errors[0]?.name,
+              },
+            });
+          }
+        }
       }
     }
   } catch (err) {
