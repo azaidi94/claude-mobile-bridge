@@ -81,6 +81,28 @@ export function bridgeTailToSse(
       return;
     case "turn_boundary":
       return;
+    case "tool_result":
+      bus.emit(sessionId, {
+        type: "tool_result",
+        content: event.content,
+        toolUseId: event.toolUseId,
+        isError: event.isError,
+      });
+      return;
+    case "permission_mode":
+      bus.emit(sessionId, {
+        type: "permission_mode",
+        content: event.permissionMode ?? "",
+        permissionMode: event.permissionMode,
+      });
+      return;
+    case "hook_summary":
+      bus.emit(sessionId, {
+        type: "hook_summary",
+        content: event.content,
+        hook: event.hook,
+      });
+      return;
   }
 }
 

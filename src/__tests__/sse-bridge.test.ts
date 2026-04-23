@@ -83,4 +83,60 @@ describe("bridgeTailToSse", () => {
     bridgeTailToSse(bus, SID, { type: "turn_boundary", content: "" });
     expect(emitted).toEqual([]);
   });
+
+  test("tool_result event maps to SseEvent with toolUseId and isError", () => {
+    const e: TailEvent = {
+      type: "tool_result",
+      content: "exit 0",
+      toolUseId: "tu_1",
+      isError: false,
+    };
+    bridgeTailToSse(bus, SID, e);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.event).toMatchObject({
+      type: "tool_result",
+      content: "exit 0",
+      toolUseId: "tu_1",
+      isError: false,
+    });
+  });
+
+  test("permission_mode event maps to SseEvent with permissionMode", () => {
+    const e: TailEvent = {
+      type: "permission_mode",
+      content: "plan",
+      permissionMode: "plan",
+    };
+    bridgeTailToSse(bus, SID, e);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.event).toMatchObject({
+      type: "permission_mode",
+      permissionMode: "plan",
+    });
+  });
+
+  test("hook_summary event maps to SseEvent with hook payload", () => {
+    const e: TailEvent = {
+      type: "hook_summary",
+      content: "lint failed",
+      hook: {
+        hookCount: 1,
+        errorCount: 1,
+        preventedContinuation: true,
+        firstError: "lint failed",
+        failingHookName: "lint",
+      },
+    };
+    bridgeTailToSse(bus, SID, e);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.event).toMatchObject({
+      type: "hook_summary",
+      content: "lint failed",
+      hook: {
+        errorCount: 1,
+        preventedContinuation: true,
+        failingHookName: "lint",
+      },
+    });
+  });
 });
