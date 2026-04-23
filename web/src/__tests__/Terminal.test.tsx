@@ -171,4 +171,90 @@ describe("Terminal", () => {
     expect(container.querySelector(".text-green-400")).toBeNull();
     expect(container.querySelector(".text-red-400")).toBeNull();
   });
+
+  test("Bash success result shows last 5 lines and +N indicator", () => {
+    const longOutput = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n");
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Bash(ls)",
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        toolUseId: "tu_bash",
+      },
+      {
+        type: "tool_result",
+        content: longOutput,
+        toolUseId: "tu_bash",
+        isError: false,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("line 12");
+    expect(container.textContent).toContain("line 8");
+    expect(container.textContent).not.toContain("line 1\n");
+    expect(container.textContent).toMatch(/\+7 lines/);
+  });
+
+  test("Grep success result shows match count summary", () => {
+    const grepOutput = "src/a.ts: 3 matches\nsrc/b.ts: 1 match\n";
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: 'Grep("foo")',
+        toolName: "Grep",
+        toolInput: { pattern: "foo" },
+        toolUseId: "tu_grep",
+      },
+      {
+        type: "tool_result",
+        content: grepOutput,
+        toolUseId: "tu_grep",
+        isError: false,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toMatch(/Found .* matches/i);
+  });
+
+  test("Read success result renders no body (suppressed on success)", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Read(foo.ts)",
+        toolName: "Read",
+        toolInput: { file_path: "/foo.ts" },
+        toolUseId: "tu_r",
+      },
+      {
+        type: "tool_result",
+        content: "<file contents 100 lines>",
+        toolUseId: "tu_r",
+        isError: false,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.querySelector(".text-green-400")).not.toBeNull();
+    expect(container.textContent).not.toContain("<file contents");
+  });
+
+  test("any tool with error result shows error message body", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Read(foo.ts)",
+        toolName: "Read",
+        toolInput: { file_path: "/foo.ts" },
+        toolUseId: "tu_err",
+      },
+      {
+        type: "tool_result",
+        content: "ENOENT: no such file or directory",
+        toolUseId: "tu_err",
+        isError: true,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("ENOENT");
+  });
 });

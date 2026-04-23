@@ -166,6 +166,81 @@ function prettifyMcpName(name: string): string {
   return name.slice(5).replace(/__/g, ".");
 }
 
+const PROMOTE_ON_SUCCESS = new Set([
+  "Bash",
+  "Grep",
+  "Glob",
+  "Task",
+  "Agent",
+  "WebFetch",
+  "WebSearch",
+]);
+
+function ToolResultBody({
+  name,
+  result,
+}: {
+  name: string;
+  result: { content: string; isError: boolean };
+}) {
+  // Errors always render — first 200 chars in red.
+  if (result.isError) {
+    const msg = result.content.slice(0, 200);
+    return (
+      <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-red-950/40 text-red-300 p-1 rounded">
+        {msg || "(no error message)"}
+      </pre>
+    );
+  }
+
+  // Success bodies: only render for promoted tools.
+  if (!PROMOTE_ON_SUCCESS.has(name)) return null;
+
+  if (name === "Bash") {
+    const lines = result.content.split("\n");
+    const tail = lines.slice(-5);
+    const more = lines.length > 5 ? `\n+${lines.length - 5} lines` : "";
+    return (
+      <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 bg-terminal-bg/60 text-terminal-text p-1 rounded">
+        {tail.join("\n") + more}
+      </pre>
+    );
+  }
+
+  if (name === "Grep" || name === "Glob") {
+    const lineCount = result.content.split("\n").filter((l) => l.trim()).length;
+    const label = name === "Grep" ? "matches" : "files";
+    return (
+      <div className="text-[11px] text-terminal-muted italic">
+        Found {lineCount} {label}
+      </div>
+    );
+  }
+
+  if (name === "Task" || name === "Agent") {
+    // Try to parse "tool uses · tokens · elapsed" out of the result text.
+    const m = result.content.match(
+      /(\d+)\s*tool[_\s]?uses?.*?([\d.]+k?)\s*tokens?.*?([\d.]+s)/i,
+    );
+    return (
+      <div className="text-[11px] text-terminal-muted italic">
+        {m ? `Done · ${m[1]} tools · ${m[2]} tokens · ${m[3]}` : "Done"}
+      </div>
+    );
+  }
+
+  if (name === "WebFetch" || name === "WebSearch") {
+    const len = result.content.length;
+    return (
+      <div className="text-[11px] text-terminal-muted italic">
+        {len.toLocaleString()} chars returned
+      </div>
+    );
+  }
+
+  return null;
+}
+
 /** Compact key:value list of input fields, each value clipped. */
 function summariseInput(
   input: Record<string, unknown>,
@@ -312,6 +387,11 @@ function ToolBlock({
         <span className={bulletCls}>●</span> {header}
       </div>
       {body && <div className="mt-1">{body}</div>}
+      {result && (
+        <div className="mt-1">
+          <ToolResultBody name={name} result={result} />
+        </div>
+      )}
     </div>
   );
 }
