@@ -71,6 +71,7 @@ export function bridgeTailToSse(
         content: event.content,
         toolName: event.toolName,
         toolInput: event.toolInput,
+        toolUseId: event.toolUseId,
       });
       return;
     case "thinking":

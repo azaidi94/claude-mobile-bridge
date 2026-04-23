@@ -24,6 +24,7 @@ interface AssistantBlock {
   thinking?: string;
   name?: string;
   input?: unknown;
+  id?: string;
 }
 
 function getClaudeDir(): string {
@@ -137,6 +138,7 @@ function mapAssistantEntry(entry: JsonlEntry, turnIdx: number): SseEvent[] {
           content: formatToolStatus(raw.name, input),
           toolName: raw.name,
           toolInput: input,
+          toolUseId: typeof raw.id === "string" ? raw.id : undefined,
         });
       }
     }

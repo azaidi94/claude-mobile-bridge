@@ -376,6 +376,7 @@ export class SessionTailer {
               content: toolDisplay,
               toolName: block.name,
               toolInput: input,
+              toolUseId: block.id,
             });
           }
 

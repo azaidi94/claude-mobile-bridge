@@ -185,9 +185,11 @@ function summariseInput(
 function ToolBlock({
   name,
   input,
+  result,
 }: {
   name: string;
   input: Record<string, unknown>;
+  result?: { content: string; isError: boolean };
 }) {
   const header = clampHeader(
     (() => {
@@ -297,19 +299,41 @@ function ToolBlock({
     return null;
   })();
 
+  // Bullet colour reflects result state.
+  const bulletCls = result
+    ? result.isError
+      ? "text-red-400"
+      : "text-green-400"
+    : "text-terminal-muted";
+
   return (
     <div className="my-1 border-l-2 border-terminal-muted/40 pl-2">
       <div className="font-mono text-xs text-terminal-green">
-        <span className="text-terminal-muted">●</span> {header}
+        <span className={bulletCls}>●</span> {header}
       </div>
       {body && <div className="mt-1">{body}</div>}
     </div>
   );
 }
 
-function renderEventBody(evt: SseEvent, key: number) {
+function renderEventBody(
+  evt: SseEvent,
+  key: number,
+  resultByToolUseId: Map<string, { content: string; isError: boolean }>,
+) {
   if (evt.type === "tool" && evt.toolName) {
-    return <ToolBlock key={key} name={evt.toolName} input={evt.toolInput ?? {}} />;
+    if (SUPPRESSED_TOOLS.has(evt.toolName)) return null;
+    const result = evt.toolUseId
+      ? resultByToolUseId.get(evt.toolUseId)
+      : undefined;
+    return (
+      <ToolBlock
+        key={key}
+        name={evt.toolName}
+        input={evt.toolInput ?? {}}
+        result={result}
+      />
+    );
   }
   if (evt.type === "text") {
     return (
@@ -352,6 +376,9 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
   const turns: Turn[] = [];
   events.forEach((evt, idx) => {
     if (evt.type === "segment_end" || evt.type === "done") return;
+    if (evt.type === "tool_result") return; // correlated to tool, not its own row
+    if (evt.type === "permission_mode") return; // banner (Task 10)
+    if (evt.type === "hook_summary") return; // inline card (Task 10)
     if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
     if (evt.type === "text") {
       if (evt.content.startsWith(USER_PREFIX)) {
@@ -443,6 +470,20 @@ export function Terminal({ events, streaming }: TerminalProps) {
       return next;
     });
 
+  // Correlate tool_result events to their tool_use by toolUseId.
+  const resultByToolUseId = new Map<
+    string,
+    { content: string; isError: boolean }
+  >();
+  for (const evt of events) {
+    if (evt.type === "tool_result" && evt.toolUseId) {
+      resultByToolUseId.set(evt.toolUseId, {
+        content: evt.content,
+        isError: Boolean(evt.isError),
+      });
+    }
+  }
+
   const turns = groupIntoTurns(events);
 
   return (
@@ -474,7 +515,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
             {!isCollapsed && (
               <div className="px-3 py-2 space-y-1 text-[11px] leading-snug">
                 {turn.role === "assistant" ? (
-                  turn.items.map(({ evt, idx }) => renderEventBody(evt, idx))
+                  turn.items.map(({ evt, idx }) => renderEventBody(evt, idx, resultByToolUseId))
                 ) : (
                   <div className="text-terminal-text whitespace-pre-wrap">
                     {turn.items[0]!.evt.content}

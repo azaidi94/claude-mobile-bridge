@@ -116,4 +116,59 @@ describe("Terminal", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("b")?.textContent).toBe("ok");
   });
+
+  test("ToolBlock with successful result renders a green bullet", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Reading foo.ts",
+        toolName: "Read",
+        toolInput: { file_path: "/foo.ts" },
+        toolUseId: "tu_a",
+      },
+      {
+        type: "tool_result",
+        content: "ok",
+        toolUseId: "tu_a",
+        isError: false,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.querySelector(".text-green-400")).not.toBeNull();
+  });
+
+  test("ToolBlock with error result renders a red bullet", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Reading foo.ts",
+        toolName: "Read",
+        toolInput: { file_path: "/foo.ts" },
+        toolUseId: "tu_b",
+      },
+      {
+        type: "tool_result",
+        content: "ENOENT",
+        toolUseId: "tu_b",
+        isError: true,
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.querySelector(".text-red-400")).not.toBeNull();
+  });
+
+  test("ToolBlock without a result keeps muted bullet (unresolved)", () => {
+    const events: SseEvent[] = [
+      {
+        type: "tool",
+        content: "Reading foo.ts",
+        toolName: "Read",
+        toolInput: { file_path: "/foo.ts" },
+        toolUseId: "tu_c",
+      },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.querySelector(".text-green-400")).toBeNull();
+    expect(container.querySelector(".text-red-400")).toBeNull();
+  });
 });
