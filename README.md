@@ -11,7 +11,8 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Mini App (browser UI)** - Telegram Mini App with Chat, Sessions, Tasks (Kanban), Status, and Agents tabs. History replay, live streaming, markdown rendering
 - **Auto-discovery** - Detects running Claude Code sessions automatically
 - **Channel relay** - Message running desktop sessions without disconnecting them
-- **Live streaming** - Watch Claude work in real-time with tool progress updates, in Telegram and the Mini App
+- **Live streaming** - Watch Claude work in real-time in Telegram and the Mini App: tool calls, tool results (Bash/Grep/Agent/WebFetch promoted, errors always), permission-mode toggles, and stop-hook blocks
+- **Unified chat** - Typing in the desktop TUI, a Telegram topic, or the Mini App surfaces in all the others — same conversation, three surfaces, with origin labels (🖥 Desktop / 🌐 Web / 💬 Chat)
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
 - **Extended thinking** - "think" keyword for deeper reasoning, "ultrathink" for 50k tokens
 - **Interrupt with `!`** - Prefix message to interrupt current query
@@ -126,13 +127,13 @@ The script answers **1** when it sees the “local development” line, then kee
 
 Open the bridge in a browser or inside Telegram as a Mini App. Five tabs:
 
-| Tab      | Purpose                                                                                   |
-| -------- | ----------------------------------------------------------------------------------------- |
-| Chat     | Live terminal-style feed for the active session, with history replay + markdown rendering |
-| Sessions | List live + offline sessions, tap to activate                                             |
-| Tasks    | Kanban board of Claude's TodoWrite items — live updates, filter per session or across all |
-| Status   | CPU / memory / disk / process snapshot of the bot host                                    |
-| Agents   | Spawn a new desktop session into a chosen project directory                               |
+| Tab      | Purpose                                                                                                                                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat     | Live terminal-style feed for the active session: history replay, markdown, TUI-style tool headers (Edit diffs, Bash blocks), per-tool result bodies with tap-to-expand, sticky permission-mode banner, hook cards |
+| Sessions | List live + offline sessions, tap to activate                                                                                                                                                                     |
+| Tasks    | Kanban board of Claude's TodoWrite items — live updates, filter per session or across all                                                                                                                         |
+| Status   | CPU / memory / disk / process snapshot of the bot host                                                                                                                                                            |
+| Agents   | Spawn a new desktop session into a chosen project directory                                                                                                                                                       |
 
 ### Enable
 
@@ -157,6 +158,8 @@ Dev mode (hot reload):
 ```bash
 cd web && bun run dev   # Vite at :5173, proxies API to WEB_PORT
 ```
+
+The web server runs inside the main bot process — no separate command. `bun run start` (or `bun run dev` at the repo root) boots both; the bundled frontend at `web/dist/` is served from `WEB_PORT` when `WEB_ENABLED=true`.
 
 Use `/app` from Telegram to get the Mini App link (tap-to-launch button in private chats, plain URL in groups).
 
