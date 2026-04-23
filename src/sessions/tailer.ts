@@ -31,7 +31,7 @@ function stripChannelTag(text: string): string {
 }
 
 /** Flatten a tool_result content (string or text-block array) into a single string. */
-function extractToolResultText(content: unknown): string {
+export function extractToolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content

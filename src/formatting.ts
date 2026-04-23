@@ -369,8 +369,10 @@ export function formatToolResultSummary(
     return `❌ <b>${escapeHtml(safeName)}</b>: ${escapeHtml(truncate(resultContent, 200))}`;
   }
   if (toolName === "Bash") {
-    const lines = resultContent.split("\n");
-    const lastLine = (lines[lines.length - 1] ?? "").trim();
+    // Bash output ends with "\n"; strip it so lastLine is the real tail.
+    const trimmed = resultContent.replace(/\n+$/, "");
+    const lines = trimmed.split("\n");
+    const lastLine = lines[lines.length - 1] ?? "";
     const more = lines.length > 1 ? ` (+${lines.length - 1} lines)` : "";
     return `▶️ <b>Bash</b>: ${code(truncate(lastLine, 80))}${more}`;
   }

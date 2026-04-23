@@ -537,6 +537,28 @@ describe("watch: handleTailEvent tool_result", () => {
     expect(sent[0]!.text).toContain("Bash");
   });
 
+  test("tool_result for Bash strips trailing newline before picking last line", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    state.toolUseRegistry = new Map([["tu_b", "Bash"]]);
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "tool_result",
+        content: "first line\nlast useful line\n",
+        toolUseId: "tu_b",
+        isError: false,
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("last useful line");
+    // Multi-line output should also advertise the extra-lines count.
+    expect(sent[0]!.text).toContain("+1 lines");
+  });
+
   test("tool_result for Read does NOT send (ephemeral, suppressed)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
@@ -658,6 +680,37 @@ describe("watch: handleTailEvent permission_mode", () => {
       6302,
     );
     expect(sent).toHaveLength(0);
+  });
+
+  test("plan → default → plan cycle re-emits the second plan", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "permission_mode",
+        content: "default",
+        permissionMode: "default",
+      },
+      6302,
+    );
+    handleTailEvent(
+      api,
+      state,
+      { type: "permission_mode", content: "plan", permissionMode: "plan" },
+      6302,
+    );
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.text).toContain("Plan mode");
+    expect(sent[1]!.text).toContain("Plan mode");
   });
 });
 

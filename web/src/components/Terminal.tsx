@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { diffLines } from "diff";
@@ -95,47 +95,82 @@ function gutter(n: number | null): string {
   return s.length >= 3 ? s : s.padStart(3, " ");
 }
 
-function DiffLines({ oldStr, newStr }: { oldStr: string; newStr: string }) {
-  const rows = buildDiffRows(oldStr, newStr);
+const DIFF_HEAD_ROWS = 50;
+
+function ExpandToggle({
+  expanded,
+  onToggle,
+  collapsedLabel,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  collapsedLabel: string;
+}) {
   return (
-    <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 rounded overflow-hidden">
-      {rows.map((row, i) => {
-        const isAdd = row.marker === "+";
-        const isDel = row.marker === "-";
-        const rowClass = isAdd
-          ? "bg-green-950/40 text-green-300"
-          : isDel
-            ? "bg-red-950/40 text-red-300"
-            : "text-neutral-300";
-        const oldGutterClass = isDel
-          ? "text-red-400/80"
-          : isAdd
-            ? "text-neutral-600"
-            : "text-neutral-500";
-        const newGutterClass = isAdd
-          ? "text-green-400/80"
-          : isDel
-            ? "text-neutral-600"
-            : "text-neutral-500";
-        const markerClass = isAdd
-          ? "text-green-400"
-          : isDel
-            ? "text-red-400"
-            : "text-neutral-500";
-        return (
-          <div key={i} className={`flex ${rowClass}`}>
-            <span className={`select-none pr-1 tabular-nums ${oldGutterClass}`}>
-              {gutter(row.oldNo)}
-            </span>
-            <span className={`select-none pr-2 tabular-nums ${newGutterClass}`}>
-              {gutter(row.newNo)}
-            </span>
-            <span className={`select-none pr-1 ${markerClass}`}>{row.marker}</span>
-            <span className="flex-1">{row.text || " "}</span>
-          </div>
-        );
-      })}
-    </pre>
+    <button
+      type="button"
+      onClick={onToggle}
+      className="text-[11px] text-terminal-muted/80 hover:text-terminal-text mt-0.5 cursor-pointer"
+    >
+      {expanded ? "− collapse" : collapsedLabel}
+    </button>
+  );
+}
+
+function DiffLines({ oldStr, newStr }: { oldStr: string; newStr: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = useMemo(() => buildDiffRows(oldStr, newStr), [oldStr, newStr]);
+  const overflow = rows.length > DIFF_HEAD_ROWS;
+  const display = expanded || !overflow ? rows : rows.slice(0, DIFF_HEAD_ROWS);
+  const hidden = rows.length - DIFF_HEAD_ROWS;
+  return (
+    <div>
+      <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all m-0 rounded overflow-hidden">
+        {display.map((row, i) => {
+          const isAdd = row.marker === "+";
+          const isDel = row.marker === "-";
+          const rowClass = isAdd
+            ? "bg-green-950/40 text-green-300"
+            : isDel
+              ? "bg-red-950/40 text-red-300"
+              : "text-neutral-300";
+          const oldGutterClass = isDel
+            ? "text-red-400/80"
+            : isAdd
+              ? "text-neutral-600"
+              : "text-neutral-500";
+          const newGutterClass = isAdd
+            ? "text-green-400/80"
+            : isDel
+              ? "text-neutral-600"
+              : "text-neutral-500";
+          const markerClass = isAdd
+            ? "text-green-400"
+            : isDel
+              ? "text-red-400"
+              : "text-neutral-500";
+          return (
+            <div key={i} className={`flex ${rowClass}`}>
+              <span className={`select-none pr-1 tabular-nums ${oldGutterClass}`}>
+                {gutter(row.oldNo)}
+              </span>
+              <span className={`select-none pr-2 tabular-nums ${newGutterClass}`}>
+                {gutter(row.newNo)}
+              </span>
+              <span className={`select-none pr-1 ${markerClass}`}>{row.marker}</span>
+              <span className="flex-1">{row.text || " "}</span>
+            </div>
+          );
+        })}
+      </pre>
+      {overflow && (
+        <ExpandToggle
+          expanded={expanded}
+          onToggle={() => setExpanded(!expanded)}
+          collapsedLabel={`… +${hidden} lines (tap to expand)`}
+        />
+      )}
+    </div>
   );
 }
 
@@ -201,13 +236,11 @@ function CollapsibleHead({
   return (
     <div>
       <pre className={bodyClass}>{display}</pre>
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="text-[11px] text-terminal-muted/80 hover:text-terminal-text mt-0.5 cursor-pointer"
-      >
-        {expanded ? "− collapse" : `… +${hidden} lines (tap to expand)`}
-      </button>
+      <ExpandToggle
+        expanded={expanded}
+        onToggle={() => setExpanded(!expanded)}
+        collapsedLabel={`… +${hidden} lines (tap to expand)`}
+      />
     </div>
   );
 }
@@ -234,15 +267,11 @@ function CollapsibleText({
   return (
     <div>
       <pre className={bodyClass}>{display}</pre>
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="text-[11px] text-terminal-muted/80 hover:text-terminal-text mt-0.5 cursor-pointer"
-      >
-        {expanded
-          ? "− collapse"
-          : `… +${hidden.toLocaleString()} chars (tap to expand)`}
-      </button>
+      <ExpandToggle
+        expanded={expanded}
+        onToggle={() => setExpanded(!expanded)}
+        collapsedLabel={`… +${hidden.toLocaleString()} chars (tap to expand)`}
+      />
     </div>
   );
 }

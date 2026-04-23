@@ -4,6 +4,7 @@ import { findSessionJsonl } from "../tasks/reader";
 import type { SseEvent } from "../sse";
 import { formatToolStatus } from "../../formatting";
 import { warn } from "../../logger";
+import { extractToolResultText } from "../../sessions/tailer";
 
 interface JsonlEntry {
   type?: string;
@@ -29,19 +30,6 @@ interface AssistantBlock {
 
 function getClaudeDir(): string {
   return process.env.CLAUDE_DIR || `${process.env.HOME}/.claude`;
-}
-
-function extractToolResultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((b: { type?: string; text?: string }) =>
-        b?.type === "text" && typeof b.text === "string" ? b.text : "",
-      )
-      .filter((t) => t.length > 0)
-      .join("\n");
-  }
-  return "";
 }
 
 // Channel-relay-wrapped messages come from the web UI or Telegram

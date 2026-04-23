@@ -125,6 +125,12 @@ export interface TailDisplayState {
   progressMessages?: Message[];
   /** Optional: stop showing progress after final reply (used by relay). */
   finalReplyReceived?: boolean;
+  /** Watch-only: maps toolUseId → toolName for tool_result correlation. */
+  toolUseRegistry?: Map<string, string>;
+  /** Watch-only: last permission mode emitted (for dedup). */
+  lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  /** Watch-only: suppress the next relay_reply text (PDF replaces it). */
+  suppressRelayReplyText?: boolean;
 }
 
 // ============== Watch State ==============
@@ -138,8 +144,6 @@ interface WatchState extends TailDisplayState {
   lastEventTime: number;
   /** Topic thread ID — all messages go to this thread. */
   threadId: number;
-  /** When true, tailer should suppress the next relay_reply text (PDF replaces it). */
-  suppressRelayReplyText?: boolean;
   /** Cleanup function to remove relay callbacks when watch stops. */
   relayCleanup?: () => void;
   /** Interval that detects when the desktop session starts a new conversation. */
@@ -153,15 +157,24 @@ interface WatchState extends TailDisplayState {
    * once, then resume normal behavior.
    */
   suppressNextIdChangeNotice?: boolean;
-  /** Maps toolUseId → toolName for tool_result correlation. */
-  toolUseRegistry?: Map<string, string>;
-  /** Last permission mode emitted (for dedup in case "permission_mode"). */
-  lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
 }
 
 // Active watches: "chatId:threadId" -> WatchState
 type WatchKey = `${number}:${number}`;
 const watches = new Map<WatchKey, WatchState>();
+
+// Tools whose successful results get promoted to their own Telegram message
+// (survive subsequent text streaming). Dense tools (Read/Write/Edit) stay
+// ephemeral. Errors always promote, regardless of tool.
+const PROMOTE_ON_SUCCESS = new Set([
+  "Bash",
+  "Grep",
+  "Glob",
+  "Task",
+  "Agent",
+  "WebFetch",
+  "WebSearch",
+]);
 
 // Recently-killed session ids. A sibling sharing the dir could otherwise
 // drift onto the dying session's JSONL (still the newest for a moment).
@@ -1084,13 +1097,12 @@ export function handleTailEvent(
     case "tool": {
       // Register this tool_use so a later tool_result can look up its name.
       if (event.toolUseId && event.toolName) {
-        const ws = state as WatchState;
-        if (!ws.toolUseRegistry) ws.toolUseRegistry = new Map();
-        ws.toolUseRegistry.set(event.toolUseId, event.toolName);
+        if (!state.toolUseRegistry) state.toolUseRegistry = new Map();
+        state.toolUseRegistry.set(event.toolUseId, event.toolName);
         // Bound the registry to last 100 entries to avoid unbounded growth.
-        if (ws.toolUseRegistry.size > 100) {
-          const firstKey = ws.toolUseRegistry.keys().next().value;
-          if (firstKey !== undefined) ws.toolUseRegistry.delete(firstKey);
+        if (state.toolUseRegistry.size > 100) {
+          const firstKey = state.toolUseRegistry.keys().next().value;
+          if (firstKey !== undefined) state.toolUseRegistry.delete(firstKey);
         }
       }
 
@@ -1125,22 +1137,12 @@ export function handleTailEvent(
     }
 
     case "tool_result": {
-      const ws = state as WatchState;
-      const toolName = ws.toolUseRegistry?.get(event.toolUseId ?? "");
-      const PROMOTE_ON_SUCCESS = new Set([
-        "Bash",
-        "Grep",
-        "Glob",
-        "Task",
-        "Agent",
-        "WebFetch",
-        "WebSearch",
-      ]);
+      const toolName = state.toolUseRegistry?.get(event.toolUseId ?? "");
       const shouldPromote =
         event.isError === true || PROMOTE_ON_SUCCESS.has(toolName ?? "");
 
       // Free the registry entry regardless of promotion decision.
-      ws.toolUseRegistry?.delete(event.toolUseId ?? "");
+      state.toolUseRegistry?.delete(event.toolUseId ?? "");
 
       if (!shouldPromote) break;
 
@@ -1173,11 +1175,17 @@ export function handleTailEvent(
     }
 
     case "permission_mode": {
-      const ws = state as WatchState;
       const mode = event.permissionMode;
-      if (!mode || mode === "default") break;
-      if (ws.lastPermissionMode === mode) break; // dedup
-      ws.lastPermissionMode = mode;
+      if (!mode) break;
+      if (mode === "default") {
+        // Reset dedup so a subsequent non-default mode (e.g. plan → default →
+        // plan) still notifies. Without this, the second "plan" is silently
+        // dropped because lastPermissionMode was never cleared.
+        state.lastPermissionMode = undefined;
+        break;
+      }
+      if (state.lastPermissionMode === mode) break; // dedup
+      state.lastPermissionMode = mode;
       const labels: Record<string, string> = {
         plan: "Plan mode on",
         acceptEdits: "Auto-accept on",
@@ -1261,7 +1269,6 @@ export function handleTailEvent(
       const ownChat = String(chatId);
       const isForeignOrigin =
         event.originChat !== undefined && event.originChat !== ownChat;
-      const ws = state as WatchState;
 
       if (isForeignOrigin) {
         // TCP fast path delivered to the origin surface (e.g. chat_id=web),
@@ -1272,10 +1279,10 @@ export function handleTailEvent(
           event.content,
           threadOpts.message_thread_id,
         );
-      } else if (ws.suppressRelayReplyText) {
+      } else if (state.suppressRelayReplyText) {
         // Own-origin and TCP's onReply already fired. Reset the flag, don't
         // duplicate.
-        ws.suppressRelayReplyText = false;
+        state.suppressRelayReplyText = false;
       } else {
         // Own-origin but TCP didn't deliver (failure or race). Tailer is the
         // fallback so the Telegram topic still sees the reply.
