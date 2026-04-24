@@ -46,6 +46,7 @@ import {
   suppressDirNotifications,
 } from "../sessions";
 import type { SessionInfo } from "../sessions/types";
+import { getLastUsage, formatContextLine } from "../sessions/context-usage";
 import { auditLog } from "../utils";
 import {
   isRelayAvailable,
@@ -949,12 +950,13 @@ export async function handleStatus(ctx: Context): Promise<void> {
     lines.push(`⏱️ ${ago}s ago`);
   }
 
-  // Usage stats (compact)
-  if (session.lastUsage) {
-    const u = session.lastUsage;
-    const inK = Math.round((u.input_tokens || 0) / 1000);
-    const outK = Math.round((u.output_tokens || 0) / 1000);
-    lines.push(`📈 ${inK}k in / ${outK}k out`);
+  // Context window usage (mirrored-session registry)
+  const sid = activeSession?.info.id || session.sessionId;
+  if (sid) {
+    const usage = getLastUsage(sid);
+    if (usage) {
+      lines.push(formatContextLine(usage));
+    }
   }
 
   // Error status
