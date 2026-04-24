@@ -71,6 +71,7 @@ mock.module("../settings", () => ({
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
+  getContextNotifyStep: () => 0,
 }));
 
 // Mock sessions module
@@ -185,6 +186,7 @@ mock.module("../handlers/watch", () => ({
   startWatchingAndNotify: mockStartWatchingAndNotify,
   stopWatchByName: mockStopWatchByName,
   isWatchingAny: mockIsWatchingAny,
+  getWatch: () => undefined,
 }));
 
 const mockReadKeychainToken = mock(async (): Promise<string | null> => null);
@@ -775,22 +777,58 @@ describe("commands: /status", () => {
     expect(text).toContain("ago");
   });
 
-  test("handleStatus shows usage stats when available", async () => {
+  test("status: includes context line when registry has usage", async () => {
     const { handleStatus } = await import("../handlers/commands");
+    const { recordUsage, _resetRegistryForTests } =
+      await import("../sessions/context-usage");
+    _resetRegistryForTests();
+
+    const sid = "test-session-id";
     mockActiveSession = {
       name: "usage-session",
-      info: { dir: "/tmp/usage", name: "usage-session" },
+      info: { dir: "/tmp/usage", id: sid, name: "usage-session" },
     };
     mockSessionState.isActive = true;
-    mockSessionState.sessionId = "test-123";
-    mockSessionState.lastUsage = { input_tokens: 5000, output_tokens: 2000 };
-    const ctx = createMockContext({ userId: 123456 });
+    mockSessionState.sessionId = sid;
 
+    recordUsage(sid, {
+      input_tokens: 50_000,
+      output_tokens: 100,
+    });
+
+    const ctx = createMockContext({ userId: 123456 });
     await handleStatus(ctx as any);
 
-    const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("k in");
-    expect(text).toContain("k out");
+    const reply = ctx._replies[0]?.text || "";
+    expect(reply).toContain("🧠");
+    expect(reply).toContain("5%");
+    expect(reply).toContain("(50k/1M)");
+    expect(reply).not.toContain("📈");
+  });
+
+  test("status: omits context line when registry is empty", async () => {
+    const { handleStatus } = await import("../handlers/commands");
+    const { _resetRegistryForTests } =
+      await import("../sessions/context-usage");
+    _resetRegistryForTests();
+
+    mockActiveSession = {
+      name: "empty-usage-session",
+      info: {
+        dir: "/tmp/empty",
+        id: "empty-sid",
+        name: "empty-usage-session",
+      },
+    };
+    mockSessionState.isActive = true;
+    mockSessionState.sessionId = "empty-sid";
+
+    const ctx = createMockContext({ userId: 123456 });
+    await handleStatus(ctx as any);
+
+    const reply = ctx._replies[0]?.text || "";
+    expect(reply).not.toContain("🧠");
+    expect(reply).not.toContain("📈");
   });
 
   test("handleStatus shows error when present", async () => {

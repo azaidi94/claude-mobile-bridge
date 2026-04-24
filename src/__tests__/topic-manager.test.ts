@@ -53,6 +53,7 @@ mock.module("../settings", () => ({
   getDefaultModelSetting: () => undefined,
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
+  getContextNotifyStep: () => 0,
   getOverrides: () => ({}),
   saveSetting: async () => {},
   _reloadForTests: () => {},

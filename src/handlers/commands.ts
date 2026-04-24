@@ -46,6 +46,7 @@ import {
   suppressDirNotifications,
 } from "../sessions";
 import type { SessionInfo } from "../sessions/types";
+import { getLastUsage, formatContextLine } from "../sessions/context-usage";
 import { auditLog } from "../utils";
 import {
   isRelayAvailable,
@@ -53,7 +54,7 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import { startWatchingSession, stopWatchByName } from "./watch";
+import { getWatch, startWatchingSession, stopWatchByName } from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -949,12 +950,20 @@ export async function handleStatus(ctx: Context): Promise<void> {
     lines.push(`⏱️ ${ago}s ago`);
   }
 
-  // Usage stats (compact)
-  if (session.lastUsage) {
-    const u = session.lastUsage;
-    const inK = Math.round((u.input_tokens || 0) / 1000);
-    const outK = Math.round((u.output_tokens || 0) / 1000);
-    lines.push(`📈 ${inK}k in / ${outK}k out`);
+  // Context window usage (mirrored-session registry).
+  // Prefer the live watch's sessionId — it tracks ID drift (compact /
+  // new conversation in the desktop CC), whereas activeSession.info.id
+  // can lag behind.
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  const watch =
+    chatId && threadId !== undefined ? getWatch(chatId, threadId) : undefined;
+  const sid = watch?.sessionId || activeSession?.info.id || session.sessionId;
+  if (sid) {
+    const usage = getLastUsage(sid);
+    if (usage) {
+      lines.push(formatContextLine(usage));
+    }
   }
 
   // Error status

@@ -53,6 +53,7 @@ import {
   getWorkingDir,
   getOverrides,
   getEnablePinnedStatus,
+  getContextNotifyStep,
 } from "../settings";
 import type { TerminalApp } from "../config";
 import { debug, error as logError, info } from "../logger";
@@ -749,7 +750,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   }
 }
 
-async function handleSettingsCallback(
+export async function handleSettingsCallback(
   ctx: Context,
   chatId: number,
   data: string,
@@ -832,6 +833,21 @@ async function handleSettingsCallback(
       return;
     }
 
+    if (field === "contextnotify") {
+      const current = getContextNotifyStep();
+      const order = [0, 10, 25, 50];
+      const idx = order.indexOf(current);
+      const nextIdx = idx === -1 ? 1 : (idx + 1) % order.length;
+      const next = order[nextIdx]!;
+      await saveSetting({
+        contextNotifyStep: next === 0 ? undefined : next,
+      });
+      await rerenderSettingsPanel(ctx);
+      const label = next === 0 ? "off" : `every ${next}%`;
+      await ctx.answerCallbackQuery({ text: `Context notify: ${label}` });
+      return;
+    }
+
     if (field === "model") {
       const current = session.model;
       const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
@@ -895,6 +911,8 @@ async function handleSettingsCallback(
       await saveSetting({ autoWatchOnSpawn: undefined });
     } else if (field === "pinnedstatus") {
       await saveSetting({ enablePinnedStatus: undefined });
+    } else if (field === "contextnotify") {
+      await saveSetting({ contextNotifyStep: undefined });
     } else if (field === "model") {
       // Clearing the override only affects next restart; the live session
       // keeps whatever model it last had.
