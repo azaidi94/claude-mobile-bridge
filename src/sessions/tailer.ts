@@ -391,10 +391,8 @@ export class SessionTailer {
 
         const usage = entry.message?.usage;
         if (
-          usage &&
-          typeof usage === "object" &&
-          typeof usage.input_tokens === "number" &&
-          typeof usage.output_tokens === "number"
+          typeof usage?.input_tokens === "number" &&
+          typeof usage?.output_tokens === "number"
         ) {
           events.push({
             type: "usage",
@@ -402,14 +400,8 @@ export class SessionTailer {
             usage: {
               input_tokens: usage.input_tokens,
               output_tokens: usage.output_tokens,
-              cache_creation_input_tokens:
-                typeof usage.cache_creation_input_tokens === "number"
-                  ? usage.cache_creation_input_tokens
-                  : undefined,
-              cache_read_input_tokens:
-                typeof usage.cache_read_input_tokens === "number"
-                  ? usage.cache_read_input_tokens
-                  : undefined,
+              cache_creation_input_tokens: usage.cache_creation_input_tokens,
+              cache_read_input_tokens: usage.cache_read_input_tokens,
             },
           });
         }

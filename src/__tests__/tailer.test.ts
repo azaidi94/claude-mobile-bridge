@@ -474,13 +474,17 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    const usage = events.find((e) => e.type === "usage");
-    expect(usage).toBeDefined();
-    expect(usage!.usage).toEqual({
-      input_tokens: 10,
-      output_tokens: 40,
-      cache_creation_input_tokens: 200,
-      cache_read_input_tokens: 50_000,
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe("text");
+    expect(events[1]).toMatchObject({
+      type: "usage",
+      content: "",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 40,
+        cache_creation_input_tokens: 200,
+        cache_read_input_tokens: 50_000,
+      },
     });
   });
 
