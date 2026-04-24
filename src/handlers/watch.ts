@@ -42,6 +42,13 @@ import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
 import { globalEventBus, type SseEvent } from "../web/sse";
+import {
+  recordUsage,
+  computeContextPct,
+  checkThresholdCrossing,
+} from "../sessions/context-usage";
+import { getContextNotifyStep } from "../settings";
+import type { TokenUsage } from "../types";
 
 // ============== SSE Bridge ==============
 
@@ -157,6 +164,11 @@ interface WatchState extends TailDisplayState {
    * once, then resume normal behavior.
    */
   suppressNextIdChangeNotice?: boolean;
+  /**
+   * Highest context-usage threshold bucket already notified on this watch.
+   * Zero means none fired yet (or bucket was reset after a compact).
+   */
+  lastNotifiedBucket?: number;
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -502,6 +514,14 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
     }
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
+      if (event.type === "usage" && event.usage) {
+        maybeNotifyContextCrossing(
+          botApi,
+          watchState,
+          watchState.sessionId,
+          event.usage,
+        ).catch((err) => warn(`context notify: ${err}`));
+      }
       handleTailEvent(botApi, watchState, event, watchState.threadId);
       bridgeTailToSse(globalEventBus, watchState.sessionId, event);
     });
@@ -629,6 +649,14 @@ export async function startAutoWatch(
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      maybeNotifyContextCrossing(
+        botApi,
+        watchState,
+        sessionInfo.id,
+        event.usage,
+      ).catch((err) => warn(`context notify: ${err}`));
+    }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
@@ -837,6 +865,14 @@ export async function startWatchingSession(
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      maybeNotifyContextCrossing(
+        botApi,
+        watchState,
+        sessionInfo.id,
+        event.usage,
+      ).catch((err) => warn(`context notify: ${err}`));
+    }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);
   });
@@ -1038,6 +1074,44 @@ export function _getWatchForTests(
   threadId: number,
 ): WatchState | undefined {
   return watches.get(watchKey(chatId, threadId));
+}
+
+// ============== Context-Usage Notification ==============
+
+/**
+ * For a mirrored-session watch: record the new usage in the registry,
+ * then if the notify step is set, fire a one-shot Telegram message when
+ * a new threshold bucket is crossed. Resets the bucket to 0 if observed
+ * pct dropped below the last-notified bucket (compact / reset).
+ */
+export async function maybeNotifyContextCrossing(
+  botApi: Api,
+  state: WatchState,
+  sessionId: string,
+  usage: TokenUsage,
+): Promise<void> {
+  recordUsage(sessionId, usage);
+
+  const step = getContextNotifyStep();
+  if (step <= 0) return;
+
+  const pct = computeContextPct(usage);
+  let prev = state.lastNotifiedBucket ?? 0;
+  if (pct < prev) {
+    prev = 0;
+    state.lastNotifiedBucket = 0;
+  }
+
+  const { fire, bucket } = checkThresholdCrossing(prev, pct, step);
+  if (!fire) return;
+
+  state.lastNotifiedBucket = bucket;
+
+  await botApi
+    .sendMessage(state.chatId, `⚠️ Context ${pct}%`, {
+      message_thread_id: state.threadId,
+    })
+    .catch((err) => warn(`context notify: ${err}`));
 }
 
 // ============== Tail Event Display ==============
@@ -1349,6 +1423,10 @@ export function handleTailEvent(
         });
       break;
     }
+
+    case "usage":
+      // Handled by the tailer-callback wrapper in watch.ts (maybeNotifyContextCrossing).
+      break;
   }
 }
 

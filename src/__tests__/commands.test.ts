@@ -71,6 +71,7 @@ mock.module("../settings", () => ({
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
+  getContextNotifyStep: () => 0,
 }));
 
 // Mock sessions module

@@ -36,16 +36,24 @@ mock.module("../security", () => ({
   checkCommandSafety: () => [true, ""],
 }));
 
+// Mutable settings state so tests can tune getContextNotifyStep via saveSetting.
+const _settingsState: { contextNotifyStep: number } = { contextNotifyStep: 0 };
 mock.module("../settings", () => ({
   getWorkingDir: () => "/tmp/test-working-dir",
   getTerminal: () => "terminal" as const,
   getAutoWatchOnSpawn: () => true,
   getDefaultModelSetting: () => undefined,
   getOverrides: () => ({}),
-  saveSetting: mock(() => Promise.resolve()),
+  saveSetting: mock((patch: { contextNotifyStep?: number }) => {
+    if (typeof patch?.contextNotifyStep === "number") {
+      _settingsState.contextNotifyStep = patch.contextNotifyStep;
+    }
+    return Promise.resolve();
+  }),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
+  getContextNotifyStep: () => _settingsState.contextNotifyStep,
 }));
 
 // Import directly from source to avoid barrel export issues
@@ -770,5 +778,121 @@ describe("watch: handleTailEvent hook_summary", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("lint");
     expect(sent[0]!.text).toContain("blocked");
+  });
+});
+
+describe("context notify", () => {
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: unknown;
+    }> = [];
+    const api = {
+      sendMessage: mock(
+        (chatId: number | string, text: string, opts?: unknown) => {
+          sent.push({ chatId, text, opts });
+          return Promise.resolve({ message_id: 1 });
+        },
+      ),
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api & {
+      sendMessage: ReturnType<typeof mock>;
+    };
+    return { api, sent };
+  }
+
+  // Minimal WatchState — we only exercise fields the helper reads/writes.
+  // Cast via `as unknown as` because `WatchState` also requires tailer,
+  // sessionName, etc. which are irrelevant here.
+  const makeWatchState = (
+    chatId: number,
+    threadId: number,
+    lastNotifiedBucket: number,
+  ): any => ({
+    chatId,
+    threadId,
+    lastNotifiedBucket,
+    // TailDisplayState minimum
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+  });
+
+  test("fires once at first bucket crossing, silent on same-bucket next turn", async () => {
+    const { saveSetting } = await import("../settings");
+    await saveSetting({ contextNotifyStep: 25 });
+    const { _resetRegistryForTests } =
+      await import("../sessions/context-usage");
+    _resetRegistryForTests();
+
+    const { maybeNotifyContextCrossing } = await import("../handlers/watch");
+    const { api, sent } = makeMockApi();
+    const state = makeWatchState(1001, 42, 0);
+
+    // 300_000 / 1M = 30% → bucket 25
+    await maybeNotifyContextCrossing(api, state, "sid-a", {
+      input_tokens: 300_000,
+      output_tokens: 100,
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Context 30%");
+    expect(state.lastNotifiedBucket).toBe(25);
+
+    // 350_000 / 1M = 35% → still bucket 25
+    await maybeNotifyContextCrossing(api, state, "sid-a", {
+      input_tokens: 350_000,
+      output_tokens: 100,
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  test("step=0 never fires", async () => {
+    const { saveSetting } = await import("../settings");
+    await saveSetting({ contextNotifyStep: 0 });
+    const { _resetRegistryForTests } =
+      await import("../sessions/context-usage");
+    _resetRegistryForTests();
+
+    const { maybeNotifyContextCrossing } = await import("../handlers/watch");
+    const { api, sent } = makeMockApi();
+    const state = makeWatchState(1001, 42, 0);
+
+    await maybeNotifyContextCrossing(api, state, "sid-b", {
+      input_tokens: 900_000,
+      output_tokens: 0,
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  test("compact resets bucket and re-arms", async () => {
+    const { saveSetting } = await import("../settings");
+    await saveSetting({ contextNotifyStep: 25 });
+    const { _resetRegistryForTests } =
+      await import("../sessions/context-usage");
+    _resetRegistryForTests();
+
+    const { maybeNotifyContextCrossing } = await import("../handlers/watch");
+    const { api, sent } = makeMockApi();
+    const state = makeWatchState(1001, 42, 50);
+
+    // 5% — below prior bucket 50, resets to 0, no fire.
+    await maybeNotifyContextCrossing(api, state, "sid-c", {
+      input_tokens: 50_000,
+      output_tokens: 0,
+    });
+    expect(sent).toHaveLength(0);
+    expect(state.lastNotifiedBucket).toBe(0);
+
+    // 30% — crosses 25 again → fires.
+    await maybeNotifyContextCrossing(api, state, "sid-c", {
+      input_tokens: 300_000,
+      output_tokens: 0,
+    });
+    expect(sent).toHaveLength(1);
+    expect(state.lastNotifiedBucket).toBe(25);
   });
 });

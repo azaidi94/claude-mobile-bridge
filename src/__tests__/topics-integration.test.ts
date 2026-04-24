@@ -19,6 +19,7 @@ import { join } from "path";
 mock.module("../settings", () => ({
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
+  getContextNotifyStep: () => 0,
   getTerminal: () => "Terminal" as const,
   getWorkingDir: () => "/tmp",
   getAutoWatchOnSpawn: () => true,
