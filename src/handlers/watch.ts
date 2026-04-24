@@ -142,7 +142,7 @@ export interface TailDisplayState {
 
 // ============== Watch State ==============
 
-interface WatchState extends TailDisplayState {
+export interface WatchState extends TailDisplayState {
   sessionName: string;
   sessionId: string;
   sessionDir: string;
@@ -515,12 +515,12 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
     watchState.tailer?.stop();
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
       if (event.type === "usage" && event.usage) {
-        maybeNotifyContextCrossing(
+        void maybeNotifyContextCrossing(
           botApi,
           watchState,
           watchState.sessionId,
           event.usage,
-        ).catch((err) => warn(`context notify: ${err}`));
+        );
       }
       handleTailEvent(botApi, watchState, event, watchState.threadId);
       bridgeTailToSse(globalEventBus, watchState.sessionId, event);
@@ -650,12 +650,12 @@ export async function startAutoWatch(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
-      maybeNotifyContextCrossing(
+      void maybeNotifyContextCrossing(
         botApi,
         watchState,
         sessionInfo.id,
         event.usage,
-      ).catch((err) => warn(`context notify: ${err}`));
+      );
     }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);
@@ -866,12 +866,12 @@ export async function startWatchingSession(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
-      maybeNotifyContextCrossing(
+      void maybeNotifyContextCrossing(
         botApi,
         watchState,
         sessionInfo.id,
         event.usage,
-      ).catch((err) => warn(`context notify: ${err}`));
+      );
     }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);

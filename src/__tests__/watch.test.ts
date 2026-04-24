@@ -810,17 +810,18 @@ describe("context notify", () => {
     chatId: number,
     threadId: number,
     lastNotifiedBucket: number,
-  ): any => ({
-    chatId,
-    threadId,
-    lastNotifiedBucket,
-    // TailDisplayState minimum
-    currentToolMsg: null,
-    currentTextMsg: null,
-    currentTextContent: "",
-    lastTextUpdate: 0,
-    segmentDone: true,
-  });
+  ) =>
+    ({
+      chatId,
+      threadId,
+      lastNotifiedBucket,
+      // TailDisplayState minimum
+      currentToolMsg: null,
+      currentTextMsg: null,
+      currentTextContent: "",
+      lastTextUpdate: 0,
+      segmentDone: true,
+    }) as unknown as import("../handlers/watch").WatchState;
 
   test("fires once at first bucket crossing, silent on same-bucket next turn", async () => {
     const { saveSetting } = await import("../settings");
