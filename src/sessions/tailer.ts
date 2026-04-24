@@ -10,6 +10,7 @@ import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
+import type { TokenUsage } from "../types";
 import { PROJECTS_DIR } from "./watcher";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -53,7 +54,8 @@ export type TailEventType =
   | "relay_reply"
   | "tool_result"
   | "permission_mode"
-  | "hook_summary";
+  | "hook_summary"
+  | "usage";
 
 export interface TailEvent {
   type: TailEventType;
@@ -83,6 +85,8 @@ export interface TailEvent {
     firstError?: string;
     failingHookName?: string;
   };
+  /** For "usage" events: parsed assistant-turn token counts. */
+  usage?: TokenUsage;
 }
 
 export type TailCallback = (event: TailEvent) => void;
@@ -383,6 +387,31 @@ export class SessionTailer {
           if (block.type === "text" && block.text) {
             events.push({ type: "text", content: block.text });
           }
+        }
+
+        const usage = entry.message?.usage;
+        if (
+          usage &&
+          typeof usage === "object" &&
+          typeof usage.input_tokens === "number" &&
+          typeof usage.output_tokens === "number"
+        ) {
+          events.push({
+            type: "usage",
+            content: "",
+            usage: {
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cache_creation_input_tokens:
+                typeof usage.cache_creation_input_tokens === "number"
+                  ? usage.cache_creation_input_tokens
+                  : undefined,
+              cache_read_input_tokens:
+                typeof usage.cache_read_input_tokens === "number"
+                  ? usage.cache_read_input_tokens
+                  : undefined,
+            },
+          });
         }
 
         return events;

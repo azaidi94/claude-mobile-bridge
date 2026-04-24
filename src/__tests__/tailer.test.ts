@@ -458,6 +458,40 @@ describe("tailer: parseLine", () => {
     });
     expect(tailer.parseLine(line)).toEqual([]);
   });
+
+  test("emits usage event from assistant entry", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "ok" }],
+        usage: {
+          input_tokens: 10,
+          cache_creation_input_tokens: 200,
+          cache_read_input_tokens: 50_000,
+          output_tokens: 40,
+        },
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    const usage = events.find((e) => e.type === "usage");
+    expect(usage).toBeDefined();
+    expect(usage!.usage).toEqual({
+      input_tokens: 10,
+      output_tokens: 40,
+      cache_creation_input_tokens: 200,
+      cache_read_input_tokens: 50_000,
+    });
+  });
+
+  test("no usage event when usage block missing", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "ok" }] },
+    });
+    const events = tailer.parseLine(line);
+    expect(events.find((e) => e.type === "usage")).toBeUndefined();
+  });
 });
 
 // ============== findSessionJsonlPath ==============
