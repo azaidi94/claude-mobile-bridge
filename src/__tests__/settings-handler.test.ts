@@ -117,6 +117,50 @@ describe("renderSettingsKeyboard", () => {
   });
 });
 
+describe("context notify cycle", () => {
+  test("cycles off → 10 → 25 → 50 → off on repeated taps", async () => {
+    const { handleSettingsCallback } = await import("../handlers/callback");
+    const { getContextNotifyStep, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+
+    const makeCtx = () =>
+      ({
+        editMessageText: async () => {},
+        answerCallbackQuery: async () => {},
+      }) as any;
+
+    await handleSettingsCallback(makeCtx(), 1, "set:edit:contextnotify");
+    expect(getContextNotifyStep()).toBe(10);
+
+    await handleSettingsCallback(makeCtx(), 1, "set:edit:contextnotify");
+    expect(getContextNotifyStep()).toBe(25);
+
+    await handleSettingsCallback(makeCtx(), 1, "set:edit:contextnotify");
+    expect(getContextNotifyStep()).toBe(50);
+
+    await handleSettingsCallback(makeCtx(), 1, "set:edit:contextnotify");
+    expect(getContextNotifyStep()).toBe(0);
+  });
+
+  test("reset clears the override", async () => {
+    const { handleSettingsCallback } = await import("../handlers/callback");
+    const { getContextNotifyStep, saveSetting, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+
+    await saveSetting({ contextNotifyStep: 25 });
+    expect(getContextNotifyStep()).toBe(25);
+
+    const ctx = {
+      editMessageText: async () => {},
+      answerCallbackQuery: async () => {},
+    } as any;
+    await handleSettingsCallback(ctx, 1, "set:reset:contextnotify");
+    expect(getContextNotifyStep()).toBe(0);
+  });
+});
+
 describe("context notify row", () => {
   test("renderSettingsBody shows 'off' when unset", async () => {
     const { renderSettingsBody } = await import("../handlers/settings");
