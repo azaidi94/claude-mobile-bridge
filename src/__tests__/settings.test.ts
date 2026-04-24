@@ -162,3 +162,37 @@ describe("loadSync sanitization", () => {
     expect(getTerminal()).toBe("iterm2");
   });
 });
+
+describe("contextNotifyStep", () => {
+  test("accepts 0, 10, 25, 50", async () => {
+    await writeFile(settingsPath, JSON.stringify({ contextNotifyStep: 25 }));
+    const { getContextNotifyStep, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+    expect(getContextNotifyStep()).toBe(25);
+  });
+
+  test("rejects non-allowlisted numeric values", async () => {
+    await writeFile(settingsPath, JSON.stringify({ contextNotifyStep: 42 }));
+    const { getContextNotifyStep, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+    expect(getContextNotifyStep()).toBe(0);
+  });
+
+  test("defaults to 0 when unset", async () => {
+    await writeFile(settingsPath, JSON.stringify({}));
+    const { getContextNotifyStep, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+    expect(getContextNotifyStep()).toBe(0);
+  });
+
+  test("accepts 0 as explicit off", async () => {
+    await writeFile(settingsPath, JSON.stringify({ contextNotifyStep: 0 }));
+    const { getContextNotifyStep, _reloadForTests } =
+      await import("../settings");
+    _reloadForTests();
+    expect(getContextNotifyStep()).toBe(0);
+  });
+});

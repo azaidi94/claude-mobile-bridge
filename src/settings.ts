@@ -36,6 +36,11 @@ export interface BridgeSettings {
    * `undefined` = auto (follow forum-group detection at runtime).
    */
   groupMode?: boolean;
+  /**
+   * Context-usage notification step in percent.
+   * 0 (default) = off. Valid non-zero values: 10, 25, 50.
+   */
+  contextNotifyStep?: number;
 }
 
 function resolveSettingsPath(): string {
@@ -68,6 +73,11 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.groupMode === "boolean") {
     out.groupMode = o.groupMode;
+  }
+  if (typeof o.contextNotifyStep === "number") {
+    if ([0, 10, 25, 50].includes(o.contextNotifyStep)) {
+      out.contextNotifyStep = o.contextNotifyStep;
+    }
   }
   return out;
 }
@@ -141,6 +151,10 @@ export function getEnablePinnedStatus(): boolean {
 /** Explicit group-mode override, or undefined for auto-detect. */
 export function getGroupModeSetting(): boolean | undefined {
   return ensure().groupMode;
+}
+
+export function getContextNotifyStep(): number {
+  return ensure().contextNotifyStep ?? 0;
 }
 
 /**
