@@ -54,7 +54,7 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import { startWatchingSession, stopWatchByName } from "./watch";
+import { getWatch, startWatchingSession, stopWatchByName } from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -950,8 +950,15 @@ export async function handleStatus(ctx: Context): Promise<void> {
     lines.push(`⏱️ ${ago}s ago`);
   }
 
-  // Context window usage (mirrored-session registry)
-  const sid = activeSession?.info.id || session.sessionId;
+  // Context window usage (mirrored-session registry).
+  // Prefer the live watch's sessionId — it tracks ID drift (compact /
+  // new conversation in the desktop CC), whereas activeSession.info.id
+  // can lag behind.
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  const watch =
+    chatId && threadId !== undefined ? getWatch(chatId, threadId) : undefined;
+  const sid = watch?.sessionId || activeSession?.info.id || session.sessionId;
   if (sid) {
     const usage = getLastUsage(sid);
     if (usage) {

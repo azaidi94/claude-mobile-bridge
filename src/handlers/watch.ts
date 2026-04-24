@@ -1065,6 +1065,14 @@ export function _getWatchForTests(
   return watches.get(watchKey(chatId, threadId));
 }
 
+/** Return the active watch for a given topic, if any. */
+export function getWatch(
+  chatId: number,
+  threadId: number,
+): WatchState | undefined {
+  return watches.get(watchKey(chatId, threadId));
+}
+
 // ============== Context-Usage Notification ==============
 
 /**
