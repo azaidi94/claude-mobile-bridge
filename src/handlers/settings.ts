@@ -18,6 +18,7 @@ import {
   getWorkingDir,
   getAutoWatchOnSpawn,
   getEnablePinnedStatus,
+  getContextNotifyStep,
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
@@ -34,6 +35,10 @@ export const TERMINAL_LABELS: Record<string, string> = {
   ghostty: "Ghostty",
   cmux: "cmux",
 };
+
+function formatNotifyStep(n: number): string {
+  return n === 0 ? "off" : `every ${n}%`;
+}
 
 function truncPath(p: string, max = 30): string {
   const home = process.env.HOME || "";
@@ -77,6 +82,11 @@ export function renderSettingsBody(): string {
     `📌 Pinned Status: <code>${pinnedStatus ? "on" : "off"}</code>${marker(
       "enablePinnedStatus",
     )}`,
+    "",
+    "━ Notifications ━",
+    `🧠 Context notify: <code>${formatNotifyStep(
+      getContextNotifyStep(),
+    )}</code>${marker("contextNotifyStep")}`,
   ].join("\n");
 }
 
@@ -94,6 +104,7 @@ export function renderSettingsKeyboard(): {
         { text: "🤖 Model", callback_data: "set:edit:model" },
       ],
       [{ text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" }],
+      [{ text: "🧠 Context notify", callback_data: "set:edit:contextnotify" }],
     ],
   };
 }

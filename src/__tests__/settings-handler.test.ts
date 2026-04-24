@@ -65,9 +65,9 @@ describe("renderSettingsBody", () => {
     expect(body).toContain("━ Claude defaults ━");
     expect(body).toContain("Terminal.app");
     expect(body).toContain("Opus 4.6");
-    // All five fields should be marked (default).
+    // All six fields should be marked (default).
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(5);
+    expect(defaultMatches.length).toBe(6);
   });
 
   test("drops (default) marker on fields with overrides", async () => {
@@ -77,9 +77,9 @@ describe("renderSettingsBody", () => {
     const body = renderSettingsBody();
     expect(body).toContain("iTerm2");
     expect(body).toContain("<code>off</code>");
-    // Terminal + autowatch now explicit; workdir + model + pinnedStatus still default = 3.
+    // Terminal + autowatch now explicit; workdir + model + pinnedStatus + contextNotify still default = 4.
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(3);
+    expect(defaultMatches.length).toBe(4);
   });
 
   test("truncates long working dirs with leading ellipsis", async () => {
@@ -97,13 +97,14 @@ describe("renderSettingsBody", () => {
 });
 
 describe("renderSettingsKeyboard", () => {
-  test("has five edit buttons in 3-row layout", async () => {
+  test("has six edit buttons in 4-row layout", async () => {
     const { renderSettingsKeyboard } = await import("../handlers/settings");
     const kb = renderSettingsKeyboard();
-    expect(kb.inline_keyboard.length).toBe(3);
+    expect(kb.inline_keyboard.length).toBe(4);
     expect(kb.inline_keyboard[0]!.length).toBe(2);
     expect(kb.inline_keyboard[1]!.length).toBe(2);
     expect(kb.inline_keyboard[2]!.length).toBe(1);
+    expect(kb.inline_keyboard[3]!.length).toBe(1);
     const all = kb.inline_keyboard.flat();
     expect(all.map((b) => b.callback_data)).toEqual([
       "set:edit:terminal",
@@ -111,6 +112,33 @@ describe("renderSettingsKeyboard", () => {
       "set:edit:autowatch",
       "set:edit:model",
       "set:edit:pinnedstatus",
+      "set:edit:contextnotify",
     ]);
+  });
+});
+
+describe("context notify row", () => {
+  test("renderSettingsBody shows 'off' when unset", async () => {
+    const { renderSettingsBody } = await import("../handlers/settings");
+    const body = renderSettingsBody();
+    expect(body).toContain("Context notify");
+    expect(body).toContain("off");
+  });
+
+  test("renderSettingsBody shows 'every 25%' when set to 25", async () => {
+    const { saveSetting } = await import("../settings");
+    await saveSetting({ contextNotifyStep: 25 });
+    const { renderSettingsBody } = await import("../handlers/settings");
+    const body = renderSettingsBody();
+    expect(body).toContain("every 25%");
+  });
+
+  test("renderSettingsKeyboard exposes set:edit:contextnotify button", async () => {
+    const { renderSettingsKeyboard } = await import("../handlers/settings");
+    const kb = renderSettingsKeyboard();
+    const flat = kb.inline_keyboard.flat();
+    expect(flat.some((b) => b.callback_data === "set:edit:contextnotify")).toBe(
+      true,
+    );
   });
 });
