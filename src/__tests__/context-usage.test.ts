@@ -11,7 +11,7 @@ import {
   formatContextLine,
   checkThresholdCrossing,
   recordUsage,
-  getContextState,
+  getLastUsage,
   _resetRegistryForTests,
 } from "../sessions/context-usage";
 import type { TokenUsage } from "../types";
@@ -102,16 +102,16 @@ describe("registry", () => {
   test("stores and retrieves last usage", () => {
     const u: TokenUsage = { input_tokens: 1, output_tokens: 2 };
     recordUsage("sid-1", u);
-    expect(getContextState("sid-1")?.lastUsage).toEqual(u);
+    expect(getLastUsage("sid-1")).toEqual(u);
   });
 
   test("overwrites per session", () => {
     recordUsage("sid-2", { input_tokens: 1, output_tokens: 0 });
     recordUsage("sid-2", { input_tokens: 2, output_tokens: 0 });
-    expect(getContextState("sid-2")?.lastUsage.input_tokens).toBe(2);
+    expect(getLastUsage("sid-2")?.input_tokens).toBe(2);
   });
 
   test("returns undefined for unknown session", () => {
-    expect(getContextState("nope")).toBeUndefined();
+    expect(getLastUsage("nope")).toBeUndefined();
   });
 });

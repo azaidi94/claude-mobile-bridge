@@ -1,29 +1,24 @@
 /**
  * Context-window usage helpers + per-session registry.
  *
- * Assistant turns carry a `usage` block with input/output/cache tokens.
- * `current = input + cache_creation + cache_read` over `CONTEXT_WINDOW`
- * gives the same percentage the native Claude Code statusline displays.
+ * Percentage matches the native Claude Code statusline:
+ *   (input + cache_creation + cache_read) / CONTEXT_WINDOW.
  *
- * The registry stores only `lastUsage` per session — the per-watch
- * notification bucket lives on WatchState (src/handlers/watch.ts).
+ * The per-watch notification bucket lives on WatchState
+ * (src/handlers/watch.ts), not here.
  */
 
 import type { TokenUsage } from "../types";
 
 export const CONTEXT_WINDOW = 1_000_000;
 
-export interface ContextState {
-  lastUsage: TokenUsage;
-}
-
-const registry = new Map<string, ContextState>();
+const registry = new Map<string, TokenUsage>();
 
 export function recordUsage(sessionId: string, usage: TokenUsage): void {
-  registry.set(sessionId, { lastUsage: usage });
+  registry.set(sessionId, usage);
 }
 
-export function getContextState(sessionId: string): ContextState | undefined {
+export function getLastUsage(sessionId: string): TokenUsage | undefined {
   return registry.get(sessionId);
 }
 
@@ -31,12 +26,16 @@ export function _resetRegistryForTests(): void {
   registry.clear();
 }
 
-export function computeContextPct(u: TokenUsage): number {
-  const used =
-    (u.input_tokens || 0) +
+function totalContextTokens(u: TokenUsage): number {
+  return (
+    u.input_tokens +
     (u.cache_creation_input_tokens ?? 0) +
-    (u.cache_read_input_tokens ?? 0);
-  const pct = Math.round((used * 100) / CONTEXT_WINDOW);
+    (u.cache_read_input_tokens ?? 0)
+  );
+}
+
+export function computeContextPct(u: TokenUsage): number {
+  const pct = Math.round((totalContextTokens(u) * 100) / CONTEXT_WINDOW);
   return Math.min(100, pct);
 }
 
@@ -53,21 +52,9 @@ function formatTokens(n: number): string {
 
 export function formatContextLine(u: TokenUsage): string {
   const pct = computeContextPct(u);
-  const bar = contextBar(pct);
-  const used =
-    (u.input_tokens || 0) +
-    (u.cache_creation_input_tokens ?? 0) +
-    (u.cache_read_input_tokens ?? 0);
-  return `🧠 ${bar} ${pct}% (${formatTokens(used)}/${formatTokens(CONTEXT_WINDOW)})`;
+  return `🧠 ${contextBar(pct)} ${pct}% (${formatTokens(totalContextTokens(u))}/${formatTokens(CONTEXT_WINDOW)})`;
 }
 
-/**
- * Returns the current bucket for `pct` at `step` granularity, and whether
- * it has grown past `prevBucket` (i.e. a new threshold was crossed).
- *
- * `step === 0` disables notifications. Caller is responsible for resetting
- * `prevBucket` to 0 when `pct` drops (e.g. after /compact).
- */
 export function checkThresholdCrossing(
   prevBucket: number,
   pct: number,

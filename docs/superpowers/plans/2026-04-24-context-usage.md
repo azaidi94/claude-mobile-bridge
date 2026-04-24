@@ -750,18 +750,16 @@ Replace with:
 ```ts
 // Context window usage (mirrored-session registry)
 const sid = activeSession?.info.id || session.sessionId;
-if (sid) {
-  const ctxState = getContextState(sid);
-  if (ctxState) {
-    lines.push(formatContextLine(ctxState.lastUsage));
-  }
+const usage = sid ? getLastUsage(sid) : undefined;
+if (usage) {
+  lines.push(formatContextLine(usage));
 }
 ```
 
 Add imports at the top of `src/handlers/commands.ts` (join with existing `../sessions/...` imports if any):
 
 ```ts
-import { getContextState, formatContextLine } from "../sessions/context-usage";
+import { getLastUsage, formatContextLine } from "../sessions/context-usage";
 ```
 
 - [ ] **Step 5.4: Run, confirm pass**
