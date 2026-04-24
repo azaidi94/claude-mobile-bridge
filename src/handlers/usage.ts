@@ -3,6 +3,7 @@ import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import { error as logError } from "../logger";
 import { readKeychainToken } from "../lib/keychain";
+import { progressBar } from "../formatting";
 
 interface UsageResponse {
   five_hour?: { utilization?: number; resets_at?: string };
@@ -32,12 +33,6 @@ function formatResetIn(isoTs: string | undefined): string {
   return `${m}m`;
 }
 
-function bar(pct: number): string {
-  const clamped = Math.max(0, Math.min(100, pct));
-  const filled = Math.round(clamped / 10);
-  return "█".repeat(filled) + "░".repeat(10 - filled);
-}
-
 function formatWindow(
   label: string,
   pct: number | undefined,
@@ -47,7 +42,7 @@ function formatWindow(
     return [`${label}  (no data)`];
   }
   return [
-    `${label}  ${bar(pct)}  ${pct.toFixed(1)}%`,
+    `${label}  ${progressBar(pct)}  ${pct.toFixed(1)}%`,
     `└ resets in ${formatResetIn(resetsAt)}`,
   ];
 }

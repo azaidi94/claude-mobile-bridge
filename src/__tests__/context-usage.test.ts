@@ -24,7 +24,6 @@ describe("computeContextPct", () => {
       cache_creation_input_tokens: 40_000,
       cache_read_input_tokens: 50_000,
     };
-    // 100_000 / 1_000_000 = 10%
     expect(computeContextPct(u)).toBe(10);
   });
 
@@ -46,8 +45,8 @@ describe("contextBar", () => {
   test("0% → 10 empty", () => {
     expect(contextBar(0)).toBe("○○○○○○○○○○");
   });
-  test("25% → 2 filled, 8 empty", () => {
-    expect(contextBar(25)).toBe("●●○○○○○○○○");
+  test("20% → 2 filled, 8 empty", () => {
+    expect(contextBar(20)).toBe("●●○○○○○○○○");
   });
   test("100% → 10 filled", () => {
     expect(contextBar(100)).toBe("●●●●●●●●●●");
@@ -63,7 +62,7 @@ describe("formatContextLine", () => {
       input_tokens: 50_000,
       output_tokens: 0,
     };
-    expect(formatContextLine(u)).toBe("🧠 ○○○○○○○○○○ 5% (50k/1M)");
+    expect(formatContextLine(u)).toBe("🧠 ●○○○○○○○○○ 5% (50k/1M)");
   });
 });
 

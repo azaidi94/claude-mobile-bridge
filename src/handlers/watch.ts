@@ -46,6 +46,7 @@ import {
   recordUsage,
   computeContextPct,
   checkThresholdCrossing,
+  forgetUsage,
 } from "../sessions/context-usage";
 import { getContextNotifyStep } from "../settings";
 import type { TokenUsage } from "../types";
@@ -370,6 +371,7 @@ function cleanupWatch(state: WatchState): void {
   state.relayCleanup?.();
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
   stopWatchTyping(state.chatId, state.threadId);
+  forgetUsage(state.sessionId);
   watches.delete(watchKey(state.chatId, state.threadId));
 }
 
@@ -513,14 +515,10 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       return;
     }
     watchState.tailer?.stop();
+    forgetUsage(previousId);
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
       if (event.type === "usage" && event.usage) {
-        void maybeNotifyContextCrossing(
-          botApi,
-          watchState,
-          watchState.sessionId,
-          event.usage,
-        );
+        void maybeNotifyContextCrossing(botApi, watchState, event.usage);
       }
       handleTailEvent(botApi, watchState, event, watchState.threadId);
       bridgeTailToSse(globalEventBus, watchState.sessionId, event);
@@ -650,12 +648,7 @@ export async function startAutoWatch(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(
-        botApi,
-        watchState,
-        sessionInfo.id,
-        event.usage,
-      );
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);
@@ -866,12 +859,7 @@ export async function startWatchingSession(
 
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(
-        botApi,
-        watchState,
-        sessionInfo.id,
-        event.usage,
-      );
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
     handleTailEvent(botApi, watchState, event, watchState.threadId);
     bridgeTailToSse(globalEventBus, sessionInfo.id, event);
@@ -1058,6 +1046,7 @@ export function _resetWatchesForTests(): void {
     } catch {}
     state.relayCleanup?.();
     if (state.idCheckInterval) clearInterval(state.idCheckInterval);
+    forgetUsage(state.sessionId);
   }
   watches.clear();
   typingState.clear();
@@ -1087,10 +1076,9 @@ export function _getWatchForTests(
 export async function maybeNotifyContextCrossing(
   botApi: Api,
   state: WatchState,
-  sessionId: string,
   usage: TokenUsage,
 ): Promise<void> {
-  recordUsage(sessionId, usage);
+  recordUsage(state.sessionId, usage);
 
   const step = getContextNotifyStep();
   if (step <= 0) return;

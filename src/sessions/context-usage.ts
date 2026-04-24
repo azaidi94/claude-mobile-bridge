@@ -9,6 +9,7 @@
  */
 
 import type { TokenUsage } from "../types";
+import { progressBar } from "../formatting";
 
 export const CONTEXT_WINDOW = 1_000_000;
 
@@ -20,6 +21,10 @@ export function recordUsage(sessionId: string, usage: TokenUsage): void {
 
 export function getLastUsage(sessionId: string): TokenUsage | undefined {
   return registry.get(sessionId);
+}
+
+export function forgetUsage(sessionId: string): void {
+  registry.delete(sessionId);
 }
 
 export function _resetRegistryForTests(): void {
@@ -40,8 +45,7 @@ export function computeContextPct(u: TokenUsage): number {
 }
 
 export function contextBar(pct: number): string {
-  const filled = Math.min(10, Math.max(0, Math.floor(pct / 10)));
-  return "●".repeat(filled) + "○".repeat(10 - filled);
+  return progressBar(pct, { filled: "●", empty: "○" });
 }
 
 function formatTokens(n: number): string {

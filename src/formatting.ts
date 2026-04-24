@@ -397,6 +397,19 @@ export function formatToolResultSummary(
 }
 
 /**
+ * Render a 10-cell progress bar. Glyphs are customizable so different surfaces
+ * (usage panel, context bar) can share the clamp/round math but keep their look.
+ */
+export function progressBar(
+  pct: number,
+  { filled = "█", empty = "░" }: { filled?: string; empty?: string } = {},
+): string {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const n = Math.round(clamped / 10);
+  return filled.repeat(n) + empty.repeat(10 - n);
+}
+
+/**
  * Format a timestamp as relative time (e.g. "5m ago").
  */
 export function formatTimeAgo(timestamp: number): string {

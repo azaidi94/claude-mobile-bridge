@@ -803,17 +803,16 @@ describe("context notify", () => {
     return { api, sent };
   }
 
-  // Minimal WatchState — we only exercise fields the helper reads/writes.
-  // Cast via `as unknown as` because `WatchState` also requires tailer,
-  // sessionName, etc. which are irrelevant here.
   const makeWatchState = (
     chatId: number,
     threadId: number,
     lastNotifiedBucket: number,
+    sessionId: string,
   ) =>
     ({
       chatId,
       threadId,
+      sessionId,
       lastNotifiedBucket,
       // TailDisplayState minimum
       currentToolMsg: null,
@@ -832,10 +831,10 @@ describe("context notify", () => {
 
     const { maybeNotifyContextCrossing } = await import("../handlers/watch");
     const { api, sent } = makeMockApi();
-    const state = makeWatchState(1001, 42, 0);
+    const state = makeWatchState(1001, 42, 0, "sid-a");
 
     // 300_000 / 1M = 30% → bucket 25
-    await maybeNotifyContextCrossing(api, state, "sid-a", {
+    await maybeNotifyContextCrossing(api, state, {
       input_tokens: 300_000,
       output_tokens: 100,
     });
@@ -844,7 +843,7 @@ describe("context notify", () => {
     expect(state.lastNotifiedBucket).toBe(25);
 
     // 350_000 / 1M = 35% → still bucket 25
-    await maybeNotifyContextCrossing(api, state, "sid-a", {
+    await maybeNotifyContextCrossing(api, state, {
       input_tokens: 350_000,
       output_tokens: 100,
     });
@@ -860,9 +859,9 @@ describe("context notify", () => {
 
     const { maybeNotifyContextCrossing } = await import("../handlers/watch");
     const { api, sent } = makeMockApi();
-    const state = makeWatchState(1001, 42, 0);
+    const state = makeWatchState(1001, 42, 0, "sid-b");
 
-    await maybeNotifyContextCrossing(api, state, "sid-b", {
+    await maybeNotifyContextCrossing(api, state, {
       input_tokens: 900_000,
       output_tokens: 0,
     });
@@ -878,10 +877,10 @@ describe("context notify", () => {
 
     const { maybeNotifyContextCrossing } = await import("../handlers/watch");
     const { api, sent } = makeMockApi();
-    const state = makeWatchState(1001, 42, 50);
+    const state = makeWatchState(1001, 42, 50, "sid-c");
 
     // 5% — below prior bucket 50, resets to 0, no fire.
-    await maybeNotifyContextCrossing(api, state, "sid-c", {
+    await maybeNotifyContextCrossing(api, state, {
       input_tokens: 50_000,
       output_tokens: 0,
     });
@@ -889,7 +888,7 @@ describe("context notify", () => {
     expect(state.lastNotifiedBucket).toBe(0);
 
     // 30% — crosses 25 again → fires.
-    await maybeNotifyContextCrossing(api, state, "sid-c", {
+    await maybeNotifyContextCrossing(api, state, {
       input_tokens: 300_000,
       output_tokens: 0,
     });
