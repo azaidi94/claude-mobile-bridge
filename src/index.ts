@@ -126,7 +126,7 @@ startWatchdog(bot.api);
 // so calling it on every tick for healthy watches thrashes the JSONL
 // tailer and emits noisy `watch: stopped` logs.
 const AUTO_WATCH_RETRY_MS = 60_000;
-const autoWatchRetryTimer = setInterval(() => {
+const autoWatchRetryTimer: Timer = setInterval(() => {
   const tm = topicManager;
   if (!tm) return;
   const chatId = tm.getChatId();
@@ -135,7 +135,11 @@ const autoWatchRetryTimer = setInterval(() => {
     const topic = getTopicBySession(s.name);
     if (!topic) continue;
     if (isWatching(chatId, topic.topicId)) continue;
-    startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch(() => {});
+    startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch((err) =>
+      warn(
+        `auto-watch retry failed for ${s.name} (topic ${topic.topicId}): ${err}`,
+      ),
+    );
   }
 }, AUTO_WATCH_RETRY_MS);
 
@@ -157,7 +161,11 @@ const notifyHandler = createNotificationHandler(
   (sessionName, topicId) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
-      startAutoWatch(bot.api, chatId, topicId, sessionName).catch(() => {});
+      startAutoWatch(bot.api, chatId, topicId, sessionName).catch((err) =>
+        warn(
+          `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
+        ),
+      );
     }
   },
 );
@@ -174,7 +182,10 @@ if (topicManager && primaryChatId !== undefined) {
     const topic = getTopicBySession(s.name);
     if (topic) {
       startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
-        () => {},
+        (err) =>
+          warn(
+            `auto-watch startup failed for ${s.name} (topic ${topic.topicId}): ${err}`,
+          ),
       );
     }
   }

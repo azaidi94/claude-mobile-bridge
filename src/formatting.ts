@@ -157,7 +157,7 @@ function shortenPath(path: string): string {
 /**
  * Truncate text with ellipsis.
  */
-function truncate(text: string, maxLen = 60): string {
+export function truncate(text: string, maxLen = 60): string {
   if (!text) return "";
   // Clean up newlines for display
   const cleaned = text.replace(/\n/g, " ").trim();

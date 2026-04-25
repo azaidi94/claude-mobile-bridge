@@ -182,7 +182,10 @@ const mockStopWatchByName = mock((_name: string) => undefined);
 const mockIsWatchingAny = mock(() => false);
 const mockIsWatching = mock(() => false);
 const mockSendWatchRelay = mock(async () => true);
-const mockMarkPendingRunCompletion = mock(() => true);
+const mockMarkPendingRunCompletion = mock(
+  (): "armed" | "no-watch" | "already-pending" => "armed",
+);
+const mockClearPendingRunCompletion = mock(() => {});
 
 mock.module("../handlers/watch", () => ({
   startWatchingSession: mockStartWatchingSession,
@@ -193,6 +196,7 @@ mock.module("../handlers/watch", () => ({
   isWatching: mockIsWatching,
   sendWatchRelay: mockSendWatchRelay,
   markPendingRunCompletion: mockMarkPendingRunCompletion,
+  clearPendingRunCompletion: mockClearPendingRunCompletion,
 }));
 
 const mockReadKeychainToken = mock(async (): Promise<string | null> => null);
@@ -2359,9 +2363,10 @@ describe("commands: /run", () => {
     mockIsWatching.mockClear();
     mockSendWatchRelay.mockClear();
     mockMarkPendingRunCompletion.mockClear();
+    mockClearPendingRunCompletion.mockClear();
     mockIsWatching.mockImplementation(() => false);
     mockSendWatchRelay.mockImplementation(async () => true);
-    mockMarkPendingRunCompletion.mockImplementation(() => true);
+    mockMarkPendingRunCompletion.mockImplementation(() => "armed");
   });
 
   test("rejects unauthorized users", async () => {
@@ -2428,7 +2433,7 @@ describe("commands: /run", () => {
     expect(ctx._replies[0]?.text).toContain("queued");
   });
 
-  test("surfaces relay failure to the user", async () => {
+  test("surfaces relay failure to the user and rolls back arming", async () => {
     mockIsWatching.mockImplementation(() => true);
     mockSendWatchRelay.mockImplementation(async () => false);
     const { handleRun } = await import("../handlers/commands");
@@ -2439,12 +2444,15 @@ describe("commands: /run", () => {
     });
     await handleRun(ctx as any);
     expect(ctx._replies[0]?.text).toContain("relay unavailable");
-    expect(mockMarkPendingRunCompletion).not.toHaveBeenCalled();
+    // Arming happens first now; relay-failure must clear it so a retry isn't
+    // permanently blocked as "already-pending".
+    expect(mockMarkPendingRunCompletion).toHaveBeenCalledTimes(1);
+    expect(mockClearPendingRunCompletion).toHaveBeenCalledTimes(1);
   });
 
   test("warns when watch was lost between check and arming", async () => {
     mockIsWatching.mockImplementation(() => true);
-    mockMarkPendingRunCompletion.mockImplementation(() => false);
+    mockMarkPendingRunCompletion.mockImplementation(() => "no-watch");
     const { handleRun } = await import("../handlers/commands");
     const ctx = createMockContext({
       userId: 123456,
@@ -2453,5 +2461,22 @@ describe("commands: /run", () => {
     });
     await handleRun(ctx as any);
     expect(ctx._replies[0]?.text).toContain("watch lost");
+    // Watch-lost path must NOT send the relay (no live target).
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
+  });
+
+  test("rejects a second /run while one is still pending", async () => {
+    mockIsWatching.mockImplementation(() => true);
+    mockMarkPendingRunCompletion.mockImplementation(() => "already-pending");
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run another one",
+      threadId: 42,
+    });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("still pending");
+    // Rejection must NOT send the relay or arm a new completion.
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
   });
 });

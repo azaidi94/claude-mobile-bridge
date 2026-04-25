@@ -1035,3 +1035,186 @@ describe("watch: handleTailEvent liveness typing", () => {
     expect(_isTypingForTests(-100, 6302)).toBe(false);
   });
 });
+
+describe("watch: formatRunElapsedLabel", () => {
+  test("seconds (< 60s)", async () => {
+    const { formatRunElapsedLabel } = await import("../handlers/watch");
+    expect(formatRunElapsedLabel(0)).toBe("0s");
+    expect(formatRunElapsedLabel(15_000)).toBe("15s");
+    expect(formatRunElapsedLabel(59_400)).toBe("59s");
+  });
+
+  test("minutes (< 60m)", async () => {
+    const { formatRunElapsedLabel } = await import("../handlers/watch");
+    expect(formatRunElapsedLabel(60_000)).toBe("1m");
+    expect(formatRunElapsedLabel(150_000)).toBe("3m");
+    expect(formatRunElapsedLabel(59 * 60_000)).toBe("59m");
+  });
+
+  test("hours (>= 60m)", async () => {
+    const { formatRunElapsedLabel } = await import("../handlers/watch");
+    expect(formatRunElapsedLabel(3_600_000)).toBe("1.0h");
+    expect(formatRunElapsedLabel(5_400_000)).toBe("1.5h");
+    expect(formatRunElapsedLabel(7_200_000)).toBe("2.0h");
+  });
+});
+
+describe("watch: markPendingRunCompletion / clearPendingRunCompletion", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  test("returns 'no-watch' when no WatchState exists", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    expect(mod.markPendingRunCompletion(-100, 99, "x")).toBe("no-watch");
+  });
+
+  test("returns 'armed' on first call and stores prompt + startedAt", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    const state = makeState(-100, 1, "/repo/a");
+    mod._registerWatchForTests(state);
+
+    const before = Date.now();
+    expect(mod.markPendingRunCompletion(-100, 1, "do work")).toBe("armed");
+    const w = mod._getWatchForTests(-100, 1)!;
+    expect(w.pendingRunCompletion?.prompt).toBe("do work");
+    expect(w.pendingRunCompletion!.startedAt).toBeGreaterThanOrEqual(before);
+    // Watchdog reset side-effects.
+    expect(w.midTurn).toBe(true);
+    expect(w.watchdogFired).toBe(false);
+  });
+
+  test("returns 'already-pending' on second call without overwriting the first", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    mod._registerWatchForTests(makeState(-100, 1, "/repo/a"));
+
+    expect(mod.markPendingRunCompletion(-100, 1, "first")).toBe("armed");
+    const firstStart = mod._getWatchForTests(-100, 1)!.pendingRunCompletion!
+      .startedAt;
+    expect(mod.markPendingRunCompletion(-100, 1, "second")).toBe(
+      "already-pending",
+    );
+    const w = mod._getWatchForTests(-100, 1)!;
+    expect(w.pendingRunCompletion?.prompt).toBe("first");
+    expect(w.pendingRunCompletion!.startedAt).toBe(firstStart);
+  });
+
+  test("clearPendingRunCompletion frees the slot for a retry", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    mod._registerWatchForTests(makeState(-100, 1, "/repo/a"));
+
+    expect(mod.markPendingRunCompletion(-100, 1, "first")).toBe("armed");
+    expect(mod.markPendingRunCompletion(-100, 1, "second")).toBe(
+      "already-pending",
+    );
+    mod.clearPendingRunCompletion(-100, 1);
+    expect(mod.markPendingRunCompletion(-100, 1, "second")).toBe("armed");
+    expect(mod._getWatchForTests(-100, 1)!.pendingRunCompletion?.prompt).toBe(
+      "second",
+    );
+  });
+
+  test("clearPendingRunCompletion is a no-op when no watch exists", async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    expect(() => mod.clearPendingRunCompletion(-100, 99)).not.toThrow();
+  });
+});
+
+describe("watch: startWatchdog idempotency", () => {
+  test("startWatchdog called twice creates only one timer", async () => {
+    const mod = await import("../handlers/watch");
+    const fakeApi = {} as import("grammy").Api;
+    // Stop first in case prior tests started it.
+    mod.stopWatchdog();
+    mod.startWatchdog(fakeApi);
+    mod.startWatchdog(fakeApi); // idempotent — no second timer
+    // Stopping once must fully disarm; a leaked second timer would keep ticking.
+    mod.stopWatchdog();
+    // Re-arm and disarm to confirm the cleanup path stays valid.
+    mod.startWatchdog(fakeApi);
+    mod.stopWatchdog();
+  });
+});
+
+describe("watch: handleIdleWatch (notify-only branch)", () => {
+  // WATCHDOG_AUTO_CONTINUE is read once at module load and defaults to false
+  // in the test env, so this suite covers the notify-only branch. The
+  // auto-continue branch is exercised by integration / live verification per
+  // the PR test plan.
+  const makeWatchState = (
+    chatId: number,
+    threadId: number,
+  ): import("../handlers/watch").WatchState => ({
+    chatId,
+    threadId,
+    sessionName: "idle-sess",
+    sessionId: "sid-idle",
+    sessionDir: "/repo/idle",
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "last assistant text",
+    lastTextUpdate: 0,
+    segmentDone: false,
+    lastEventTime: Date.now() - 11 * 60 * 1000, // 11 minutes ago
+    midTurn: true,
+    watchdogFired: false,
+    tailer: { stop: () => {} } as any,
+  });
+
+  test("sends a notify-only ping with idle minutes and last-said quote", async () => {
+    const mod = await import("../handlers/watch");
+    const sent: Array<{ chatId: number | string; text: string; opts?: any }> =
+      [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: any) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: 1 });
+      },
+    } as unknown as import("grammy").Api;
+
+    mod._handleIdleWatchForTests(api, makeWatchState(-100, 6302));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("idle");
+    expect(sent[0]!.text).toContain("idle-sess");
+    expect(sent[0]!.text).toContain("last said");
+    expect(sent[0]!.opts?.message_thread_id).toBe(6302);
+  });
+
+  test("omits the last-said quote when no buffered text is present", async () => {
+    const mod = await import("../handlers/watch");
+    const sent: Array<{ text: string }> = [];
+    const api = {
+      sendMessage: (_c: any, text: string) => {
+        sent.push({ text });
+        return Promise.resolve({ message_id: 1 });
+      },
+    } as unknown as import("grammy").Api;
+
+    const state = makeWatchState(-100, 6302);
+    state.currentTextContent = "";
+    mod._handleIdleWatchForTests(api, state);
+
+    expect(sent[0]!.text).not.toContain("last said");
+  });
+});

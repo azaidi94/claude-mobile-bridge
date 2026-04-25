@@ -55,6 +55,7 @@ import {
   scanPortFiles,
 } from "../relay";
 import {
+  clearPendingRunCompletion,
   getWatch,
   isWatching,
   markPendingRunCompletion,
@@ -1833,18 +1834,34 @@ export async function handleRun(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const opId = createOpId("run");
 
-  const queued = await sendWatchRelay(chatId, threadId, username, prompt, opId);
-  if (!queued) {
-    await ctx.reply("❌ relay unavailable — couldn't queue.", {
+  // Reject second /run before sending relay — overwriting the pending
+  // completion would silently drop the first run's ping.
+  const armed = markPendingRunCompletion(chatId, threadId, prompt);
+  if (armed === "already-pending") {
+    await ctx.reply(
+      "⏳ another /run is still pending in this topic — wait for its ✅ before queuing another.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+  if (armed === "no-watch") {
+    // Race: watch was torn down between the isWatching check and now.
+    warn("run: arm failed, watch torn down between check and arm", {
+      opId,
+      chatId,
+      threadId,
+    });
+    await ctx.reply("⚠ couldn't arm completion ping (watch lost).", {
       message_thread_id: threadId,
     });
     return;
   }
 
-  const armed = markPendingRunCompletion(chatId, threadId, prompt);
-  if (!armed) {
-    // Race: watch was torn down between the isWatching check and now.
-    await ctx.reply("⚠ queued but completion ping not armed (watch lost).", {
+  const queued = await sendWatchRelay(chatId, threadId, username, prompt, opId);
+  if (!queued) {
+    // Roll back the armed state so a retry isn't blocked by "already-pending".
+    clearPendingRunCompletion(chatId, threadId);
+    await ctx.reply("❌ relay unavailable — couldn't queue.", {
       message_thread_id: threadId,
     });
     return;

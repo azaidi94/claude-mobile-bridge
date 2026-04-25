@@ -222,8 +222,16 @@ function generateName(dir: string): string {
 /**
  * Scan ~/.claude/projects for sessions.
  * Only returns sessions with running Claude Code processes.
+ *
+ * Returns the port files alongside the sessions so callers (refresh()) can
+ * reuse them — saves a redundant `scanPortFiles()` call. The cache would
+ * have absorbed the duplicate within its 5s TTL anyway, but threading it
+ * through is cleaner.
  */
-async function scanSessions(): Promise<SessionInfo[]> {
+async function scanSessions(): Promise<{
+  sessions: SessionInfo[];
+  portFiles: PortFileData[];
+}> {
   const found: SessionInfo[] = [];
 
   // Get running Claude processes with individual PIDs
@@ -259,7 +267,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
         source: "desktop",
       });
     }
-    return found;
+    return { sessions: found, portFiles };
   }
 
   // Collect all candidate JSONL sessions per directory, sorted by mtime desc
@@ -392,7 +400,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
 
   assignPidsToSessions(found, runningProcesses, portFiles);
 
-  return found;
+  return { sessions: found, portFiles };
 }
 
 /**
@@ -478,8 +486,13 @@ export function assignPidsToSessions(
  * Refresh the session cache. Returns diff of desktop sessions.
  */
 async function refresh(): Promise<SessionDiff> {
-  // Snapshot current desktop sessions by name (unique)
-  const oldDesktop = new Map<string, { name: string; dir: string }>();
+  // Snapshot current desktop sessions by name (unique). Capture id/pid so a
+  // port-backed re-injection (below) can preserve them rather than blanking
+  // them out — downstream code uses `session.id` as a lookup key.
+  const oldDesktop = new Map<
+    string,
+    { name: string; dir: string; id: string; pid?: number }
+  >();
   // Map prior session ids/pids to their names so names stay sticky across
   // refreshes — otherwise port-file iteration order can swap base name
   // between two sessions sharing a dir, breaking topic mapping.
@@ -487,13 +500,18 @@ async function refresh(): Promise<SessionDiff> {
   const priorNameByPid = new Map<number, string>();
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop") {
-      oldDesktop.set(s.name, { name: s.name, dir: s.dir });
+      oldDesktop.set(s.name, {
+        name: s.name,
+        dir: s.dir,
+        id: s.id,
+        pid: s.pid,
+      });
       if (s.id) priorNameById.set(s.id, s.name);
       if (s.pid !== undefined) priorNameByPid.set(s.pid, s.name);
     }
   }
 
-  const discovered = await scanSessions();
+  const { sessions: discovered, portFiles } = await scanSessions();
 
   // Keep telegram sessions, replace discovered ones
   const telegramSessions: SessionInfo[] = [];
@@ -557,7 +575,8 @@ async function refresh(): Promise<SessionDiff> {
   // momentary process-scan miss — those used to cancel the 2s flap-buffer
   // in createNotificationHandler, killing the topic-create for sessions
   // like cdm-model-generation-service that re-appeared after a restart.
-  const livePortDirs = new Set((await scanPortFiles()).map((pf) => pf.cwd));
+  // Reuse the port files that scanSessions() already collected.
+  const livePortDirs = new Set(portFiles.map((pf) => pf.cwd));
 
   const removed: { name: string; dir: string }[] = [];
   for (const [name, old] of oldDesktop) {
@@ -565,20 +584,22 @@ async function refresh(): Promise<SessionDiff> {
     if (livePortDirs.has(old.dir)) {
       // Re-add the prior session entry so subsequent refreshes don't re-emit
       // it as `added` once the process scan recovers — the cache already
-      // dropped it during the rebuild above.
+      // dropped it during the rebuild above. Preserve the prior id/pid so
+      // session.id-keyed lookups (relay client, JSONL tailer) still work.
       const prior = cache.sessions.get(name);
       if (!prior) {
         cache.sessions.set(name, {
-          id: "",
+          id: old.id,
           name,
           dir: old.dir,
           lastActivity: Date.now(),
           source: "desktop",
+          ...(old.pid !== undefined ? { pid: old.pid } : {}),
         });
       }
       continue;
     }
-    removed.push(old);
+    removed.push({ name: old.name, dir: old.dir });
     info(`session removed: ${old.name} (${old.dir})`);
   }
 

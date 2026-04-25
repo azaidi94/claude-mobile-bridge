@@ -24,6 +24,7 @@ import {
   escapeHtml,
   convertMarkdownToHtml,
   formatToolResultSummary,
+  truncate,
 } from "../formatting";
 import {
   SessionTailer,
@@ -200,6 +201,18 @@ export interface WatchState extends TailDisplayState {
 type WatchKey = `${number}:${number}`;
 const watches = new Map<WatchKey, WatchState>();
 
+/**
+ * Distinguish a WatchState from a relay-display TailDisplayState. Checks the
+ * combination of fields that only WatchState carries — `"lastEventTime" in`
+ * alone would silently match any future TailDisplayState subtype that gains
+ * that field.
+ */
+function isWatchState(state: TailDisplayState): state is WatchState {
+  return (
+    "lastEventTime" in state && "tailer" in state && "sessionName" in state
+  );
+}
+
 // Tools whose successful results get promoted to their own Telegram message
 // (survive subsequent text streaming). Dense tools (Read/Write/Edit) stay
 // ephemeral. Errors always promote, regardless of tool.
@@ -340,20 +353,40 @@ export function isWatchingAny(chatId: number): boolean {
  * next relay_reply or hook_summary fires the completion ping. Caller must
  * pre-check the topic is being watched (or auto-watched) — without a
  * WatchState the completion event has nowhere to land.
+ *
+ * Returns "armed" on success, "no-watch" if no WatchState exists for the
+ * topic, "already-pending" if a prior /run is still awaiting completion
+ * (caller should surface this rather than silently dropping the prior ping).
  */
+export type MarkPendingResult = "armed" | "no-watch" | "already-pending";
+
 export function markPendingRunCompletion(
   chatId: number,
   threadId: number,
   prompt: string,
-): boolean {
+): MarkPendingResult {
   const state = watches.get(watchKey(chatId, threadId));
-  if (!state) return false;
+  if (!state) return "no-watch";
+  if (state.pendingRunCompletion) return "already-pending";
   state.pendingRunCompletion = { startedAt: Date.now(), prompt };
   // Reset watchdog so a fresh idle clock runs for this run.
   state.watchdogFired = false;
   state.midTurn = true;
   state.lastEventTime = Date.now();
-  return true;
+  return "armed";
+}
+
+/**
+ * Clear a pending /run completion. Used to roll back arming when the relay
+ * send that follows it fails — without this rollback a second /run would be
+ * rejected as "already-pending" forever.
+ */
+export function clearPendingRunCompletion(
+  chatId: number,
+  threadId: number,
+): void {
+  const state = watches.get(watchKey(chatId, threadId));
+  if (state) delete state.pendingRunCompletion;
 }
 
 /**
@@ -1182,19 +1215,26 @@ export function handleTailEvent(
   // Watchdog bookkeeping: every event resets the idle clock. Mid-turn flag
   // tracks whether Claude owes the user a continuation. Cleared by the same
   // end-of-turn markers that stop the typing liveness indicator below.
-  if ("lastEventTime" in state) {
-    const ws = state as WatchState;
-    ws.lastEventTime = Date.now();
-    ws.watchdogFired = false;
+  if (isWatchState(state)) {
+    state.lastEventTime = Date.now();
+    state.watchdogFired = false;
     if (
       event.type === "turn_end" ||
       event.type === "turn_boundary" ||
       event.type === "user" ||
       event.type === "relay_reply"
     ) {
-      ws.midTurn = false;
-    } else {
-      ws.midTurn = true;
+      state.midTurn = false;
+    } else if (
+      event.type === "text" ||
+      event.type === "tool" ||
+      event.type === "thinking"
+    ) {
+      // Allowlist: only Claude-is-actually-working events arm the watchdog.
+      // Metadata events (permission_mode, hook_summary, tool_result, usage)
+      // and any future event types do not change midTurn — otherwise an
+      // out-of-band event during quiet time would falsely arm the idle clock.
+      state.midTurn = true;
     }
   }
 
@@ -1519,20 +1559,26 @@ function firePendingRunCompletion(
   if (!pending) return;
   delete (state as WatchState).pendingRunCompletion;
 
-  const elapsedSec = Math.round((Date.now() - pending.startedAt) / 1000);
-  const elapsedLabel =
-    elapsedSec < 60
-      ? `${elapsedSec}s`
-      : elapsedSec < 3600
-        ? `${Math.round(elapsedSec / 60)}m`
-        : `${(elapsedSec / 3600).toFixed(1)}h`;
+  const elapsedLabel = formatRunElapsedLabel(Date.now() - pending.startedAt);
+  const message = `✅ /run done in ${elapsedLabel}\n<i>${escapeHtml(truncate(pending.prompt, 60))}</i>`;
 
   botApi
-    .sendMessage(state.chatId, `✅ /run done in ${elapsedLabel}`, {
+    .sendMessage(state.chatId, message, {
+      parse_mode: "HTML",
       message_thread_id: threadId,
-      disable_notification: false,
     })
     .catch((err) => debug(`run completion ping: ${err}`));
+}
+
+/**
+ * Format a duration in milliseconds as a short human label: <60s, <60m, then
+ * fractional hours. Exported as a test seam (covers s/m/h boundaries).
+ */
+export function formatRunElapsedLabel(elapsedMs: number): string {
+  const elapsedSec = Math.round(elapsedMs / 1000);
+  if (elapsedSec < 60) return `${elapsedSec}s`;
+  if (elapsedSec < 3600) return `${Math.round(elapsedSec / 60)}m`;
+  return `${(elapsedSec / 3600).toFixed(1)}h`;
 }
 
 // ============== Watchdog ==============
@@ -1574,7 +1620,14 @@ export function stopWatchdog(): void {
  * Notify or auto-continue when a watch has been mid-turn-idle past the
  * threshold. WATCHDOG_AUTO_CONTINUE flips to a "continue" relay message;
  * default is a notify-only ping that surfaces in the topic.
+ *
+ * Exported as `_handleIdleWatchForTests` purely as a unit-test seam — the
+ * production path is the watchdog timer in `startWatchdog`.
  */
+export function _handleIdleWatchForTests(botApi: Api, state: WatchState): void {
+  handleIdleWatch(botApi, state);
+}
+
 function handleIdleWatch(botApi: Api, state: WatchState): void {
   const idleMin = Math.round((Date.now() - state.lastEventTime) / 60_000);
   const lastText = state.currentTextContent.trim().slice(0, 200);
@@ -1597,14 +1650,17 @@ function handleIdleWatch(botApi: Api, state: WatchState): void {
       "watchdog",
       "continue",
       "watchdog_auto",
-    ).catch((err) => debug(`watchdog auto-continue: ${err}`));
-    botApi
-      .sendMessage(
-        state.chatId,
-        `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-sent "continue".${tailQuote}`,
-        { parse_mode: "HTML", message_thread_id: state.threadId },
-      )
-      .catch((err) => debug(`watchdog notify: ${err}`));
+    )
+      .then((ok) => {
+        const msg = ok
+          ? `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-sent "continue".${tailQuote}`
+          : `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-continue failed (relay unavailable).${tailQuote}`;
+        return botApi.sendMessage(state.chatId, msg, {
+          parse_mode: "HTML",
+          message_thread_id: state.threadId,
+        });
+      })
+      .catch((err) => debug(`watchdog auto-continue: ${err}`));
     return;
   }
 
@@ -1612,11 +1668,7 @@ function handleIdleWatch(botApi: Api, state: WatchState): void {
     .sendMessage(
       state.chatId,
       `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b>${tailQuote}`,
-      {
-        parse_mode: "HTML",
-        message_thread_id: state.threadId,
-        disable_notification: false,
-      },
+      { parse_mode: "HTML", message_thread_id: state.threadId },
     )
     .catch((err) => debug(`watchdog notify: ${err}`));
 }
