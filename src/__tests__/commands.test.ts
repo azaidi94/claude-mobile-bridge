@@ -2312,3 +2312,108 @@ describe("commands: /app", () => {
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 });
+
+// ============== /run Command Tests ==============
+
+describe("commands: /run", () => {
+  beforeEach(() => {
+    resetMocks();
+    mockIsWatching.mockClear();
+    mockSendWatchRelay.mockClear();
+    mockMarkPendingRunCompletion.mockClear();
+    mockIsWatching.mockImplementation(() => false);
+    mockSendWatchRelay.mockImplementation(async () => true);
+    mockMarkPendingRunCompletion.mockImplementation(() => true);
+  });
+
+  test("rejects unauthorized users", async () => {
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 999999, messageText: "/run hi" });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("Unauthorized");
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
+  });
+
+  test("shows usage when prompt is empty", async () => {
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({ userId: 123456, messageText: "/run" });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("Usage:");
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
+  });
+
+  test("rejects when used outside a topic", async () => {
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run do the thing",
+      // no threadId
+    });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("session topic");
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
+  });
+
+  test("rejects when topic has no active watch", async () => {
+    mockIsWatching.mockImplementation(() => false);
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run do X",
+      threadId: 42,
+    });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("active watch");
+    expect(mockSendWatchRelay).not.toHaveBeenCalled();
+  });
+
+  test("queues prompt and arms completion when watch is active", async () => {
+    mockIsWatching.mockImplementation(() => true);
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run refactor the parser",
+      threadId: 42,
+      chatType: "supergroup",
+    });
+
+    await handleRun(ctx as any);
+
+    expect(mockSendWatchRelay).toHaveBeenCalledTimes(1);
+    const [chatArg, threadArg, , textArg] = mockSendWatchRelay.mock
+      .calls[0] as unknown as [number, number, string, string];
+    expect(chatArg).toBe(789);
+    expect(threadArg).toBe(42);
+    expect(textArg).toBe("refactor the parser");
+
+    expect(mockMarkPendingRunCompletion).toHaveBeenCalledTimes(1);
+    expect(ctx._replies[0]?.text).toContain("queued");
+  });
+
+  test("surfaces relay failure to the user", async () => {
+    mockIsWatching.mockImplementation(() => true);
+    mockSendWatchRelay.mockImplementation(async () => false);
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run anything",
+      threadId: 42,
+    });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("relay unavailable");
+    expect(mockMarkPendingRunCompletion).not.toHaveBeenCalled();
+  });
+
+  test("warns when watch was lost between check and arming", async () => {
+    mockIsWatching.mockImplementation(() => true);
+    mockMarkPendingRunCompletion.mockImplementation(() => false);
+    const { handleRun } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/run anything",
+      threadId: 42,
+    });
+    await handleRun(ctx as any);
+    expect(ctx._replies[0]?.text).toContain("watch lost");
+  });
+});
