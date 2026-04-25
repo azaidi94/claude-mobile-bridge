@@ -53,7 +53,13 @@ import {
   disconnectRelay,
   scanPortFiles,
 } from "../relay";
-import { startWatchingSession, stopWatchByName } from "./watch";
+import {
+  isWatching,
+  markPendingRunCompletion,
+  sendWatchRelay,
+  startWatchingSession,
+  stopWatchByName,
+} from "./watch";
 import {
   createOpId,
   elapsedMs,
@@ -369,6 +375,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "/model — switch model",
       "/stop — interrupt current query",
       "/retry — replay last message",
+      "/run &lt;prompt&gt; — async, ping when done",
       "",
       "<b>Navigation (in topic)</b>",
       "/pwd — show working dir",
@@ -401,6 +408,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/stop - Interrupt current query\n` +
       `/kill - Terminate a session (pick from list)\n` +
       `/retry - Retry last message\n` +
+      `/run &lt;prompt&gt; - Async — fire prompt, ping when done\n` +
       `/status - Show session details\n` +
       `/model - Switch model\n` +
       `/restart - Restart bot\n\n` +
@@ -1768,4 +1776,77 @@ export async function handleApp(ctx: Context): Promise<void> {
       link_preview_options: { is_disabled: true },
     },
   );
+}
+
+/**
+ * /run <prompt> — async mode. Forwards the prompt to the topic's session
+ * without awaiting the reply, then pings "✅ /run done" when the turn ends.
+ *
+ * Requires a session topic with an active watch (auto-watch covers this in
+ * group mode). Stuck runs are caught by the watchdog (see WATCHDOG_IDLE_MS).
+ */
+export async function handleRun(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+  if (!chatId) return;
+
+  // Strip the /run command itself, leaving the prompt body.
+  const text = (ctx.message?.text ?? "").replace(/^\/run(?:@\S+)?\s*/, "");
+  const prompt = text.trim();
+  if (!prompt) {
+    await ctx.reply(
+      "Usage: <code>/run &lt;prompt&gt;</code>\n\nFires the prompt without waiting for the reply, then pings <b>✅ /run done</b> when the turn ends.",
+      { parse_mode: "HTML", message_thread_id: threadId },
+    );
+    return;
+  }
+
+  if (threadId === undefined) {
+    await ctx.reply(
+      "/run only works inside a session topic — use it where the watch is active.",
+    );
+    return;
+  }
+  if (!isWatching(chatId, threadId)) {
+    await ctx.reply(
+      "/run needs an active watch on this topic. Send a message first to auto-watch, or use /watch.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+
+  const username = ctx.from?.username || "unknown";
+  const opId = createOpId("run");
+
+  const queued = await sendWatchRelay(chatId, threadId, username, prompt, opId);
+  if (!queued) {
+    await ctx.reply("❌ relay unavailable — couldn't queue.", {
+      message_thread_id: threadId,
+    });
+    return;
+  }
+
+  const armed = markPendingRunCompletion(chatId, threadId, prompt);
+  if (!armed) {
+    // Race: watch was torn down between the isWatching check and now.
+    await ctx.reply("⚠ queued but completion ping not armed (watch lost).", {
+      message_thread_id: threadId,
+    });
+    return;
+  }
+
+  await ctx.reply("▶ queued — will ping when done.", {
+    message_thread_id: threadId,
+  });
+  info("run: queued", {
+    opId,
+    chatId,
+    threadId,
+    promptPreview: prompt.slice(0, 120),
+  });
 }

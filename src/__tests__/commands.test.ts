@@ -179,12 +179,18 @@ const mockStartWatchingSession = mock(async () => true);
 const mockStartWatchingAndNotify = mock(async () => true);
 const mockStopWatchByName = mock((_name: string) => undefined);
 const mockIsWatchingAny = mock(() => false);
+const mockIsWatching = mock(() => false);
+const mockSendWatchRelay = mock(async () => true);
+const mockMarkPendingRunCompletion = mock(() => true);
 
 mock.module("../handlers/watch", () => ({
   startWatchingSession: mockStartWatchingSession,
   startWatchingAndNotify: mockStartWatchingAndNotify,
   stopWatchByName: mockStopWatchByName,
   isWatchingAny: mockIsWatchingAny,
+  isWatching: mockIsWatching,
+  sendWatchRelay: mockSendWatchRelay,
+  markPendingRunCompletion: mockMarkPendingRunCompletion,
 }));
 
 const mockReadKeychainToken = mock(async (): Promise<string | null> => null);
