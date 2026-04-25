@@ -267,8 +267,10 @@ function buildWatchState(args: {
   };
 }
 
-// Activity-based typing: starts on events, auto-stops after idle
-const TYPING_IDLE_MS = 5_000;
+// Liveness typing: every tail event extends; turn_end / turn_boundary stop
+// it explicitly. The safety timeout is a belt-and-suspenders fallback for
+// crashes/disconnects where no end-of-turn marker ever lands.
+const TYPING_SAFETY_MS = 120_000;
 const typingState = new Map<
   WatchKey,
   { running: boolean; timeout: Timer | null }
@@ -287,7 +289,7 @@ function touchWatchTyping(botApi: Api, chatId: number, threadId: number): void {
   if (entry.timeout) clearTimeout(entry.timeout);
   entry.timeout = setTimeout(
     () => stopWatchTyping(chatId, threadId),
-    TYPING_IDLE_MS,
+    TYPING_SAFETY_MS,
   );
 
   // Start loop if not already running
@@ -1102,6 +1104,11 @@ export function _registerWatchForTests(state: WatchState): void {
   watches.set(watchKey(state.chatId, state.threadId), state);
 }
 
+/** Test seam — read internal typing state (undefined when stopped). */
+export function _isTypingForTests(chatId: number, threadId: number): boolean {
+  return typingState.has(watchKey(chatId, threadId));
+}
+
 /** Test seam — read back a registered WatchState (or undefined). */
 export function _getWatchForTests(
   chatId: number,
@@ -1173,38 +1180,34 @@ export function handleTailEvent(
   const threadOpts = threadId ? { message_thread_id: threadId } : {};
 
   // Watchdog bookkeeping: every event resets the idle clock. Mid-turn flag
-  // tracks whether Claude owes the user a continuation (set on assistant
-  // events, cleared on user/relay_reply/turn_boundary).
+  // tracks whether Claude owes the user a continuation. Cleared by the same
+  // end-of-turn markers that stop the typing liveness indicator below.
   if ("lastEventTime" in state) {
     const ws = state as WatchState;
     ws.lastEventTime = Date.now();
     ws.watchdogFired = false;
     if (
-      event.type === "text" ||
-      event.type === "tool" ||
-      event.type === "thinking"
-    ) {
-      ws.midTurn = true;
-    } else if (
+      event.type === "turn_end" ||
+      event.type === "turn_boundary" ||
       event.type === "user" ||
-      event.type === "relay_reply" ||
-      event.type === "turn_boundary"
+      event.type === "relay_reply"
     ) {
       ws.midTurn = false;
+    } else {
+      ws.midTurn = true;
     }
   }
 
-  // Typing only during "working" phases — stop when user-visible output arrives.
+  // Liveness typing: any tail event means Claude is alive and working —
+  // extend the indicator. Only the explicit end-of-turn markers stop it.
   // Only for watches (threadId present); relay display has no topic context.
   if (threadId !== undefined) {
-    if (
-      event.type === "thinking" ||
-      event.type === "tool" ||
-      event.type === "user"
-    ) {
-      touchWatchTyping(botApi, chatId, threadId);
-    } else {
+    if (event.type === "turn_end" || event.type === "turn_boundary") {
+      debug("typing.stop", { chatId, threadId, via: event.type });
       stopWatchTyping(chatId, threadId);
+    } else {
+      debug("typing.touch", { chatId, threadId, via: event.type });
+      touchWatchTyping(botApi, chatId, threadId);
     }
   }
 
@@ -1445,6 +1448,12 @@ export function handleTailEvent(
     case "turn_boundary": {
       // No user-visible output: the user's own Telegram msg is already shown.
       resetDisplaySegment(botApi, state);
+      break;
+    }
+
+    case "turn_end": {
+      // Liveness signal only — already handled above by stopWatchTyping.
+      // No rendering side effect.
       break;
     }
 

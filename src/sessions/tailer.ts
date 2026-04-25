@@ -51,6 +51,7 @@ export type TailEventType =
   | "tool"
   | "thinking"
   | "turn_boundary"
+  | "turn_end"
   | "relay_reply"
   | "tool_result"
   | "permission_mode"
@@ -102,11 +103,38 @@ export class SessionTailer {
   private pollTimer: Timer | null = null;
   private debounceTimer: Timer | null = null;
   private stopped = false;
+  /**
+   * Tool_use ids of channel-relay tool calls (reply / edit_message / react).
+   * Their assistant-side blocks are silenced (emitted as `relay_reply` or
+   * dropped), so the matching tool_result must also be silenced — otherwise
+   * the watch's liveness handler treats it as activity and re-arms typing
+   * after `turn_end`. Bounded via FIFO eviction; a tool_result almost always
+   * lands within the next entry, so we only need a short tail.
+   */
+  private relayToolUseIds = new Set<string>();
+  private readonly relayToolUseIdsMax = 64;
+  /**
+   * Last permission mode emitted as an event. Claude's runtime appends a
+   * permission-mode sentinel after every turn even when the mode hasn't
+   * changed; emitting that as an event re-arms the watch's liveness typing
+   * after turn_end. Dedup at the tailer so all consumers see only real
+   * mode changes.
+   */
+  private lastEmittedPermissionMode: string | undefined;
 
   constructor(filePath: string, callback: TailCallback) {
     this.filePath = filePath;
     this.offset = 0;
     this.callback = callback;
+  }
+
+  private trackRelayToolUse(id: string | undefined): void {
+    if (!id) return;
+    this.relayToolUseIds.add(id);
+    if (this.relayToolUseIds.size > this.relayToolUseIdsMax) {
+      const oldest = this.relayToolUseIds.values().next().value;
+      if (oldest !== undefined) this.relayToolUseIds.delete(oldest);
+    }
   }
 
   /**
@@ -233,6 +261,14 @@ export class SessionTailer {
             if (block.type !== "tool_result") continue;
             const toolUseId = String(block.tool_use_id ?? "");
             if (!toolUseId) continue;
+            // Channel-relay tool_use blocks are silenced upstream (reply/edit
+            // → relay_reply, react → dropped). Their tool_result must be
+            // silenced too, or the watch's liveness handler re-arms typing
+            // after the turn_end that fires on the same assistant message.
+            if (this.relayToolUseIds.has(toolUseId)) {
+              this.relayToolUseIds.delete(toolUseId);
+              continue;
+            }
             resultEvents.push({
               type: "tool_result",
               content: extractToolResultText(block.content),
@@ -304,6 +340,8 @@ export class SessionTailer {
       if (entry.type === "permission-mode") {
         const mode = entry.permissionMode;
         if (typeof mode !== "string") return [];
+        if (this.lastEmittedPermissionMode === mode) return [];
+        this.lastEmittedPermissionMode = mode;
         return [
           {
             type: "permission_mode",
@@ -364,6 +402,7 @@ export class SessionTailer {
               block.name === "mcp__channel-relay__reply" ||
               block.name === "mcp__channel-relay__edit_message"
             ) {
+              this.trackRelayToolUse(block.id);
               const text = String(input.text || "");
               const originChat =
                 typeof input.chat_id === "string" ? input.chat_id : undefined;
@@ -372,7 +411,10 @@ export class SessionTailer {
               }
               continue;
             }
-            if (block.name === "mcp__channel-relay__react") continue;
+            if (block.name === "mcp__channel-relay__react") {
+              this.trackRelayToolUse(block.id);
+              continue;
+            }
 
             const toolDisplay = formatToolStatus(block.name, input);
             events.push({
@@ -404,6 +446,16 @@ export class SessionTailer {
               cache_read_input_tokens: usage.cache_read_input_tokens,
             },
           });
+        }
+
+        // turn_end: assistant message with zero `tool` events marks end of
+        // turn. Channel-relay tool_use blocks emit `relay_reply` (or nothing
+        // for react) instead of `tool`, so they don't suppress turn_end —
+        // once the relay reply lands the user has the answer; if Claude
+        // continues internally, the next event will re-arm typing.
+        const hasToolUse = events.some((e) => e.type === "tool");
+        if (!hasToolUse && events.length > 0) {
+          events.push({ type: "turn_end", content: "" });
         }
 
         return events;

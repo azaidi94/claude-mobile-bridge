@@ -12,6 +12,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
+    "dev:debug": "DEBUG=1 bun --watch run src/index.ts",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun run test:isolated",
     "test:isolated": "for f in src/__tests__/*.test.ts; do bun test \"$f\" || exit 1; done",
