@@ -28,6 +28,7 @@ const mockBot: any = {
     editMessageText: mock(() => Promise.resolve(true)),
     getFile: mock(() => Promise.resolve({ file_path: "test.ogg" })),
     getMe: mock(() => Promise.resolve({ username: "testbot" })),
+    config: { use: mock(() => {}) },
   },
   start: mock(() => Promise.resolve()),
   stop: mock(() => Promise.resolve()),
@@ -43,6 +44,10 @@ mock.module("@grammyjs/runner", () => ({
     isRunning: () => true,
     stop: mock(() => {}),
   })),
+}));
+
+mock.module("@grammyjs/auto-retry", () => ({
+  autoRetry: mock(() => mock(() => {})),
 }));
 
 // Mock sessions to avoid import errors

@@ -7,6 +7,7 @@
 
 import { Bot } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
+import { autoRetry } from "@grammyjs/auto-retry";
 import { ALLOWED_USERS } from "./config";
 import { getGroupModeSetting } from "./settings";
 import {
@@ -65,6 +66,11 @@ export interface BotOptions {
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
   let forumGroupDetected = false;
+
+  // Honor Telegram's retry_after on 429 responses so transient throttling
+  // (e.g. after a long reply) doesn't silently drop the next message in
+  // sendHtmlWithPlainFallback. Caps wait at 60s — anything longer fails fast.
+  bot.api.config.use(autoRetry({ maxDelaySeconds: 60, maxRetryAttempts: 5 }));
 
   // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
