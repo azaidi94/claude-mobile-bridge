@@ -24,10 +24,13 @@ import {
   getSessions,
 } from "./sessions";
 import {
+  isWatching,
   notifySessionOffline,
   setTopicManager,
   startAutoWatch,
+  startWatchdog,
   stopWatchByName,
+  stopWatchdog,
 } from "./handlers";
 import {
   loadTopicStore,
@@ -112,6 +115,34 @@ if (WEB_ENABLED) {
   startWebServer();
 }
 
+// Watchdog scans active watches for mid-turn idle and pings the topic
+// (or auto-sends "continue" when WATCHDOG_AUTO_CONTINUE is set).
+startWatchdog(bot.api);
+
+// Periodic retry for topics whose startup auto-watch failed (e.g. session
+// briefly invisible to scanSessions when the bot booted). Skip topics that
+// already have an active watch — startAutoWatch's same-session conflict
+// path tears down the existing watch via `auto-replace` and rebuilds it,
+// so calling it on every tick for healthy watches thrashes the JSONL
+// tailer and emits noisy `watch: stopped` logs.
+const AUTO_WATCH_RETRY_MS = 60_000;
+const autoWatchRetryTimer: Timer = setInterval(() => {
+  const tm = topicManager;
+  if (!tm) return;
+  const chatId = tm.getChatId();
+  if (chatId === undefined) return;
+  for (const s of getSessions()) {
+    const topic = getTopicBySession(s.name);
+    if (!topic) continue;
+    if (isWatching(chatId, topic.topicId)) continue;
+    startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch((err) =>
+      warn(
+        `auto-watch retry failed for ${s.name} (topic ${topic.topicId}): ${err}`,
+      ),
+    );
+  }
+}, AUTO_WATCH_RETRY_MS);
+
 const chatIdSet = getChatIds();
 // Prefer the stored topic chat ID (may be a group), fall back to first registered chat
 import { getTopicStore } from "./topics";
@@ -130,7 +161,11 @@ const notifyHandler = createNotificationHandler(
   (sessionName, topicId) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
-      startAutoWatch(bot.api, chatId, topicId, sessionName).catch(() => {});
+      startAutoWatch(bot.api, chatId, topicId, sessionName).catch((err) =>
+        warn(
+          `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
+        ),
+      );
     }
   },
 );
@@ -147,7 +182,10 @@ if (topicManager && primaryChatId !== undefined) {
     const topic = getTopicBySession(s.name);
     if (topic) {
       startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
-        () => {},
+        (err) =>
+          warn(
+            `auto-watch startup failed for ${s.name} (topic ${topic.topicId}): ${err}`,
+          ),
       );
     }
   }
@@ -158,6 +196,7 @@ await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
   { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Open desktop Claude (Terminal)" },
+  { command: "run", description: "Async — fire prompt, ping when done" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
@@ -236,6 +275,8 @@ const stopRunner = () => {
   if (runner.isRunning()) {
     stopping = true;
     info("stopping bot");
+    stopWatchdog();
+    clearInterval(autoWatchRetryTimer);
     stopWatcher();
     runner.stop();
   }

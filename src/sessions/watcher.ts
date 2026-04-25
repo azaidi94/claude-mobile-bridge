@@ -82,15 +82,19 @@ export interface ClaudeProcess {
 
 /**
  * Get running Claude Code processes with their PIDs and working directories.
- * Only includes processes with a TTY (filters out orphans).
  * Filters out subagent processes (whose parent is also a claude process).
  */
 async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
   const processes: ClaudeProcess[] = [];
   try {
-    // Get PIDs and PPIDs of Claude processes with a TTY
+    // Get PIDs and PPIDs of Claude processes. Drop the TTY filter — the
+    // per-pid `!allPids.has(e.ppid)` check below already filters subagents,
+    // and `$3 != "??"` was causing legitimate desktop sessions to vanish
+    // when their controlling terminal was briefly backgrounded (App Nap,
+    // window minimize, brief reparent), leaving auto-watch stuck on a
+    // 37s one-shot retry budget that never recovered.
     const { stdout: pidOutput } = await execAsync(
-      `ps -eo pid,ppid,tty,comm | awk '{n=split($4,a,"/"); base=a[n]} (base == "claude" || $4 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $3 != "??" {print $1, $2}'`,
+      `ps -eo pid,ppid,comm | awk '{n=split($3,a,"/"); base=a[n]} base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/ {print $1, $2}'`,
     );
     const entries = pidOutput
       .trim()
@@ -218,8 +222,16 @@ function generateName(dir: string): string {
 /**
  * Scan ~/.claude/projects for sessions.
  * Only returns sessions with running Claude Code processes.
+ *
+ * Returns the port files alongside the sessions so callers (refresh()) can
+ * reuse them — saves a redundant `scanPortFiles()` call. The cache would
+ * have absorbed the duplicate within its 5s TTL anyway, but threading it
+ * through is cleaner.
  */
-async function scanSessions(): Promise<SessionInfo[]> {
+async function scanSessions(): Promise<{
+  sessions: SessionInfo[];
+  portFiles: PortFileData[];
+}> {
   const found: SessionInfo[] = [];
 
   // Get running Claude processes with individual PIDs
@@ -236,6 +248,11 @@ async function scanSessions(): Promise<SessionInfo[]> {
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
   );
+  // Per-session fallback: a present port file is authoritative proof the
+  // session is alive even when ps/lsof briefly miss the parent process.
+  // Without this, a transient process-detection failure on bot startup
+  // demotes the session's JSONL to "stale" and auto-watch never recovers.
+  const portDirs = new Set(portFiles.map((pf) => pf.cwd));
 
   if (runningDirs.size === 0) {
     // Still use port files even with no detected processes
@@ -250,7 +267,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
         source: "desktop",
       });
     }
-    return found;
+    return { sessions: found, portFiles };
   }
 
   // Collect all candidate JSONL sessions per directory, sorted by mtime desc
@@ -281,11 +298,16 @@ async function scanSessions(): Promise<SessionInfo[]> {
         if (!fileStat) continue;
 
         const mtime = fileStat.mtime?.getTime() || 0;
-        if (Date.now() - mtime > MAX_AGE_MS) continue;
 
+        // Parse first so we can check the cwd against the port-file index;
+        // an active port file is authoritative proof the session is alive,
+        // even if its JSONL has been quiet for > MAX_AGE_MS (idle session).
         const parsed = await parseSessionFile(filePath);
         if (!parsed) continue;
-        if (!runningDirs.has(parsed.cwd)) continue;
+        const portBacked = portDirs.has(parsed.cwd);
+        if (!runningDirs.has(parsed.cwd) && !portBacked) continue;
+        // Skip stale JSONLs only when no port file vouches for the session.
+        if (Date.now() - mtime > MAX_AGE_MS && !portBacked) continue;
 
         const list = candidatesByDir.get(parsed.cwd) || [];
         list.push({
@@ -378,7 +400,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
 
   assignPidsToSessions(found, runningProcesses, portFiles);
 
-  return found;
+  return { sessions: found, portFiles };
 }
 
 /**
@@ -464,8 +486,13 @@ export function assignPidsToSessions(
  * Refresh the session cache. Returns diff of desktop sessions.
  */
 async function refresh(): Promise<SessionDiff> {
-  // Snapshot current desktop sessions by name (unique)
-  const oldDesktop = new Map<string, { name: string; dir: string }>();
+  // Snapshot current desktop sessions by name (unique). Capture id/pid so a
+  // port-backed re-injection (below) can preserve them rather than blanking
+  // them out — downstream code uses `session.id` as a lookup key.
+  const oldDesktop = new Map<
+    string,
+    { name: string; dir: string; id: string; pid?: number }
+  >();
   // Map prior session ids/pids to their names so names stay sticky across
   // refreshes — otherwise port-file iteration order can swap base name
   // between two sessions sharing a dir, breaking topic mapping.
@@ -473,13 +500,18 @@ async function refresh(): Promise<SessionDiff> {
   const priorNameByPid = new Map<number, string>();
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop") {
-      oldDesktop.set(s.name, { name: s.name, dir: s.dir });
+      oldDesktop.set(s.name, {
+        name: s.name,
+        dir: s.dir,
+        id: s.id,
+        pid: s.pid,
+      });
       if (s.id) priorNameById.set(s.id, s.name);
       if (s.pid !== undefined) priorNameByPid.set(s.pid, s.name);
     }
   }
 
-  const discovered = await scanSessions();
+  const { sessions: discovered, portFiles } = await scanSessions();
 
   // Keep telegram sessions, replace discovered ones
   const telegramSessions: SessionInfo[] = [];
@@ -538,12 +570,37 @@ async function refresh(): Promise<SessionDiff> {
     }
   }
 
+  // A live port file is authoritative proof the relay MCP (and therefore
+  // the parent Claude) is alive. Filter spurious removes that come from a
+  // momentary process-scan miss — those used to cancel the 2s flap-buffer
+  // in createNotificationHandler, killing the topic-create for sessions
+  // like cdm-model-generation-service that re-appeared after a restart.
+  // Reuse the port files that scanSessions() already collected.
+  const livePortDirs = new Set(portFiles.map((pf) => pf.cwd));
+
   const removed: { name: string; dir: string }[] = [];
   for (const [name, old] of oldDesktop) {
-    if (!newDesktopNames.has(name)) {
-      removed.push(old);
-      info(`session removed: ${old.name} (${old.dir})`);
+    if (newDesktopNames.has(name)) continue;
+    if (livePortDirs.has(old.dir)) {
+      // Re-add the prior session entry so subsequent refreshes don't re-emit
+      // it as `added` once the process scan recovers — the cache already
+      // dropped it during the rebuild above. Preserve the prior id/pid so
+      // session.id-keyed lookups (relay client, JSONL tailer) still work.
+      const prior = cache.sessions.get(name);
+      if (!prior) {
+        cache.sessions.set(name, {
+          id: old.id,
+          name,
+          dir: old.dir,
+          lastActivity: Date.now(),
+          source: "desktop",
+          ...(old.pid !== undefined ? { pid: old.pid } : {}),
+        });
+      }
+      continue;
     }
+    removed.push({ name: old.name, dir: old.dir });
+    info(`session removed: ${old.name} (${old.dir})`);
   }
 
   // Validate active session

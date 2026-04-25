@@ -329,6 +329,23 @@ export const RELAY_PORT_FILE_PREFIX = "/tmp/channel-relay-";
 export const RELAY_CONNECT_TIMEOUT_MS = 3_000;
 export const RELAY_RESPONSE_TIMEOUT_MS = 300_000; // 5 min — relay waits for Claude
 
+// ============== Async Mode + Watchdog ==============
+
+// Idle threshold for the watchdog: once an active watch has had no JSONL
+// activity for this long while a turn is mid-flight (last entry was assistant
+// text or tool, never settled into "user" / "relay_reply"), notify the topic.
+export const WATCHDOG_IDLE_MS = Number(
+  process.env.WATCHDOG_IDLE_MS ?? 600_000, // 10 min
+);
+
+// When true, watchdog auto-sends "continue" instead of pinging the user.
+// Default off — the user opts in per-deployment via env.
+export const WATCHDOG_AUTO_CONTINUE =
+  (process.env.WATCHDOG_AUTO_CONTINUE ?? "").toLowerCase() === "true";
+
+// Watchdog scan interval — how often to check every active watch for idle.
+export const WATCHDOG_TICK_MS = 30_000;
+
 // ============== File Paths ==============
 
 export const SESSION_FILE = "/tmp/claude-telegram-session.json";

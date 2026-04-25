@@ -24,6 +24,7 @@ export {
   handleCd,
   handleLs,
   handleApp,
+  handleRun,
   setTopicManager,
   isTopicChat,
 } from "./commands";
@@ -46,6 +47,9 @@ export {
   sendWatchRelay,
   startWatchingSession,
   startAutoWatch,
+  startWatchdog,
+  stopWatchdog,
+  markPendingRunCompletion,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {
