@@ -82,15 +82,19 @@ export interface ClaudeProcess {
 
 /**
  * Get running Claude Code processes with their PIDs and working directories.
- * Only includes processes with a TTY (filters out orphans).
  * Filters out subagent processes (whose parent is also a claude process).
  */
 async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
   const processes: ClaudeProcess[] = [];
   try {
-    // Get PIDs and PPIDs of Claude processes with a TTY
+    // Get PIDs and PPIDs of Claude processes. Drop the TTY filter — the
+    // per-pid `!allPids.has(e.ppid)` check below already filters subagents,
+    // and `$3 != "??"` was causing legitimate desktop sessions to vanish
+    // when their controlling terminal was briefly backgrounded (App Nap,
+    // window minimize, brief reparent), leaving auto-watch stuck on a
+    // 37s one-shot retry budget that never recovered.
     const { stdout: pidOutput } = await execAsync(
-      `ps -eo pid,ppid,tty,comm | awk '{n=split($4,a,"/"); base=a[n]} (base == "claude" || $4 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/) && $3 != "??" {print $1, $2}'`,
+      `ps -eo pid,ppid,comm | awk '{n=split($3,a,"/"); base=a[n]} base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/ {print $1, $2}'`,
     );
     const entries = pidOutput
       .trim()
@@ -236,6 +240,11 @@ async function scanSessions(): Promise<SessionInfo[]> {
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
   );
+  // Per-session fallback: a present port file is authoritative proof the
+  // session is alive even when ps/lsof briefly miss the parent process.
+  // Without this, a transient process-detection failure on bot startup
+  // demotes the session's JSONL to "stale" and auto-watch never recovers.
+  const portDirs = new Set(portFiles.map((pf) => pf.cwd));
 
   if (runningDirs.size === 0) {
     // Still use port files even with no detected processes
@@ -285,7 +294,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
 
         const parsed = await parseSessionFile(filePath);
         if (!parsed) continue;
-        if (!runningDirs.has(parsed.cwd)) continue;
+        if (!runningDirs.has(parsed.cwd) && !portDirs.has(parsed.cwd)) continue;
 
         const list = candidatesByDir.get(parsed.cwd) || [];
         list.push({

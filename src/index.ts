@@ -27,7 +27,9 @@ import {
   notifySessionOffline,
   setTopicManager,
   startAutoWatch,
+  startWatchdog,
   stopWatchByName,
+  stopWatchdog,
 } from "./handlers";
 import {
   loadTopicStore,
@@ -112,6 +114,29 @@ if (WEB_ENABLED) {
   startWebServer();
 }
 
+// Watchdog scans active watches for mid-turn idle and pings the topic
+// (or auto-sends "continue" when WATCHDOG_AUTO_CONTINUE is set).
+startWatchdog(bot.api);
+
+// Periodic retry for topics whose startup auto-watch failed (e.g. session
+// briefly invisible to scanSessions when the bot booted). startAutoWatch is
+// idempotent — it early-aborts when a watch already exists, so re-running on
+// every tick is safe. Runs at the same cadence as the watchdog.
+const AUTO_WATCH_RETRY_MS = 60_000;
+const autoWatchRetryTimer = setInterval(() => {
+  const tm = topicManager;
+  if (!tm) return;
+  const chatId = tm.getChatId();
+  if (chatId === undefined) return;
+  for (const s of getSessions()) {
+    const topic = getTopicBySession(s.name);
+    if (!topic) continue;
+    // startAutoWatch's first move is the same-topic conflict check; if an
+    // active watch exists for this (chatId, topicId), it returns false fast.
+    startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch(() => {});
+  }
+}, AUTO_WATCH_RETRY_MS);
+
 const chatIdSet = getChatIds();
 // Prefer the stored topic chat ID (may be a group), fall back to first registered chat
 import { getTopicStore } from "./topics";
@@ -158,6 +183,7 @@ await bot.api.setMyCommands([
   { command: "list", description: "Show all sessions" },
   { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Open desktop Claude (Terminal)" },
+  { command: "run", description: "Async — fire prompt, ping when done" },
   { command: "stop", description: "Interrupt current query" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
@@ -236,6 +262,8 @@ const stopRunner = () => {
   if (runner.isRunning()) {
     stopping = true;
     info("stopping bot");
+    stopWatchdog();
+    clearInterval(autoWatchRetryTimer);
     stopWatcher();
     runner.stop();
   }

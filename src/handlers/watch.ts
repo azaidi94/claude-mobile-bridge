@@ -12,7 +12,13 @@ import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
 import type { SessionOverride } from "../sessions/types";
 import { session } from "../session";
-import { ALLOWED_USERS, STREAMING_THROTTLE_MS } from "../config";
+import {
+  ALLOWED_USERS,
+  STREAMING_THROTTLE_MS,
+  WATCHDOG_AUTO_CONTINUE,
+  WATCHDOG_IDLE_MS,
+  WATCHDOG_TICK_MS,
+} from "../config";
 import { isAuthorized } from "../security";
 import {
   escapeHtml,
@@ -170,6 +176,24 @@ export interface WatchState extends TailDisplayState {
    * Zero means none fired yet (or bucket was reset after a compact).
    */
   lastNotifiedBucket?: number;
+  /**
+   * Set by /run when the user fired an async task. The next turn-completion
+   * event (relay_reply, hook_summary, or extended idle) sends a
+   * notification ping with the elapsed time. Cleared after firing.
+   */
+  pendingRunCompletion?: { startedAt: number; prompt: string };
+  /**
+   * True when the last JSONL event was assistant text/tool/thinking — i.e.
+   * Claude is "mid-turn" from the watchdog's perspective. Cleared on user /
+   * relay_reply / turn_boundary so the idle clock only runs while Claude
+   * owes the user something.
+   */
+  midTurn?: boolean;
+  /**
+   * Per-state suppression so the watchdog only fires once per stuck turn.
+   * Re-armed when activity resumes.
+   */
+  watchdogFired?: boolean;
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -307,6 +331,27 @@ export function isWatchingAny(chatId: number): boolean {
     if (k.startsWith(prefix)) return true;
   }
   return false;
+}
+
+/**
+ * Mark a (chatId, threadId) topic as having a pending /run completion. The
+ * next relay_reply or hook_summary fires the completion ping. Caller must
+ * pre-check the topic is being watched (or auto-watched) — without a
+ * WatchState the completion event has nowhere to land.
+ */
+export function markPendingRunCompletion(
+  chatId: number,
+  threadId: number,
+  prompt: string,
+): boolean {
+  const state = watches.get(watchKey(chatId, threadId));
+  if (!state) return false;
+  state.pendingRunCompletion = { startedAt: Date.now(), prompt };
+  // Reset watchdog so a fresh idle clock runs for this run.
+  state.watchdogFired = false;
+  state.midTurn = true;
+  state.lastEventTime = Date.now();
+  return true;
 }
 
 /**
@@ -1127,6 +1172,28 @@ export function handleTailEvent(
   const { chatId } = state;
   const threadOpts = threadId ? { message_thread_id: threadId } : {};
 
+  // Watchdog bookkeeping: every event resets the idle clock. Mid-turn flag
+  // tracks whether Claude owes the user a continuation (set on assistant
+  // events, cleared on user/relay_reply/turn_boundary).
+  if ("lastEventTime" in state) {
+    const ws = state as WatchState;
+    ws.lastEventTime = Date.now();
+    ws.watchdogFired = false;
+    if (
+      event.type === "text" ||
+      event.type === "tool" ||
+      event.type === "thinking"
+    ) {
+      ws.midTurn = true;
+    } else if (
+      event.type === "user" ||
+      event.type === "relay_reply" ||
+      event.type === "turn_boundary"
+    ) {
+      ws.midTurn = false;
+    }
+  }
+
   // Typing only during "working" phases — stop when user-visible output arrives.
   // Only for watches (threadId present); relay display has no topic context.
   if (threadId !== undefined) {
@@ -1284,6 +1351,7 @@ export function handleTailEvent(
           ...threadOpts,
         })
         .catch((err) => debug(`tail hook_summary: ${err}`));
+      firePendingRunCompletion(botApi, state, threadOpts.message_thread_id);
       break;
     }
 
@@ -1364,6 +1432,8 @@ export function handleTailEvent(
         );
       }
 
+      firePendingRunCompletion(botApi, state, threadOpts.message_thread_id);
+
       // Existing cleanup.
       if (state.finalReplyReceived !== undefined) {
         state.finalReplyReceived = true;
@@ -1424,6 +1494,122 @@ export function handleTailEvent(
       // Handled by the tailer-callback wrapper in watch.ts (maybeNotifyContextCrossing).
       break;
   }
+}
+
+/**
+ * If the topic had a `/run` outstanding, send a completion ping with
+ * elapsed time. Idempotent — fires at most once per /run via the
+ * pendingRunCompletion field. No-op for non-WatchState (relay display).
+ */
+function firePendingRunCompletion(
+  botApi: Api,
+  state: TailDisplayState,
+  threadId: number | undefined,
+): void {
+  const pending = (state as WatchState).pendingRunCompletion;
+  if (!pending) return;
+  delete (state as WatchState).pendingRunCompletion;
+
+  const elapsedSec = Math.round((Date.now() - pending.startedAt) / 1000);
+  const elapsedLabel =
+    elapsedSec < 60
+      ? `${elapsedSec}s`
+      : elapsedSec < 3600
+        ? `${Math.round(elapsedSec / 60)}m`
+        : `${(elapsedSec / 3600).toFixed(1)}h`;
+
+  botApi
+    .sendMessage(state.chatId, `✅ /run done in ${elapsedLabel}`, {
+      message_thread_id: threadId,
+      disable_notification: false,
+    })
+    .catch((err) => debug(`run completion ping: ${err}`));
+}
+
+// ============== Watchdog ==============
+
+let watchdogTimer: Timer | null = null;
+
+/**
+ * Single global scanner that pings every active watch whose mid-turn idle
+ * exceeds WATCHDOG_IDLE_MS. Idempotent across restarts — multiple
+ * startWatchdog calls reuse the same timer.
+ */
+export function startWatchdog(botApi: Api): void {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    const now = Date.now();
+    for (const state of watches.values()) {
+      if (!state.midTurn) continue;
+      if (state.watchdogFired) continue;
+      if (now - state.lastEventTime < WATCHDOG_IDLE_MS) continue;
+      state.watchdogFired = true;
+      handleIdleWatch(botApi, state);
+    }
+  }, WATCHDOG_TICK_MS);
+  info("watchdog: started", {
+    idleMs: WATCHDOG_IDLE_MS,
+    tickMs: WATCHDOG_TICK_MS,
+    autoContinue: WATCHDOG_AUTO_CONTINUE,
+  });
+}
+
+/** Stop the watchdog scanner. Used by tests + shutdown paths. */
+export function stopWatchdog(): void {
+  if (!watchdogTimer) return;
+  clearInterval(watchdogTimer);
+  watchdogTimer = null;
+}
+
+/**
+ * Notify or auto-continue when a watch has been mid-turn-idle past the
+ * threshold. WATCHDOG_AUTO_CONTINUE flips to a "continue" relay message;
+ * default is a notify-only ping that surfaces in the topic.
+ */
+function handleIdleWatch(botApi: Api, state: WatchState): void {
+  const idleMin = Math.round((Date.now() - state.lastEventTime) / 60_000);
+  const lastText = state.currentTextContent.trim().slice(0, 200);
+  const tailQuote = lastText
+    ? `\n<i>last said:</i> ${escapeHtml(lastText)}…`
+    : "";
+
+  warn("watchdog: idle session", {
+    chatId: state.chatId,
+    threadId: state.threadId,
+    sessionName: state.sessionName,
+    idleMin,
+    autoContinue: WATCHDOG_AUTO_CONTINUE,
+  });
+
+  if (WATCHDOG_AUTO_CONTINUE) {
+    sendWatchRelay(
+      state.chatId,
+      state.threadId,
+      "watchdog",
+      "continue",
+      "watchdog_auto",
+    ).catch((err) => debug(`watchdog auto-continue: ${err}`));
+    botApi
+      .sendMessage(
+        state.chatId,
+        `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-sent "continue".${tailQuote}`,
+        { parse_mode: "HTML", message_thread_id: state.threadId },
+      )
+      .catch((err) => debug(`watchdog notify: ${err}`));
+    return;
+  }
+
+  botApi
+    .sendMessage(
+      state.chatId,
+      `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b>${tailQuote}`,
+      {
+        parse_mode: "HTML",
+        message_thread_id: state.threadId,
+        disable_notification: false,
+      },
+    )
+    .catch((err) => debug(`watchdog notify: ${err}`));
 }
 
 /** Finalize pending text, drop pending tool msg, clear per-segment state. */
