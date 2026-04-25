@@ -6,7 +6,15 @@
  */
 
 import "./ensure-test-env";
-import { describe, expect, test, mock } from "bun:test";
+import {
+  describe,
+  expect,
+  test,
+  mock,
+  beforeAll,
+  beforeEach,
+  afterEach,
+} from "bun:test";
 
 mock.module("../config", () => ({
   ALLOWED_USERS: [123],
@@ -894,5 +902,136 @@ describe("context notify", () => {
     });
     expect(sent).toHaveLength(1);
     expect(state.lastNotifiedBucket).toBe(25);
+  });
+});
+
+describe("watch: handleTailEvent liveness typing", () => {
+  // Asserting on chatActions count would be tautological for the stop tests:
+  // the 4s heartbeat sleep prevents additional fires within a short test
+  // window regardless of stop behavior. Inspect the typing-state map directly
+  // via _isTypingForTests instead.
+  let handleTailEvent: (typeof import("../handlers/watch"))["handleTailEvent"];
+  let _resetWatchesForTests: (typeof import("../handlers/watch"))["_resetWatchesForTests"];
+  let _isTypingForTests: (typeof import("../handlers/watch"))["_isTypingForTests"];
+
+  beforeAll(async () => {
+    const mod = await import("../handlers/watch");
+    handleTailEvent = mod.handleTailEvent;
+    _resetWatchesForTests = mod._resetWatchesForTests;
+    _isTypingForTests = mod._isTypingForTests;
+  });
+
+  beforeEach(() => _resetWatchesForTests());
+  afterEach(() => _resetWatchesForTests());
+
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const chatActions: Array<{ chatId: number; threadId?: number }> = [];
+    const api = {
+      sendMessage: () => Promise.resolve({ message_id: 1 }),
+      deleteMessage: () => Promise.resolve(true),
+      sendChatAction: (
+        chatId: number,
+        _action: string,
+        opts?: { message_thread_id?: number },
+      ) => {
+        chatActions.push({ chatId, threadId: opts?.message_thread_id });
+        return Promise.resolve(true);
+      },
+    } as unknown as import("grammy").Api;
+    return { api, chatActions };
+  }
+
+  // Yield to the event loop so the typing loop's first sendChatAction lands.
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  test("text event extends typing (was previously stop)", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api, chatActions } = makeMockApi();
+    handleTailEvent(
+      api,
+      state,
+      { type: "text", content: "streaming..." },
+      6302,
+    );
+    await flush();
+    expect(chatActions.length).toBeGreaterThan(0);
+    expect(chatActions[0]!.threadId).toBe(6302);
+  });
+
+  test("tool_result event extends typing (was previously stop)", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api, chatActions } = makeMockApi();
+    handleTailEvent(
+      api,
+      state,
+      { type: "tool_result", content: "ok", toolUseId: "tu_1" },
+      6302,
+    );
+    await flush();
+    expect(chatActions.length).toBeGreaterThan(0);
+  });
+
+  test("usage event extends typing (was previously stop)", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api, chatActions } = makeMockApi();
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "usage",
+        content: "",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+      6302,
+    );
+    await flush();
+    expect(chatActions.length).toBeGreaterThan(0);
+  });
+
+  test("turn_end stops typing", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api } = makeMockApi();
+    handleTailEvent(
+      api,
+      state,
+      { type: "tool", content: "Reading", toolName: "Read" },
+      6302,
+    );
+    await flush();
+    handleTailEvent(api, state, { type: "turn_end", content: "" }, 6302);
+    expect(_isTypingForTests(-100, 6302)).toBe(false);
+  });
+
+  test("turn_boundary stops typing", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api } = makeMockApi();
+    handleTailEvent(api, state, { type: "user", content: "hi" }, 6302);
+    await flush();
+    handleTailEvent(api, state, { type: "turn_boundary", content: "" }, 6302);
+    expect(_isTypingForTests(-100, 6302)).toBe(false);
   });
 });

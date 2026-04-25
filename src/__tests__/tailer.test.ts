@@ -36,9 +36,10 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]!.type).toBe("text");
     expect(events[0]!.content).toBe("Hello world");
+    expect(events[1]!.type).toBe("turn_end");
   });
 
   test("parses assistant tool_use block", () => {
@@ -70,9 +71,10 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]!.type).toBe("thinking");
     expect(events[0]!.content).toBe("Let me think about this...");
+    expect(events[1]!.type).toBe("turn_end");
   });
 
   test("truncates long thinking content", () => {
@@ -85,9 +87,10 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]!.content.length).toBeLessThan(250);
     expect(events[0]!.content).toEndWith("...");
+    expect(events[1]!.type).toBe("turn_end");
   });
 
   test("emits ALL blocks from a single entry (thinking + tool_use)", () => {
@@ -337,12 +340,14 @@ describe("tailer: parseLine", () => {
       },
     });
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    // relay_reply + turn_end (relay tool_uses don't suppress turn_end)
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
       type: "relay_reply",
       content: "hello back",
       originChat: "web",
     });
+    expect(events[1]!.type).toBe("turn_end");
   });
 
   test("mcp__channel-relay__edit_message also carries originChat", () => {
@@ -363,12 +368,14 @@ describe("tailer: parseLine", () => {
       },
     });
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(1);
+    // relay_reply + turn_end (relay tool_uses don't suppress turn_end)
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
       type: "relay_reply",
       content: "edited",
       originChat: "-1003968796171",
     });
+    expect(events[1]!.type).toBe("turn_end");
   });
 
   test("native tool_use carries toolName and toolInput on the tool event", () => {
@@ -414,6 +421,42 @@ describe("tailer: parseLine", () => {
       sessionId: "sess-1",
     });
     expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("repeated permission-mode with the same mode is deduped", () => {
+    // Claude's runtime appends a permission-mode sentinel after every turn.
+    // Without dedup these events touch typing under the liveness model and
+    // hold the indicator up for the 120s safety window even when nothing is
+    // happening. (Real-world repro: feat/typing-liveness, 2026-04-25.)
+    const line = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "bypassPermissions",
+      sessionId: "sess-1",
+    });
+    expect(tailer.parseLine(line)).toHaveLength(1);
+    expect(tailer.parseLine(line)).toEqual([]);
+    expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("permission-mode change after a same-mode emit re-emits", () => {
+    const sameMode = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "bypassPermissions",
+      sessionId: "sess-1",
+    });
+    const newMode = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "plan",
+      sessionId: "sess-1",
+    });
+    expect(tailer.parseLine(sameMode)).toHaveLength(1);
+    expect(tailer.parseLine(sameMode)).toEqual([]);
+    const events = tailer.parseLine(newMode);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "permission_mode",
+      permissionMode: "plan",
+    });
   });
 
   test("system stop_hook_summary with errors emits hook_summary event", () => {
@@ -474,7 +517,7 @@ describe("tailer: parseLine", () => {
     });
 
     const events = tailer.parseLine(line);
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     expect(events[0]!.type).toBe("text");
     expect(events[1]).toMatchObject({
       type: "usage",
@@ -486,6 +529,7 @@ describe("tailer: parseLine", () => {
         cache_read_input_tokens: 50_000,
       },
     });
+    expect(events[2]!.type).toBe("turn_end");
   });
 
   test("no usage event when usage block missing", () => {
@@ -495,6 +539,93 @@ describe("tailer: parseLine", () => {
     });
     const events = tailer.parseLine(line);
     expect(events.find((e) => e.type === "usage")).toBeUndefined();
+  });
+
+  test("assistant with only text emits turn_end at end", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "All done." }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    const types = events.map((e) => e.type);
+    expect(types).toContain("turn_end");
+    expect(types[types.length - 1]).toBe("turn_end");
+  });
+
+  test("assistant with tool_use does NOT emit turn_end", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "Reading file..." },
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "Read",
+            input: { file_path: "/x" },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events.map((e) => e.type)).not.toContain("turn_end");
+  });
+
+  test("assistant with text + relay-reply emits turn_end (final user-visible reply)", () => {
+    // The final Claude reply lands as text + a mcp__channel-relay__reply
+    // tool_use. Relay tool_uses surface as `relay_reply` events, not `tool`,
+    // so they don't count toward "still working". Typing should drop once
+    // the user has seen the answer.
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "All done." },
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "mcp__channel-relay__reply",
+            input: { chat_id: "-100", request_id: "r1", text: "All done." },
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    const types = events.map((e) => e.type);
+    expect(types).toContain("turn_end");
+    expect(types[types.length - 1]).toBe("turn_end");
+  });
+
+  test("assistant with thinking + text (no tool_use) emits turn_end", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "thought" },
+          { type: "text", text: "Final answer." },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events.map((e) => e.type)).toEqual(["thinking", "text", "turn_end"]);
+  });
+
+  test("assistant with empty content does NOT emit turn_end", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [] },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(0);
   });
 });
 
@@ -745,5 +876,105 @@ describe("tailer: parseLine – tool_result events", () => {
       },
     });
     expect(tailer.parseLine(line)).toEqual([]);
+  });
+
+  test("tool_result for a channel-relay reply tool_use is suppressed", () => {
+    // Channel-relay tool_use blocks emit `relay_reply` (or nothing for react)
+    // and a `turn_end` — typing stops. Their matching tool_result must NOT
+    // become a `tool_result` event, otherwise the watch's liveness handler
+    // re-arms typing after turn_end and the indicator hangs until the safety
+    // timeout. (Real-world repro: feat/typing-liveness, 2026-04-25.)
+    const replyLine = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_relay_reply_1",
+            name: "mcp__channel-relay__reply",
+            input: { chat_id: "-100", request_id: "r1", text: "hi" },
+          },
+        ],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_relay_reply_1",
+            content: "Sent reply to -100",
+          },
+        ],
+      },
+    });
+
+    const replyEvents = tailer.parseLine(replyLine);
+    expect(replyEvents.map((e) => e.type)).toEqual(["relay_reply", "turn_end"]);
+    expect(tailer.parseLine(resultLine)).toEqual([]);
+  });
+
+  test("tool_result for a channel-relay react tool_use is suppressed", () => {
+    const reactLine = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_relay_react_1",
+            name: "mcp__channel-relay__react",
+            input: { chat_id: "-100", message_id: 7, emoji: "👍" },
+          },
+        ],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_relay_react_1",
+            content: "ok",
+          },
+        ],
+      },
+    });
+
+    expect(tailer.parseLine(reactLine)).toEqual([]);
+    expect(tailer.parseLine(resultLine)).toEqual([]);
+  });
+
+  test("tool_result for a channel-relay edit_message tool_use is suppressed", () => {
+    const editLine = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_relay_edit_1",
+            name: "mcp__channel-relay__edit_message",
+            input: { chat_id: "-100", message_id: 7, text: "edited" },
+          },
+        ],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_relay_edit_1",
+            content: "ok",
+          },
+        ],
+      },
+    });
+
+    const editEvents = tailer.parseLine(editLine);
+    expect(editEvents.map((e) => e.type)).toEqual(["relay_reply", "turn_end"]);
+    expect(tailer.parseLine(resultLine)).toEqual([]);
   });
 });
