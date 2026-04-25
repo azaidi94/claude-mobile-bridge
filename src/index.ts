@@ -24,6 +24,7 @@ import {
   getSessions,
 } from "./sessions";
 import {
+  isWatching,
   notifySessionOffline,
   setTopicManager,
   startAutoWatch,
@@ -119,9 +120,11 @@ if (WEB_ENABLED) {
 startWatchdog(bot.api);
 
 // Periodic retry for topics whose startup auto-watch failed (e.g. session
-// briefly invisible to scanSessions when the bot booted). startAutoWatch is
-// idempotent — it early-aborts when a watch already exists, so re-running on
-// every tick is safe. Runs at the same cadence as the watchdog.
+// briefly invisible to scanSessions when the bot booted). Skip topics that
+// already have an active watch — startAutoWatch's same-session conflict
+// path tears down the existing watch via `auto-replace` and rebuilds it,
+// so calling it on every tick for healthy watches thrashes the JSONL
+// tailer and emits noisy `watch: stopped` logs.
 const AUTO_WATCH_RETRY_MS = 60_000;
 const autoWatchRetryTimer = setInterval(() => {
   const tm = topicManager;
@@ -131,8 +134,7 @@ const autoWatchRetryTimer = setInterval(() => {
   for (const s of getSessions()) {
     const topic = getTopicBySession(s.name);
     if (!topic) continue;
-    // startAutoWatch's first move is the same-topic conflict check; if an
-    // active watch exists for this (chatId, topicId), it returns false fast.
+    if (isWatching(chatId, topic.topicId)) continue;
     startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch(() => {});
   }
 }, AUTO_WATCH_RETRY_MS);

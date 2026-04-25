@@ -290,11 +290,16 @@ async function scanSessions(): Promise<SessionInfo[]> {
         if (!fileStat) continue;
 
         const mtime = fileStat.mtime?.getTime() || 0;
-        if (Date.now() - mtime > MAX_AGE_MS) continue;
 
+        // Parse first so we can check the cwd against the port-file index;
+        // an active port file is authoritative proof the session is alive,
+        // even if its JSONL has been quiet for > MAX_AGE_MS (idle session).
         const parsed = await parseSessionFile(filePath);
         if (!parsed) continue;
-        if (!runningDirs.has(parsed.cwd) && !portDirs.has(parsed.cwd)) continue;
+        const portBacked = portDirs.has(parsed.cwd);
+        if (!runningDirs.has(parsed.cwd) && !portBacked) continue;
+        // Skip stale JSONLs only when no port file vouches for the session.
+        if (Date.now() - mtime > MAX_AGE_MS && !portBacked) continue;
 
         const list = candidatesByDir.get(parsed.cwd) || [];
         list.push({
@@ -547,12 +552,34 @@ async function refresh(): Promise<SessionDiff> {
     }
   }
 
+  // A live port file is authoritative proof the relay MCP (and therefore
+  // the parent Claude) is alive. Filter spurious removes that come from a
+  // momentary process-scan miss — those used to cancel the 2s flap-buffer
+  // in createNotificationHandler, killing the topic-create for sessions
+  // like cdm-model-generation-service that re-appeared after a restart.
+  const livePortDirs = new Set((await scanPortFiles()).map((pf) => pf.cwd));
+
   const removed: { name: string; dir: string }[] = [];
   for (const [name, old] of oldDesktop) {
-    if (!newDesktopNames.has(name)) {
-      removed.push(old);
-      info(`session removed: ${old.name} (${old.dir})`);
+    if (newDesktopNames.has(name)) continue;
+    if (livePortDirs.has(old.dir)) {
+      // Re-add the prior session entry so subsequent refreshes don't re-emit
+      // it as `added` once the process scan recovers — the cache already
+      // dropped it during the rebuild above.
+      const prior = cache.sessions.get(name);
+      if (!prior) {
+        cache.sessions.set(name, {
+          id: "",
+          name,
+          dir: old.dir,
+          lastActivity: Date.now(),
+          source: "desktop",
+        });
+      }
+      continue;
     }
+    removed.push(old);
+    info(`session removed: ${old.name} (${old.dir})`);
   }
 
   // Validate active session
