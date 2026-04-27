@@ -55,6 +55,7 @@ import {
   checkThresholdCrossing,
   forgetUsage,
 } from "../sessions/context-usage";
+import { recordToolMetric, forgetTools } from "../sessions/tool-metrics";
 import { getContextNotifyStep } from "../settings";
 import type { TokenUsage } from "../types";
 
@@ -452,6 +453,7 @@ function cleanupWatch(state: WatchState): void {
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
   stopWatchTyping(state.chatId, state.threadId);
   forgetUsage(state.sessionId);
+  forgetTools(state.sessionId);
   watches.delete(watchKey(state.chatId, state.threadId));
 }
 
@@ -596,6 +598,7 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
     }
     watchState.tailer?.stop();
     forgetUsage(previousId);
+    forgetTools(previousId);
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
       if (event.type === "usage" && event.usage) {
         void maybeNotifyContextCrossing(botApi, watchState, event.usage);
@@ -1127,6 +1130,7 @@ export function _resetWatchesForTests(): void {
     state.relayCleanup?.();
     if (state.idCheckInterval) clearInterval(state.idCheckInterval);
     forgetUsage(state.sessionId);
+    forgetTools(state.sessionId);
   }
   watches.clear();
   typingState.clear();
@@ -1542,6 +1546,24 @@ export function handleTailEvent(
     case "usage":
       // Handled by the tailer-callback wrapper in watch.ts (maybeNotifyContextCrossing).
       break;
+
+    case "tool_metric": {
+      // Aggregator-only event — never produces UI side effects on its own.
+      // Recorded against the WatchState's session so the Mini App can read
+      // per-tool latency / error / count via /api/sessions/:id/tool-metrics.
+      if (
+        isWatchState(state) &&
+        event.toolName &&
+        typeof event.durationMs === "number"
+      ) {
+        recordToolMetric(state.sessionId, {
+          toolName: event.toolName,
+          durationMs: event.durationMs,
+          isError: Boolean(event.isError),
+        });
+      }
+      break;
+    }
   }
 }
 

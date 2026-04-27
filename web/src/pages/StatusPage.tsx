@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type SystemStats } from "../api";
+import { api, type ApiSession, type SystemStats } from "../api";
+import { ToolMetricsPanel } from "../components/ToolMetricsPanel";
 
 function formatBytes(bytes: number): string {
   const gb = bytes / (1024 ** 3);
@@ -32,11 +33,25 @@ function Gauge({ label, value, display, warn }: GaugeProps) {
 
 export function StatusPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);
+  const [sessions, setSessions] = useState<ApiSession[]>([]);
 
   useEffect(() => {
     const fetchStats = () => api.getSystem().then(setStats).catch(() => {});
     fetchStats();
     const id = setInterval(fetchStats, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    // Cheap polling — Tool Metrics panels need to know which sessions are
+    // live. Sessions don't churn fast, so 15s is plenty.
+    const fetchSessions = () =>
+      api
+        .getSessions()
+        .then((all) => setSessions(all.filter((s) => s.live)))
+        .catch(() => {});
+    fetchSessions();
+    const id = setInterval(fetchSessions, 15000);
     return () => clearInterval(id);
   }, []);
 
@@ -69,6 +84,16 @@ export function StatusPage() {
             </div>
           </>
         )}
+        {sessions.length === 0 && (
+          <p className="text-terminal-muted text-xs">No live sessions.</p>
+        )}
+        {sessions.map((s) => (
+          <ToolMetricsPanel
+            key={s.id}
+            sessionId={s.id}
+            sessionName={s.name}
+          />
+        ))}
       </div>
     </div>
   );

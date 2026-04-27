@@ -13,6 +13,7 @@ import { session as claudeSession } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
+import { getToolMetrics } from "../../sessions/tool-metrics";
 
 export interface ApiSession {
   id: string;
@@ -178,6 +179,22 @@ export function createSessionsRouter(): Hono {
       Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200,
     );
     return c.json({ events });
+  });
+
+  // Per-tool latency / error / count aggregates over a rolling window.
+  // Default window is 1h (matches the in-memory store's default). The cap
+  // exists so a bad client can't request a 100-year window.
+  const TOOL_METRICS_DEFAULT_WINDOW_MS = 60 * 60 * 1000;
+  const TOOL_METRICS_MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
+  app.get("/:id/tool-metrics", (c) => {
+    const sessionId = c.req.param("id");
+    const raw = parseInt(c.req.query("window") ?? "", 10);
+    const windowMs =
+      Number.isFinite(raw) && raw > 0
+        ? Math.min(raw, TOOL_METRICS_MAX_WINDOW_MS)
+        : TOOL_METRICS_DEFAULT_WINDOW_MS;
+    const tools = getToolMetrics(sessionId, windowMs);
+    return c.json({ sessionId, windowMs, tools });
   });
 
   app.post("/:id/message", async (c) => {

@@ -977,4 +977,160 @@ describe("tailer: parseLine – tool_result events", () => {
     expect(editEvents.map((e) => e.type)).toEqual(["relay_reply", "turn_end"]);
     expect(tailer.parseLine(resultLine)).toEqual([]);
   });
+
+  test("emits tool_metric pairing tool_use with tool_result by toolUseId", () => {
+    const useLine = JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-04-27T10:00:00.000Z",
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_match_1", name: "Bash", input: {} },
+        ],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "user",
+      timestamp: "2026-04-27T10:00:01.500Z",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_match_1",
+            content: "ok",
+            is_error: false,
+          },
+        ],
+      },
+    });
+
+    tailer.parseLine(useLine);
+    const events = tailer.parseLine(resultLine);
+    const metric = events.find((e) => e.type === "tool_metric");
+    expect(metric).toBeDefined();
+    expect(metric!.toolName).toBe("Bash");
+    expect(metric!.toolUseId).toBe("toolu_match_1");
+    expect(metric!.durationMs).toBe(1500);
+    expect(metric!.isError).toBe(false);
+  });
+
+  test("tool_metric carries isError when the result reports failure", () => {
+    tailer.parseLine(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-27T10:00:00.000Z",
+        message: {
+          content: [
+            { type: "tool_use", id: "toolu_err", name: "Bash", input: {} },
+          ],
+        },
+      }),
+    );
+    const events = tailer.parseLine(
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-27T10:00:00.250Z",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_err",
+              content: "boom",
+              is_error: true,
+            },
+          ],
+        },
+      }),
+    );
+    const metric = events.find((e) => e.type === "tool_metric");
+    expect(metric).toBeDefined();
+    expect(metric!.isError).toBe(true);
+    expect(metric!.durationMs).toBe(250);
+  });
+
+  test("orphan tool_result emits no tool_metric (no preceding tool_use)", () => {
+    const events = tailer.parseLine(
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-27T10:00:00.000Z",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "never-seen",
+              content: "ok",
+            },
+          ],
+        },
+      }),
+    );
+    expect(events.find((e) => e.type === "tool_metric")).toBeUndefined();
+  });
+
+  test("channel-relay tool_use does not emit tool_metric on its result", () => {
+    tailer.parseLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_relay_no_metric",
+              name: "mcp__channel-relay__reply",
+              input: { chat_id: "-100", request_id: "r1", text: "hi" },
+            },
+          ],
+        },
+      }),
+    );
+    const events = tailer.parseLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_relay_no_metric",
+              content: "ok",
+            },
+          ],
+        },
+      }),
+    );
+    expect(events).toEqual([]);
+  });
+
+  test("pendingToolStarts evicts oldest entries beyond the bound", () => {
+    for (let i = 0; i < 150; i++) {
+      tailer.parseLine(
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-04-27T10:00:00.000Z",
+          message: {
+            content: [{ type: "tool_use", id: `t${i}`, name: "X", input: {} }],
+          },
+        }),
+      );
+    }
+    const events = tailer.parseLine(
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-27T10:00:00.001Z",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t0", content: "" }],
+        },
+      }),
+    );
+    expect(events.find((e) => e.type === "tool_metric")).toBeUndefined();
+
+    const recent = tailer.parseLine(
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-27T10:00:00.001Z",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t149", content: "" }],
+        },
+      }),
+    );
+    expect(recent.find((e) => e.type === "tool_metric")).toBeDefined();
+  });
 });

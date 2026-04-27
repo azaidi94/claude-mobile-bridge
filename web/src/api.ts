@@ -172,4 +172,31 @@ export const api = {
     const body = (await res.json()) as { events: SseEvent[] };
     return body.events;
   },
+
+  async getToolMetrics(
+    sessionId: string,
+    windowMs = 60 * 60 * 1000,
+  ): Promise<ToolMetricsResponse> {
+    const res = await fetch(
+      `${BASE}/sessions/${sessionId}/tool-metrics?window=${windowMs}`,
+      { headers: headers() },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
 };
+
+export interface ToolMetricsAggregate {
+  toolName: string;
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+  errorPct: number;
+  lastSeenMs: number;
+}
+
+export interface ToolMetricsResponse {
+  sessionId: string;
+  windowMs: number;
+  tools: ToolMetricsAggregate[];
+}

@@ -23,6 +23,21 @@ function extractOriginChatFromTag(text: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/**
+ * Parse a JSONL entry's `timestamp` field (ISO-8601) into ms since epoch.
+ * Falls back to wall clock if the field is missing or unparseable — used as
+ * the start/end clock for tool_use → tool_result pairing. Anchoring to the
+ * JSONL's own timestamps (not Date.now) makes durations correct under
+ * historical replay (e.g. when a tailer starts mid-file).
+ */
+function parseEntryTimestamp(entry: { timestamp?: unknown }): number {
+  if (typeof entry.timestamp === "string") {
+    const ms = Date.parse(entry.timestamp);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return Date.now();
+}
+
 /** Strip the `<channel …>…</channel>` wrapper, leaving inner text. */
 function stripChannelTag(text: string): string {
   return text
@@ -56,7 +71,8 @@ export type TailEventType =
   | "tool_result"
   | "permission_mode"
   | "hook_summary"
-  | "usage";
+  | "usage"
+  | "tool_metric";
 
 export interface TailEvent {
   type: TailEventType;
@@ -88,6 +104,8 @@ export interface TailEvent {
   };
   /** For "usage" events: parsed assistant-turn token counts. */
   usage?: TokenUsage;
+  /** For "tool_metric" events: tool_use → tool_result wall-clock latency. */
+  durationMs?: number;
 }
 
 export type TailCallback = (event: TailEvent) => void;
@@ -114,6 +132,19 @@ export class SessionTailer {
   private relayToolUseIds = new Set<string>();
   private readonly relayToolUseIdsMax = 64;
   /**
+   * Map of tool_use id → { name, startedAtMs } for tool_use blocks that
+   * emitted a "tool" event (i.e. excluding silenced channel-relay calls).
+   * On tool_result we look up the start, emit a "tool_metric" event with
+   * `durationMs = result.timestamp - use.timestamp`, and delete the entry.
+   * Bounded via FIFO eviction so a long-running session can't grow the map
+   * indefinitely; a tool_result usually lands within seconds of its use.
+   */
+  private pendingToolStarts = new Map<
+    string,
+    { name: string; startedAtMs: number }
+  >();
+  private readonly pendingToolStartsMax = 100;
+  /**
    * Last permission mode emitted as an event. Claude's runtime appends a
    * permission-mode sentinel after every turn even when the mode hasn't
    * changed; emitting that as an event re-arms the watch's liveness typing
@@ -134,6 +165,19 @@ export class SessionTailer {
     if (this.relayToolUseIds.size > this.relayToolUseIdsMax) {
       const oldest = this.relayToolUseIds.values().next().value;
       if (oldest !== undefined) this.relayToolUseIds.delete(oldest);
+    }
+  }
+
+  private trackToolStart(
+    id: string | undefined,
+    name: string,
+    startedAtMs: number,
+  ): void {
+    if (!id || !name) return;
+    this.pendingToolStarts.set(id, { name, startedAtMs });
+    if (this.pendingToolStarts.size > this.pendingToolStartsMax) {
+      const oldest = this.pendingToolStarts.keys().next().value;
+      if (oldest !== undefined) this.pendingToolStarts.delete(oldest);
     }
   }
 
@@ -275,6 +319,19 @@ export class SessionTailer {
               toolUseId,
               isError: Boolean(block.is_error),
             });
+            const start = this.pendingToolStarts.get(toolUseId);
+            if (start) {
+              this.pendingToolStarts.delete(toolUseId);
+              const endedAtMs = parseEntryTimestamp(entry);
+              resultEvents.push({
+                type: "tool_metric",
+                content: "",
+                toolName: start.name,
+                toolUseId,
+                isError: Boolean(block.is_error),
+                durationMs: Math.max(0, endedAtMs - start.startedAtMs),
+              });
+            }
           }
           if (resultEvents.length > 0) {
             const onlyToolResults = (
@@ -424,6 +481,11 @@ export class SessionTailer {
               toolInput: input,
               toolUseId: block.id,
             });
+            this.trackToolStart(
+              String(block.id ?? ""),
+              String(block.name ?? ""),
+              parseEntryTimestamp(entry),
+            );
           }
 
           if (block.type === "text" && block.text) {
