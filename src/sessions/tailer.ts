@@ -594,7 +594,10 @@ export async function getLastSessionMessage(
           ) {
             lastUser = text.trim();
           }
-        } else if (entry.type === "assistant") {
+        } else if (
+          entry.type === "assistant" ||
+          (!entry.type && entry.message?.role === "assistant")
+        ) {
           const content = entry.message?.content;
           if (Array.isArray(content)) {
             const text = content

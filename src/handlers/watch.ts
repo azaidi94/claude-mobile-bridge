@@ -779,7 +779,7 @@ export async function startAutoWatch(
     sendTextReply(
       botApi,
       chatId,
-      `👁 Watching output only — no relay connection for _${sessionName}_. Claude's responses will appear here but messages you send won't reach Claude until the relay reconnects.`,
+      `👁 Watching output only — no relay connection for ${sessionName}. Claude's responses will appear here but messages you send won't reach Claude until the relay reconnects.`,
       threadId,
     );
   }

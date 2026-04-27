@@ -372,6 +372,8 @@ async function scanSessions(): Promise<{
       pfs.map((pf) => pf.sessionId).filter(Boolean),
     );
     // Sort by mtime desc (most recent first) so the newest JSONL is preferred.
+    // Note: knownIds here contains IDs claimed by previously processed directories,
+    // not the current directory's port files (those are in explicitPfIds).
     const unusedFallbacks = [...candidates]
       .sort((a, b) => b.mtime - a.mtime)
       .filter(
