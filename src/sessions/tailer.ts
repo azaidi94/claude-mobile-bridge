@@ -379,8 +379,10 @@ export class SessionTailer {
         ];
       }
 
-      // Assistant message — emit all blocks
-      if (entry.type === "assistant") {
+      // Assistant message — emit all blocks.
+      // Supports both {type:"assistant", message:{content:[]}} and
+      // {message:{role:"assistant", content:[]}} (message-format JSONL).
+      if (entry.type === "assistant" || entry.message?.role === "assistant") {
         const content = entry.message?.content;
         if (!Array.isArray(content)) return [];
 
