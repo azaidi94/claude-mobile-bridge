@@ -366,8 +366,20 @@ async function scanSessions(): Promise<{
     // so two port files for the same dir get distinct IDs rather than both
     // falling back to mostRecentJsonlId.
     const pfs = portsByDir.get(dir) || [];
-    const unusedFallbacks = candidates
-      .filter((c) => c.info.id && !knownIds.has(c.info.id))
+    // Pre-collect explicit port-file sessionIds so they are not offered as
+    // fallbacks to a different port file that lacks a sessionId.
+    const explicitPfIds = new Set(
+      pfs.map((pf) => pf.sessionId).filter(Boolean),
+    );
+    // Sort by mtime desc (most recent first) so the newest JSONL is preferred.
+    const unusedFallbacks = [...candidates]
+      .sort((a, b) => b.mtime - a.mtime)
+      .filter(
+        (c) =>
+          c.info.id &&
+          !knownIds.has(c.info.id) &&
+          !explicitPfIds.has(c.info.id),
+      )
       .map((c) => c.info.id);
     let fallbackIdx = 0;
     for (const pf of pfs) {
