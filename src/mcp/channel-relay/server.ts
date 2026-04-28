@@ -33,8 +33,9 @@ const PORT_FILE = join(
 );
 const parentSessionId = getParentClaudeSessionId();
 
+mkdirSync(STATE_DIR, { recursive: true });
+
 function writePortFile(port: number): void {
-  mkdirSync(STATE_DIR, { recursive: true });
   const data = {
     port,
     pid: process.pid,

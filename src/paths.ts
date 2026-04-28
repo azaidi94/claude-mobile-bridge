@@ -15,4 +15,6 @@ export const STATE_DIR =
 
 export const LOG_DIR =
   process.env.CLAUDE_TELEGRAM_LOG_DIR ??
-  join(homedir(), "Library", "Logs", "claude-mobile-bridge");
+  (process.platform === "darwin"
+    ? join(homedir(), "Library", "Logs", "claude-mobile-bridge")
+    : join(STATE_DIR, "logs"));
