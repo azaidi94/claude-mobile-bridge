@@ -13,8 +13,10 @@ import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
 import { getActiveSession } from "./watcher";
 import type { TopicManager } from "../topics";
+import { STATE_DIR } from "../paths";
 
-const CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
+const CHAT_IDS_FILE = join(STATE_DIR, "chat-ids.json");
+const LEGACY_CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
 const FLAP_BUFFER_MS = 2_000;
 // Port file reaping via isRelayProcess can take 30–60s after SIGTERM, so the
 // session-removed diff fires long after kill — must outlast that window or
@@ -106,6 +108,20 @@ export async function loadChatIds(): Promise<void> {
     const data = await readFile(CHAT_IDS_FILE, "utf-8");
     const ids: number[] = JSON.parse(data);
     for (const id of ids) chatIds.add(id);
+    return;
+  } catch {
+    // fall through to legacy
+  }
+  try {
+    const data = await readFile(LEGACY_CHAT_IDS_FILE, "utf-8");
+    const ids: number[] = JSON.parse(data);
+    for (const id of ids) chatIds.add(id);
+    await writeFile(CHAT_IDS_FILE, JSON.stringify([...chatIds])).catch(
+      () => {},
+    );
+    info(
+      `notifications: migrated ${chatIds.size} chat id(s) from ${LEGACY_CHAT_IDS_FILE} to ${CHAT_IDS_FILE}`,
+    );
   } catch {
     // No file yet
   }
