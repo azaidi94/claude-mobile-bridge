@@ -361,13 +361,33 @@ async function scanSessions(): Promise<{
       }
     }
 
-    // 1. Add port-file sessions (authoritative, have PIDs)
+    // 1. Add port-file sessions (authoritative, have PIDs).
+    // When a port file has no sessionId, consume JSONL candidates sequentially
+    // so two port files for the same dir get distinct IDs rather than both
+    // falling back to mostRecentJsonlId.
     const pfs = portsByDir.get(dir) || [];
+    // Pre-collect explicit port-file sessionIds so they are not offered as
+    // fallbacks to a different port file that lacks a sessionId.
+    const explicitPfIds = new Set(
+      pfs.map((pf) => pf.sessionId).filter(Boolean),
+    );
+    // Sort by mtime desc (most recent first) so the newest JSONL is preferred.
+    // Note: knownIds here contains IDs claimed by previously processed directories,
+    // not the current directory's port files (those are in explicitPfIds).
+    const unusedFallbacks = [...candidates]
+      .sort((a, b) => b.mtime - a.mtime)
+      .filter(
+        (c) =>
+          c.info.id &&
+          !knownIds.has(c.info.id) &&
+          !explicitPfIds.has(c.info.id),
+      )
+      .map((c) => c.info.id);
+    let fallbackIdx = 0;
     for (const pf of pfs) {
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      // If port file has no sessionId, fall back to most recent JSONL for this dir
-      const resolvedId = pf.sessionId || mostRecentJsonlId;
+      const resolvedId = pf.sessionId || unusedFallbacks[fallbackIdx++] || "";
       dirFound.push({
         id: resolvedId,
         name: "",

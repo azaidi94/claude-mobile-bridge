@@ -775,6 +775,13 @@ export async function startAutoWatch(
     };
     relayClient.onReply(onReply, scopeChatId);
     watchState.relayCleanup = () => relayClient.offReply(onReply);
+  } else {
+    sendTextReply(
+      botApi,
+      chatId,
+      `👁 Watching output only — no relay connection for ${sessionName}. Claude's responses will appear here but messages you send won't reach Claude until the relay reconnects.`,
+      threadId,
+    );
   }
 
   info("auto-watch: started", {

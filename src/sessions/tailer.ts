@@ -379,8 +379,14 @@ export class SessionTailer {
         ];
       }
 
-      // Assistant message — emit all blocks
-      if (entry.type === "assistant") {
+      // Assistant message — emit all blocks.
+      // Handles two JSONL formats:
+      //   1. {type:"assistant", message:{content:[]}}  — standard format
+      //   2. {message:{type:"message", role:"assistant", content:[]}}  — message-format (no top-level type)
+      if (
+        entry.type === "assistant" ||
+        (!entry.type && entry.message?.role === "assistant")
+      ) {
         const content = entry.message?.content;
         if (!Array.isArray(content)) return [];
 
@@ -588,7 +594,10 @@ export async function getLastSessionMessage(
           ) {
             lastUser = text.trim();
           }
-        } else if (entry.type === "assistant") {
+        } else if (
+          entry.type === "assistant" ||
+          (!entry.type && entry.message?.role === "assistant")
+        ) {
           const content = entry.message?.content;
           if (Array.isArray(content)) {
             const text = content

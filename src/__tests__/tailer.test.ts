@@ -627,6 +627,109 @@ describe("tailer: parseLine", () => {
     const events = tailer.parseLine(line);
     expect(events).toHaveLength(0);
   });
+
+  test("parses message-format assistant text block (no top-level type)", () => {
+    const line = JSON.stringify({
+      parentUuid: "abc123",
+      isSidechain: false,
+      message: {
+        model: "claude-opus-4-7",
+        id: "msg_01abc",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Hello from message format" }],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe("text");
+    expect(events[0]!.content).toBe("Hello from message format");
+    expect(events[1]!.type).toBe("turn_end");
+  });
+
+  test("parses message-format assistant tool_use block (no top-level type)", () => {
+    const line = JSON.stringify({
+      parentUuid: "abc123",
+      isSidechain: false,
+      message: {
+        model: "claude-opus-4-7",
+        id: "msg_01abc",
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tool_1",
+            name: "Read",
+            input: { file_path: "/tmp/test.ts" },
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("tool");
+    expect(events[0]!.content).toContain("Reading");
+  });
+
+  test("parses message-format assistant thinking block (no top-level type)", () => {
+    const line = JSON.stringify({
+      parentUuid: "abc123",
+      isSidechain: false,
+      message: {
+        model: "claude-opus-4-7",
+        id: "msg_01abc",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "Let me reason..." }],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe("thinking");
+    expect(events[1]!.type).toBe("turn_end");
+  });
+
+  test("does not treat type:user entry with message.role:assistant as assistant", () => {
+    // Safety: the type:user branch must win over the message.role check
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        role: "assistant",
+        content: "should not be treated as assistant",
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    // Should produce a user event or empty (user branch handles it), NOT a text/turn_end pair
+    expect(
+      events.every(
+        (e) =>
+          e.type !== "text" &&
+          e.type !== "turn_end" &&
+          e.type !== "thinking" &&
+          e.type !== "tool",
+      ),
+    ).toBe(true);
+  });
+
+  test("ignores message-format entry with role:user (no top-level type)", () => {
+    // A no-top-level-type entry with role:user should not be treated as assistant
+    const line = JSON.stringify({
+      parentUuid: "abc123",
+      isSidechain: false,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "user message" }],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(0);
+  });
 });
 
 // ============== findSessionJsonlPath ==============
