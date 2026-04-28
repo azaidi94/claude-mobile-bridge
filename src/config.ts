@@ -5,10 +5,12 @@
  */
 
 import { homedir } from "os";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
 import { debug, warn, error as logError } from "./logger";
+import { STATE_DIR, LOG_DIR } from "./paths";
+export { STATE_DIR, LOG_DIR };
 
 // ============== Environment Setup ==============
 
@@ -325,7 +327,7 @@ export const TTS_RESPONSE_FORMAT =
 
 // ============== Channel Relay ==============
 
-export const RELAY_PORT_FILE_PREFIX = "/tmp/channel-relay-";
+export const RELAY_PORT_FILE_PREFIX = join(STATE_DIR, "channel-relay-");
 export const RELAY_CONNECT_TIMEOUT_MS = 3_000;
 export const RELAY_RESPONSE_TIMEOUT_MS = 300_000; // 5 min — relay waits for Claude
 
@@ -357,6 +359,8 @@ export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 // Ensure temp directory exists
 await mkdir(TEMP_DIR, { recursive: true });
+await mkdir(STATE_DIR, { recursive: true });
+await mkdir(LOG_DIR, { recursive: true });
 
 // ============== Validation ==============
 

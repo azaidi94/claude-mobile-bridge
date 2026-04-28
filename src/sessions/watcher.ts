@@ -14,6 +14,7 @@ import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
 import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
+import { STATE_DIR } from "../paths";
 
 const execAsync = promisify(exec);
 
@@ -686,9 +687,9 @@ export async function startWatcher(
     warn(`watcher: fs.watch failed, polling only: ${err}`);
   }
 
-  // Watch /tmp for relay port file creation/deletion
+  // Watch STATE_DIR for relay port file creation/deletion
   try {
-    relayWatcher = watch("/tmp", (event, filename) => {
+    relayWatcher = watch(STATE_DIR, (event, filename) => {
       if (
         filename?.startsWith("channel-relay-") &&
         filename.endsWith(".json")
