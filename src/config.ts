@@ -350,7 +350,7 @@ export const WATCHDOG_TICK_MS = 30_000;
 
 // ============== File Paths ==============
 
-export const SESSION_FILE = "/tmp/claude-telegram-session.json";
+export const SESSION_FILE = join(STATE_DIR, "session.json");
 export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
 export const TEMP_DIR = "/tmp/telegram-bot";
 
