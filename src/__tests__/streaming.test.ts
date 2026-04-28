@@ -41,7 +41,7 @@ mock.module("../config", () => ({
   BOT_DIR: "/tmp/test-bot-dir",
   TEMP_DIR: "/tmp/telegram-bot",
   TEMP_PATHS: ["/tmp/"],
-  RELAY_PORT_FILE_PREFIX: "/tmp/channel-relay-",
+  RELAY_PORT_FILE_PREFIX: "/tmp/test-channel-relay-",
   RELAY_CONNECT_TIMEOUT_MS: 3000,
   RELAY_RESPONSE_TIMEOUT_MS: 300000,
   WEB_URL: "http://localhost:3000",

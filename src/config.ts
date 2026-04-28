@@ -5,10 +5,12 @@
  */
 
 import { homedir } from "os";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join } from "path";
 import { mkdir } from "fs/promises";
 import type { McpServerConfig } from "./types";
 import { debug, warn, error as logError } from "./logger";
+import { STATE_DIR, LOG_DIR } from "./paths";
+export { STATE_DIR, LOG_DIR };
 
 // ============== Environment Setup ==============
 
@@ -275,7 +277,7 @@ export const BUTTON_LABEL_MAX_LENGTH = 30; // Max chars for inline button labels
 // ============== Audit Logging ==============
 
 export const AUDIT_LOG_PATH =
-  process.env.AUDIT_LOG_PATH || "/tmp/claude-telegram-audit.log";
+  process.env.AUDIT_LOG_PATH || join(LOG_DIR, "audit.log");
 export const AUDIT_LOG_JSON =
   (process.env.AUDIT_LOG_JSON || "false").toLowerCase() === "true";
 
@@ -325,7 +327,7 @@ export const TTS_RESPONSE_FORMAT =
 
 // ============== Channel Relay ==============
 
-export const RELAY_PORT_FILE_PREFIX = "/tmp/channel-relay-";
+export const RELAY_PORT_FILE_PREFIX = join(STATE_DIR, "channel-relay-");
 export const RELAY_CONNECT_TIMEOUT_MS = 3_000;
 export const RELAY_RESPONSE_TIMEOUT_MS = 300_000; // 5 min — relay waits for Claude
 
@@ -348,8 +350,8 @@ export const WATCHDOG_TICK_MS = 30_000;
 
 // ============== File Paths ==============
 
-export const SESSION_FILE = "/tmp/claude-telegram-session.json";
-export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
+export const SESSION_FILE = join(STATE_DIR, "session.json");
+export const RESTART_FILE = join(STATE_DIR, "restart.json");
 export const TEMP_DIR = "/tmp/telegram-bot";
 
 // Temp paths that are always allowed for bot operations
@@ -357,6 +359,8 @@ export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 // Ensure temp directory exists
 await mkdir(TEMP_DIR, { recursive: true });
+await mkdir(STATE_DIR, { recursive: true });
+await mkdir(LOG_DIR, { recursive: true });
 
 // ============== Validation ==============
 

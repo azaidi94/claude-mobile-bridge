@@ -14,11 +14,13 @@ import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
 import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
+import { STATE_DIR } from "../paths";
 
 const execAsync = promisify(exec);
 
 export const PROJECTS_DIR = join(homedir(), ".claude", "projects");
-const ACTIVE_SESSION_FILE = join(
+const ACTIVE_SESSION_FILE = join(STATE_DIR, "active-session.txt");
+const LEGACY_ACTIVE_SESSION_FILE = join(
   tmpdir(),
   "claude-telegram-active-session.txt",
 );
@@ -68,6 +70,19 @@ async function loadActiveSession(): Promise<string | null> {
   try {
     const name = await readFile(ACTIVE_SESSION_FILE, "utf-8");
     return name.trim() || null;
+  } catch {
+    // fall through to legacy
+  }
+  try {
+    const name = await readFile(LEGACY_ACTIVE_SESSION_FILE, "utf-8");
+    const trimmed = name.trim();
+    if (trimmed) {
+      await writeFile(ACTIVE_SESSION_FILE, trimmed, "utf-8");
+      info(
+        `watcher: migrated active session from ${LEGACY_ACTIVE_SESSION_FILE} to ${ACTIVE_SESSION_FILE}`,
+      );
+    }
+    return trimmed || null;
   } catch {
     return null;
   }
@@ -686,9 +701,9 @@ export async function startWatcher(
     warn(`watcher: fs.watch failed, polling only: ${err}`);
   }
 
-  // Watch /tmp for relay port file creation/deletion
+  // Watch STATE_DIR for relay port file creation/deletion
   try {
-    relayWatcher = watch("/tmp", (event, filename) => {
+    relayWatcher = watch(STATE_DIR, (event, filename) => {
       if (
         filename?.startsWith("channel-relay-") &&
         filename.endsWith(".json")
@@ -704,7 +719,7 @@ export async function startWatcher(
       }
     });
   } catch {
-    // /tmp watch not critical
+    // STATE_DIR watch not critical
   }
 
   // Backup polling

@@ -19,14 +19,21 @@ import {
 import { createServer, type Socket } from "net";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
+import { writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { join } from "path";
+import { STATE_DIR } from "../../paths";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
 const cwd = process.cwd();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
-const PORT_FILE = `/tmp/channel-relay-${dirHash}-${process.pid}.json`;
+const PORT_FILE = join(
+  STATE_DIR,
+  `channel-relay-${dirHash}-${process.pid}.json`,
+);
 const parentSessionId = getParentClaudeSessionId();
+
+mkdirSync(STATE_DIR, { recursive: true });
 
 function writePortFile(port: number): void {
   const data = {

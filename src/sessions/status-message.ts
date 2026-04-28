@@ -11,6 +11,7 @@ import { join } from "path";
 import type { Api } from "grammy";
 import { info, warn, debug } from "../logger";
 import { getEnablePinnedStatus } from "../settings";
+import { STATE_DIR } from "../paths";
 
 /**
  * Get current git branch for a directory.
@@ -30,7 +31,11 @@ export async function getGitBranch(cwd: string): Promise<string | null> {
   }
 }
 
-const STATUS_FILE = join(tmpdir(), "claude-telegram-pinned-messages.json");
+const STATUS_FILE = join(STATE_DIR, "pinned-messages.json");
+const LEGACY_STATUS_FILE = join(
+  tmpdir(),
+  "claude-telegram-pinned-messages.json",
+);
 
 // Map of key -> pinnedMessageId (key = "chatId" or "chatId:topicId")
 const pinnedMessageIds = new Map<string, number>();
@@ -43,15 +48,31 @@ function pinnedKey(chatId: number, topicId?: number): string {
  * Load pinned message IDs from disk.
  */
 export async function loadPinnedMessageIds(): Promise<void> {
+  let parsed: Record<string, number> | null = null;
+  let migrated = false;
   try {
     const data = await readFile(STATUS_FILE, "utf-8");
-    const parsed: Record<string, number> = JSON.parse(data);
-    for (const [k, v] of Object.entries(parsed)) {
-      pinnedMessageIds.set(k, v);
-    }
-    debug(`status: loaded ${pinnedMessageIds.size} pinned msg(s)`);
+    parsed = JSON.parse(data);
   } catch {
-    // No file yet
+    try {
+      const data = await readFile(LEGACY_STATUS_FILE, "utf-8");
+      parsed = JSON.parse(data);
+      migrated = true;
+    } catch {
+      // No file
+    }
+  }
+  if (!parsed) return;
+  for (const [k, v] of Object.entries(parsed)) {
+    pinnedMessageIds.set(k, v);
+  }
+  if (migrated) {
+    await writeFile(STATUS_FILE, JSON.stringify(parsed)).catch(() => {});
+    info(
+      `status: migrated ${pinnedMessageIds.size} pinned msg(s) from ${LEGACY_STATUS_FILE} to ${STATUS_FILE}`,
+    );
+  } else {
+    debug(`status: loaded ${pinnedMessageIds.size} pinned msg(s)`);
   }
 }
 

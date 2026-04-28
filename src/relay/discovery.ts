@@ -1,13 +1,15 @@
 /**
  * Relay discovery — finds running channel-relay instances by scanning
- * /tmp/channel-relay-*.json port files. Validates PID and caches clients.
+ * STATE_DIR/channel-relay-*.json port files. Validates PID and caches clients.
  */
 
 import { readFile, readdir, unlink } from "fs/promises";
+import { join } from "path";
 import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
+import { STATE_DIR } from "../paths";
 import { debug, info, warn } from "../logger";
 
 export interface PortFileData {
@@ -31,7 +33,7 @@ const clientCache = new Map<
   { client: RelayClient; port: number; dir: string }
 >();
 
-// TTL cache for port file scan results (avoids /tmp readdir on every message)
+// TTL cache for port file scan results (avoids STATE_DIR readdir on every message)
 const SCAN_TTL_MS = 5_000;
 let lastScanResult: PortFileData[] = [];
 let lastScanTime = 0;
@@ -84,12 +86,12 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
 
   const results: PortFileData[] = [];
   try {
-    const files = await readdir("/tmp");
+    const files = await readdir(STATE_DIR);
     for (const file of files) {
       if (!file.startsWith("channel-relay-") || !file.endsWith(".json"))
         continue;
       try {
-        const filePath = `/tmp/${file}`;
+        const filePath = join(STATE_DIR, file);
         const content = await readFile(filePath, "utf-8");
         const data = JSON.parse(content) as PortFileData;
         if (data.port && data.pid && data.cwd && isRelayProcess(data.pid)) {
@@ -103,7 +105,7 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
       }
     }
   } catch {
-    // /tmp not readable
+    // STATE_DIR not readable
   }
 
   lastScanResult = results;
