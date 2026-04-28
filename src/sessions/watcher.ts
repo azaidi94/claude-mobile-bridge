@@ -19,7 +19,8 @@ import { STATE_DIR } from "../paths";
 const execAsync = promisify(exec);
 
 export const PROJECTS_DIR = join(homedir(), ".claude", "projects");
-const ACTIVE_SESSION_FILE = join(
+const ACTIVE_SESSION_FILE = join(STATE_DIR, "active-session.txt");
+const LEGACY_ACTIVE_SESSION_FILE = join(
   tmpdir(),
   "claude-telegram-active-session.txt",
 );
@@ -69,6 +70,19 @@ async function loadActiveSession(): Promise<string | null> {
   try {
     const name = await readFile(ACTIVE_SESSION_FILE, "utf-8");
     return name.trim() || null;
+  } catch {
+    // fall through to legacy
+  }
+  try {
+    const name = await readFile(LEGACY_ACTIVE_SESSION_FILE, "utf-8");
+    const trimmed = name.trim();
+    if (trimmed) {
+      await writeFile(ACTIVE_SESSION_FILE, trimmed, "utf-8");
+      info(
+        `watcher: migrated active session from ${LEGACY_ACTIVE_SESSION_FILE} to ${ACTIVE_SESSION_FILE}`,
+      );
+    }
+    return trimmed || null;
   } catch {
     return null;
   }
