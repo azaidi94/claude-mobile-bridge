@@ -33,7 +33,7 @@ const clientCache = new Map<
   { client: RelayClient; port: number; dir: string }
 >();
 
-// TTL cache for port file scan results (avoids /tmp readdir on every message)
+// TTL cache for port file scan results (avoids STATE_DIR readdir on every message)
 const SCAN_TTL_MS = 5_000;
 let lastScanResult: PortFileData[] = [];
 let lastScanTime = 0;
@@ -105,7 +105,7 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
       }
     }
   } catch {
-    // /tmp not readable
+    // STATE_DIR not readable
   }
 
   lastScanResult = results;

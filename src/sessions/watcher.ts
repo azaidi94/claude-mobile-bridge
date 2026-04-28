@@ -705,7 +705,7 @@ export async function startWatcher(
       }
     });
   } catch {
-    // /tmp watch not critical
+    // STATE_DIR watch not critical
   }
 
   // Backup polling
