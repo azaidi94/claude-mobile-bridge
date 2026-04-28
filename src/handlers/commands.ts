@@ -7,7 +7,8 @@
 
 import { readdir, readFile, stat, access } from "fs/promises";
 import { realpathSync, statSync } from "fs";
-import { resolve } from "path";
+import { join, resolve } from "path";
+import { LOG_DIR } from "../paths";
 import type { Context } from "grammy";
 import { InlineKeyboard, GrammyError } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
@@ -1461,7 +1462,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   const pruneNote =
     reconciled > 0 ? `Pruned ${reconciled} orphan mapping(s).` : "";
 
-  const logPath = process.env.CLEANZOMBIE_LOG_PATH || "/tmp/claude-bot.log";
+  const logPath = process.env.CLEANZOMBIE_LOG_PATH || join(LOG_DIR, "bot.log");
   let logContent = "";
   try {
     logContent = await readFile(logPath, "utf-8");
