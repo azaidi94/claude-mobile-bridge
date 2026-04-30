@@ -1,7 +1,7 @@
 /**
  * Command handlers for Claude Telegram Bot.
  *
- * /start, /help, /new, /stop, /kill, /status, /model, /restart, /retry
+ * /start, /help, /new, /respawn, /stop, /kill, /status, /model, /restart, /retry
  * /list, /switch, /refresh, /pin, /watch, /unwatch, /pwd, /cd, /ls
  */
 
@@ -371,6 +371,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "<b>Session Management</b>",
       "/list — session dashboard",
       "/new [path] — spawn desktop Claude",
+      "/respawn — kill + restart current session, same cwd",
       "/sessions — browse offline sessions",
       "/kill — terminate session + delete topic",
       "",
@@ -404,7 +405,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/list - Show all sessions\n` +
       `/switch &lt;name&gt; - Switch to session\n` +
       `/sessions - Browse offline sessions\n` +
-      `/new [path] - Open desktop Claude (Terminal)\n\n` +
+      `/new [path] - Open desktop Claude (Terminal)\n` +
+      `/respawn - Kill + restart current session, same cwd\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +
       `/unwatch - Stop watching\n\n` +
@@ -770,11 +772,15 @@ export async function handleStop(ctx: Context): Promise<void> {
 /**
  * Kill a session by SIGTERM, clean up relay/watch/cache.
  * Shared by /kill command and kill: callback.
+ *
+ * `preserveTopic`: skip Telegram topic deletion so /respawn can reuse it
+ * when a new session spawns into the same cwd with the same name.
  */
 export async function killSession(
   sessionInfo: SessionInfo,
   chatId: number,
   botApi: Context["api"],
+  opts: { preserveTopic?: boolean } = {},
 ): Promise<{ killed: boolean; pid?: number }> {
   stopWatchByName(sessionInfo.name, botApi, "kill");
   disconnectRelay({
@@ -808,7 +814,7 @@ export async function killSession(
 
   removeSession(sessionInfo.name);
 
-  if (_topicManager) {
+  if (_topicManager && !opts.preserveTopic) {
     _topicManager
       .deleteTopic(sessionInfo.name)
       .catch((err) => warn(`kill: topic delete failed: ${err}`));
@@ -818,6 +824,7 @@ export async function killSession(
     sessionName: sessionInfo.name,
     sessionDir: sessionInfo.dir,
     pid,
+    preserveTopic: Boolean(opts.preserveTopic),
   });
 
   return { killed: true, pid };
@@ -907,6 +914,86 @@ export async function handleKill(ctx: Context): Promise<void> {
     return;
   }
   await sendPostKillSessionList(ctx, chatId, "kill");
+}
+
+/**
+ * Kill + re-spawn `target` in the same cwd. Watch and relay re-attach via
+ * `spawnDesktopClaudeSession`. Shared by /respawn and the respawn: callback.
+ *
+ * Caller owns the user-facing "respawning…" status message — handleRespawn
+ * sends a new one, the callback path edits its existing keyboard message.
+ *
+ * Old desktop Claude's port file is distinguished from the new one by
+ * `relayIdentity` (sessionId/ppid/pid), so spawn's "before" snapshot doesn't
+ * need to wait for the SIGTERM'd process to unlink — a stale port file in
+ * `beforeRelays` only adds it to the known set, and the new relay is detected
+ * regardless.
+ */
+export async function respawnSession(
+  api: Context["api"],
+  chatId: number,
+  userId: number,
+  target: SessionInfo,
+): Promise<void> {
+  const cwd = target.dir;
+  const sessionName = target.name;
+
+  await killSession(target, chatId, api, { preserveTopic: true });
+  await spawnDesktopClaudeSession(api, chatId, cwd, userId);
+
+  // Spawn flow's createTopic reuses the preserved mapping when the new
+  // session shares a name. Otherwise — basename collision OR spawn failed —
+  // the old mapping is stale; clean it up so it doesn't linger.
+  if (_topicManager) {
+    const newActive = getActiveSession();
+    if (!newActive || newActive.name !== sessionName) {
+      _topicManager
+        .deleteTopic(sessionName)
+        .catch((err) => warn(`respawn: stale topic delete failed: ${err}`));
+    }
+  }
+}
+
+/**
+ * /respawn - Kill and re-spawn the current session in the same cwd.
+ */
+export async function handleRespawn(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+  if (!chatId || userId === undefined) return;
+
+  let target: SessionInfo | null = null;
+  if (isTopicChat(ctx)) {
+    const topicCtx = isSessionTopic(ctx);
+    if (topicCtx) {
+      target = getSession(topicCtx.sessionName);
+      if (!target) {
+        await ctx.reply("Session not found for this topic.");
+        return;
+      }
+    } else if (await showSessionPicker(ctx, "respawn")) {
+      return;
+    }
+  }
+  if (!target) {
+    const active = getActiveSession();
+    if (active) target = active.info;
+  }
+
+  if (!target) {
+    await ctx.reply("No active session to respawn. Use /new to start one.");
+    return;
+  }
+
+  await ctx.reply(`♻️ Respawning <b>${escapeHtml(target.name)}</b>...`, {
+    parse_mode: "HTML",
+  });
+  await respawnSession(ctx.api, chatId, userId, target);
 }
 
 /**
