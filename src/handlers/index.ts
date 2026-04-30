@@ -6,6 +6,7 @@ export {
   handleStart,
   handleHelp,
   handleNew,
+  handleRespawn,
   handleStop,
   handleKill,
   handleStatus,

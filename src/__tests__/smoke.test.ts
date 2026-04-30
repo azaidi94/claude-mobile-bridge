@@ -116,6 +116,7 @@ mock.module("../handlers", () => ({
   handleStart: mock(() => {}),
   handleHelp: mock(() => {}),
   handleNew: mock(() => {}),
+  handleRespawn: mock(() => {}),
   handleStop: mock(() => {}),
   handleKill: mock(() => {}),
   handleStatus: mock(() => {}),
