@@ -2229,6 +2229,7 @@ describe("commands: /usage", () => {
 
 describe("killSession: multi-topic", () => {
   beforeEach(() => {
+    resetMocks();
     mockStopWatchByName.mockClear();
     mockDisconnectRelay.mockClear();
   });
@@ -2316,6 +2317,56 @@ describe("killSession: multi-topic", () => {
           s.claudePid === undefined),
     );
     expect(touchesA).toBe(false);
+  });
+
+  test("preserveTopic skips topic deletion", async () => {
+    const { killSession, setTopicManager } =
+      await import("../handlers/commands");
+    const deleteTopic = mock(() => Promise.resolve());
+    setTopicManager({ deleteTopic } as any);
+
+    const sessionInfo = {
+      name: "preserve-me",
+      dir: "/repo/preserve",
+      pid: 2001,
+      id: "id-preserve",
+      source: "desktop" as const,
+      lastActivity: Date.now(),
+    };
+    mockSessions.push({ ...sessionInfo });
+
+    const mockApi = {
+      sendMessage: mock(() => Promise.resolve({ message_id: 1 })),
+    } as any;
+
+    await killSession(sessionInfo, 100, mockApi, { preserveTopic: true });
+
+    expect(deleteTopic).not.toHaveBeenCalled();
+  });
+
+  test("default (no opts) deletes the topic", async () => {
+    const { killSession, setTopicManager } =
+      await import("../handlers/commands");
+    const deleteTopic = mock(() => Promise.resolve());
+    setTopicManager({ deleteTopic } as any);
+
+    const sessionInfo = {
+      name: "delete-me",
+      dir: "/repo/delete",
+      pid: 2002,
+      id: "id-delete",
+      source: "desktop" as const,
+      lastActivity: Date.now(),
+    };
+    mockSessions.push({ ...sessionInfo });
+
+    const mockApi = {
+      sendMessage: mock(() => Promise.resolve({ message_id: 1 })),
+    } as any;
+
+    await killSession(sessionInfo, 100, mockApi);
+
+    expect(deleteTopic).toHaveBeenCalledWith("delete-me");
   });
 });
 

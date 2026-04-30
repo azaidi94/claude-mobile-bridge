@@ -917,9 +917,45 @@ export async function handleKill(ctx: Context): Promise<void> {
 }
 
 /**
+ * Kill + re-spawn `target` in the same cwd. Watch and relay re-attach via
+ * `spawnDesktopClaudeSession`. Shared by /respawn and the respawn: callback.
+ *
+ * Caller owns the user-facing "respawning…" status message — handleRespawn
+ * sends a new one, the callback path edits its existing keyboard message.
+ *
+ * Old desktop Claude's port file is distinguished from the new one by
+ * `relayIdentity` (sessionId/ppid/pid), so spawn's "before" snapshot doesn't
+ * need to wait for the SIGTERM'd process to unlink — a stale port file in
+ * `beforeRelays` only adds it to the known set, and the new relay is detected
+ * regardless.
+ */
+export async function respawnSession(
+  api: Context["api"],
+  chatId: number,
+  userId: number,
+  target: SessionInfo,
+): Promise<void> {
+  const cwd = target.dir;
+  const sessionName = target.name;
+
+  await killSession(target, chatId, api, { preserveTopic: true });
+  await spawnDesktopClaudeSession(api, chatId, cwd, userId);
+
+  // Spawn flow's createTopic reuses the preserved mapping when the new
+  // session shares a name. Otherwise — basename collision OR spawn failed —
+  // the old mapping is stale; clean it up so it doesn't linger.
+  if (_topicManager) {
+    const newActive = getActiveSession();
+    if (!newActive || newActive.name !== sessionName) {
+      _topicManager
+        .deleteTopic(sessionName)
+        .catch((err) => warn(`respawn: stale topic delete failed: ${err}`));
+    }
+  }
+}
+
+/**
  * /respawn - Kill and re-spawn the current session in the same cwd.
- * Same-name re-spawn lets the existing topic be reused; watch and relay
- * re-attach automatically via spawnDesktopClaudeSession.
  */
 export async function handleRespawn(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -940,6 +976,8 @@ export async function handleRespawn(ctx: Context): Promise<void> {
         await ctx.reply("Session not found for this topic.");
         return;
       }
+    } else if (await showSessionPicker(ctx, "respawn")) {
+      return;
     }
   }
   if (!target) {
@@ -952,33 +990,10 @@ export async function handleRespawn(ctx: Context): Promise<void> {
     return;
   }
 
-  const cwd = target.dir;
-  const sessionName = target.name;
-
-  await ctx.reply(`♻️ Respawning <b>${escapeHtml(sessionName)}</b>...`, {
+  await ctx.reply(`♻️ Respawning <b>${escapeHtml(target.name)}</b>...`, {
     parse_mode: "HTML",
   });
-
-  await killSession(target, chatId, ctx.api, { preserveTopic: true });
-
-  // Let the killed relay's port file disappear before scanPortFiles snapshots
-  // the "before" set — otherwise the new relay won't be detected as new.
-  await Bun.sleep(1000);
-
-  await spawnDesktopClaudeSession(ctx.api, chatId, cwd, userId);
-
-  // Spawn flow uses createTopic which reuses the preserved mapping when the
-  // new session shares a name. If the new session ended up with a different
-  // name (rare — basename collision), the old mapping is now orphaned;
-  // delete it so it doesn't linger.
-  if (_topicManager) {
-    const newActive = getActiveSession();
-    if (newActive && newActive.name !== sessionName) {
-      _topicManager
-        .deleteTopic(sessionName)
-        .catch((err) => warn(`respawn: stale topic delete failed: ${err}`));
-    }
-  }
+  await respawnSession(ctx.api, chatId, userId, target);
 }
 
 /**

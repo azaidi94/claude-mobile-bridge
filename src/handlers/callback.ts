@@ -41,6 +41,7 @@ import {
   offlineSessionCache,
   spawnDesktopClaudeSession,
   handleGroupModeCallback,
+  respawnSession,
 } from "./commands";
 import {
   pendingSettingsInput,
@@ -257,6 +258,25 @@ export async function handleCallback(ctx: Context): Promise<void> {
       parse_mode: "HTML",
     });
     await sendPostKillSessionList(ctx, chatId, "switch");
+    return;
+  }
+
+  // Handle respawn callbacks: respawn:{session_name}
+  if (callbackData.startsWith("respawn:")) {
+    const name = callbackData.slice(8);
+    const target = getSession(name);
+    const userId = ctx.from?.id;
+
+    if (!target || userId === undefined) {
+      await ctx.answerCallbackQuery({ text: "Session not found" });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: `Respawning ${name}` });
+    await ctx.editMessageText(`♻️ Respawning <b>${escapeHtml(name)}</b>...`, {
+      parse_mode: "HTML",
+    });
+    await respawnSession(ctx.api, chatId, userId, target);
     return;
   }
 
