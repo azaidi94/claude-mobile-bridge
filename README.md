@@ -65,7 +65,7 @@ The bot works best in a **Telegram forum group** where each session gets its own
 
 | Category | Commands                                           |
 | -------- | -------------------------------------------------- |
-| Sessions | `/list`, `/new`, `/sessions`, `/kill`              |
+| Sessions | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
 | Files    | `/pwd`, `/cd`, `/ls`                               |
 | Quota    | `/usage`                                           |
