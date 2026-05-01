@@ -10,6 +10,11 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!streaming) inputRef.current?.focus();
+  }, [streaming]);
 
   useEffect(() => {
     api.getSessions().then((s) => {
@@ -80,6 +85,7 @@ export function ChatPage() {
       <Terminal events={events} streaming={streaming} />
       <div className="flex gap-2 p-2 border-t border-terminal-border bg-terminal-surface">
         <input
+          ref={inputRef}
           className="flex-1 bg-terminal-bg border border-terminal-border rounded-lg px-3 py-2 text-sm text-terminal-text placeholder-terminal-muted focus:outline-none focus:border-terminal-green"
           placeholder="Message..."
           value={input}
