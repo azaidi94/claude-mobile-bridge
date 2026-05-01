@@ -1198,6 +1198,7 @@ export async function maybeNotifyContextCrossing(
   await botApi
     .sendMessage(state.chatId, `⚠️ Context ${pct}%`, {
       message_thread_id: state.threadId,
+      disable_notification: true,
     })
     .catch((err) => warn(`context notify: ${err}`));
 }
@@ -1218,6 +1219,7 @@ export function handleTailEvent(
 
   const { chatId } = state;
   const threadOpts = threadId ? { message_thread_id: threadId } : {};
+  const silent = { disable_notification: true } as const;
 
   // Watchdog bookkeeping: every event resets the idle clock. Mid-turn flag
   // tracks whether Claude owes the user a continuation. Cleared by the same
@@ -1272,6 +1274,7 @@ export function handleTailEvent(
         .sendMessage(chatId, `🧠 <i>${escapeHtml(preview)}</i>`, {
           parse_mode: "HTML",
           ...threadOpts,
+          ...silent,
         })
         .then((msg) => {
           state.currentToolMsg = msg;
@@ -1314,6 +1317,7 @@ export function handleTailEvent(
         .sendMessage(chatId, event.content, {
           parse_mode: "HTML",
           ...threadOpts,
+          ...silent,
         })
         .then((msg) => {
           state.currentToolMsg = msg;
@@ -1352,7 +1356,11 @@ export function handleTailEvent(
         Boolean(event.isError),
       );
       botApi
-        .sendMessage(chatId, summary, { parse_mode: "HTML", ...threadOpts })
+        .sendMessage(chatId, summary, {
+          parse_mode: "HTML",
+          ...threadOpts,
+          ...silent,
+        })
         .then((msg) => {
           state.currentToolMsg = msg;
           trackProgress(msg);
@@ -1380,7 +1388,7 @@ export function handleTailEvent(
       };
       const label = labels[mode] ?? `${mode} mode`;
       botApi
-        .sendMessage(chatId, `⚙ ${label}`, threadOpts)
+        .sendMessage(chatId, `⚙ ${label}`, { ...threadOpts, ...silent })
         .catch((err) => debug(`tail permission_mode: ${err}`));
       break;
     }
@@ -1399,6 +1407,7 @@ export function handleTailEvent(
         .sendMessage(chatId, `🪝 stop hook${tag} ${verb}${trail}`, {
           parse_mode: "HTML",
           ...threadOpts,
+          ...(h.preventedContinuation ? {} : silent),
         })
         .catch((err) => debug(`tail hook_summary: ${err}`));
       firePendingRunCompletion(botApi, state, threadOpts.message_thread_id);
@@ -1428,7 +1437,11 @@ export function handleTailEvent(
 
       if (!state.currentTextMsg) {
         botApi
-          .sendMessage(chatId, formatted, { parse_mode: "HTML", ...threadOpts })
+          .sendMessage(chatId, formatted, {
+            parse_mode: "HTML",
+            ...threadOpts,
+            ...silent,
+          })
           .then((msg) => {
             state.currentTextMsg = msg;
             trackProgress(msg);
@@ -1436,7 +1449,7 @@ export function handleTailEvent(
           .catch((err) => {
             debug(`tail text create: ${err}`);
             botApi
-              .sendMessage(chatId, display, threadOpts)
+              .sendMessage(chatId, display, { ...threadOpts, ...silent })
               .then((msg) => {
                 state.currentTextMsg = msg;
                 trackProgress(msg);
@@ -1536,11 +1549,15 @@ export function handleTailEvent(
         .sendMessage(chatId, `${labelHtml}\n${formatted}`, {
           parse_mode: "HTML",
           ...threadOpts,
+          ...silent,
         })
         .catch((err) => {
           debug(`tail user: ${err}`);
           botApi
-            .sendMessage(chatId, `${labelPlain}\n${preview}`, threadOpts)
+            .sendMessage(chatId, `${labelPlain}\n${preview}`, {
+              ...threadOpts,
+              ...silent,
+            })
             .catch(() => {});
         });
       break;

@@ -351,12 +351,14 @@ export function createStatusCallback(
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
           message_thread_id: threadId,
+          disable_notification: true,
         });
         state.toolMessages.push(thinkingMsg);
       } else if (statusType === "tool") {
         const toolMsg = await ctx.reply(content, {
           parse_mode: "HTML",
           message_thread_id: threadId,
+          disable_notification: true,
         });
         state.toolMessages.push(toolMsg);
       } else if (statusType === "text" && segmentId !== undefined) {
@@ -375,6 +377,7 @@ export function createStatusCallback(
             const msg = await ctx.reply(formatted, {
               parse_mode: "HTML",
               message_thread_id: threadId,
+              disable_notification: true,
             });
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
@@ -383,6 +386,7 @@ export function createStatusCallback(
             debug(`html reply fallback: ${htmlError}`);
             const msg = await ctx.reply(formatted, {
               message_thread_id: threadId,
+              disable_notification: true,
             });
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
@@ -461,10 +465,14 @@ export function createStatusCallback(
                 await ctx.reply(chunk, {
                   parse_mode: "HTML",
                   message_thread_id: threadId,
+                  disable_notification: true,
                 });
               } catch (htmlError) {
                 debug(`chunk html fallback: ${htmlError}`);
-                await ctx.reply(chunk, { message_thread_id: threadId });
+                await ctx.reply(chunk, {
+                  message_thread_id: threadId,
+                  disable_notification: true,
+                });
               }
             }
           }
