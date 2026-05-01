@@ -29,7 +29,7 @@ export function startWebServer(): void {
         "  The Mini App API is publicly reachable WITHOUT authentication.",
       );
       console.error(
-        "  Prefer WEB_AUTH_LOOPBACK_BYPASS=true (safe behind reverse proxy),",
+        "  Prefer WEB_AUTH_LAN_BYPASS=true (safe behind reverse proxy),",
       );
       console.error("  or WEB_AUTH_BYPASS=false to enforce Telegram initData.");
       console.error(`${line}\n`);

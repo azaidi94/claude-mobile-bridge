@@ -281,12 +281,12 @@ See [SECURITY.md](SECURITY.md). User allowlist, path validation, command safety 
 
 Every `/api/*` request is validated against Telegram's `initData` HMAC (signed with your bot token). The Mini App sends it automatically. Three env flags control overrides:
 
-| Flag                            | Default | Effect                                                                                                                                                                                                                              |
-| ------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WEB_AUTH_BYPASS=true`          | false   | **Nuclear bypass.** All requests allowed. Only safe if `WEB_URL` is strictly localhost                                                                                                                                              |
-| `WEB_AUTH_LOOPBACK_BYPASS=true` | false   | Allows direct-to-port requests from `127.0.0.1` / `::1` **only when** `X-Forwarded-For`/`X-Real-IP` is absent. Safe behind a reverse proxy — the proxy always sets those headers, so public traffic keeps going through normal auth |
+| Flag                       | Default | Effect                                                                                                                                                                                                                                                                    |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WEB_AUTH_BYPASS=true`     | false   | **Nuclear bypass.** All requests allowed. Only safe if `WEB_URL` is strictly localhost                                                                                                                                                                                    |
+| `WEB_AUTH_LAN_BYPASS=true` | false   | Allows direct-to-port requests from loopback (`127.0.0.1` / `::1`) and RFC 1918 LAN addresses **only when** `X-Forwarded-For`/`X-Real-IP` is absent. Safe behind a reverse proxy — the proxy always sets those headers, so public traffic keeps going through normal auth |
 
-Prefer `WEB_AUTH_LOOPBACK_BYPASS` for dev. It lets `curl http://localhost:4242/api/...` succeed on the bot host while rejecting unauthenticated public traffic.
+Prefer `WEB_AUTH_LAN_BYPASS` for local and LAN access. It lets requests from the bot host or other devices on your network succeed while rejecting unauthenticated public traffic.
 
 The bot prints a loud startup warning if `WEB_AUTH_BYPASS=true` is set with a non-localhost `WEB_URL`.
 

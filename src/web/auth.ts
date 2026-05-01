@@ -48,14 +48,28 @@ function isLoopback(addr: string | null | undefined): boolean {
   );
 }
 
+function isPrivateNetwork(addr: string | null | undefined): boolean {
+  if (!addr) return false;
+  if (isLoopback(addr)) return true;
+  const ip = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  if (ip.startsWith("10.")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  if (ip.startsWith("172.")) {
+    const second = parseInt(ip.split(".")[1] ?? "", 10);
+    return second >= 16 && second <= 31;
+  }
+  return false;
+}
+
 export const authMiddleware = createMiddleware(async (c, next) => {
   if (process.env.WEB_AUTH_BYPASS === "true") return next();
 
-  if (process.env.WEB_AUTH_LOOPBACK_BYPASS === "true") {
-    const fwd = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip");
-    const remote = (c.env as { remoteAddr?: string | null } | undefined)
-      ?.remoteAddr;
-    if (!fwd && isLoopback(remote ?? null)) return next();
+  const fwd = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip");
+  const remote = (c.env as { remoteAddr?: string | null } | undefined)
+    ?.remoteAddr;
+
+  if (process.env.WEB_AUTH_LAN_BYPASS === "true") {
+    if (!fwd && isPrivateNetwork(remote ?? null)) return next();
   }
 
   const initData = extractInitData(c);

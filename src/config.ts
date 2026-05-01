@@ -313,12 +313,12 @@ export const WEB_URL =
 export const WEB_APP_SHORT_URL = process.env.WEB_APP_SHORT_URL?.trim() || "";
 
 /**
- * If true, bypass auth ONLY for direct-to-port requests from loopback
- * (no X-Forwarded-For / X-Real-IP header, socket peer is 127.0.0.1 / ::1).
+ * If true, bypass auth for direct-to-port requests from loopback or RFC 1918
+ * LAN addresses (no X-Forwarded-For / X-Real-IP header).
  * Safe behind a reverse proxy because proxies always set X-Forwarded-For.
  */
-export const WEB_AUTH_LOOPBACK_BYPASS =
-  (process.env.WEB_AUTH_LOOPBACK_BYPASS || "false").toLowerCase() === "true";
+export const WEB_AUTH_LAN_BYPASS =
+  (process.env.WEB_AUTH_LAN_BYPASS || "false").toLowerCase() === "true";
 
 // ============== TTS ==============
 
