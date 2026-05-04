@@ -35,6 +35,24 @@ import { STATE_DIR } from "../../paths";
 
 const cwd = process.cwd();
 const serverStartedAtMs = Date.now();
+
+/** Get the start time of our parent Claude process in ms since epoch. */
+function getParentStartedAtMs(): number {
+  try {
+    // macOS: ps lstart gives absolute start time, e.g. "Mon Jan  1 12:00:00 2024"
+    const out = execSync(`ps -p ${process.ppid} -o lstart=`, {
+      encoding: "utf-8",
+    }).trim();
+    const t = new Date(out).getTime();
+    if (!isNaN(t)) return t;
+  } catch {
+    // ps failed or pid gone
+  }
+  return serverStartedAtMs;
+}
+
+// JSOBLs born before this time belong to a previous Claude session.
+const claudeStartedAtMs = getParentStartedAtMs();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 const PORT_FILE = join(
   STATE_DIR,
@@ -118,12 +136,11 @@ function discoverSessionId(): string | undefined {
       if (claimed.has(id)) continue;
       try {
         const s = statSync(join(projectDir, file));
-        if (s.birthtimeMs >= serverStartedAtMs - 5 * 60_000) {
-          // Prefer JSONL born closest to relay startup (same-start case).
-          // 5-minute window covers the gap between Claude starting and the
-          // relay MCP server loading (typically a few seconds to ~2 minutes).
-          // Narrower than 10 min to avoid grabbing the previous session's JSONL
-          // when multiple sessions run sequentially in the same directory.
+        if (s.birthtimeMs >= claudeStartedAtMs - 30_000) {
+          // Only claim JSOBLs born after this Claude process started (with a
+          // 30s buffer). Anchoring to the parent PID start time rather than
+          // the relay start time prevents grabbing a previous session's JSONL
+          // when sessions run sequentially in the same directory.
           const diff = Math.abs(s.birthtimeMs - serverStartedAtMs);
           if (!best || diff < best.diff) best = { id, diff };
         }

@@ -4,7 +4,7 @@
 
 export { RelayClient } from "./client";
 export type { RelayReply, RelayEditMessage, RelayReact } from "./client";
-export type { RelaySelector } from "./discovery";
+export type { RelaySelector, PortFileData } from "./discovery";
 
 export {
   isRelayAvailable,
