@@ -14,6 +14,7 @@ import {
 } from "./topic-store";
 import { info, warn, debug } from "../logger";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
+import { scanPortFiles, updatePortFile } from "../relay/discovery";
 
 interface ReconcileSession {
   name: string;
@@ -26,6 +27,23 @@ export class TopicManager {
     private api: Api,
     private chatId: number,
   ) {}
+
+  private async findRelayPid(
+    sessionName: string,
+    sessionDir: string,
+    sessionId?: string,
+  ): Promise<number | undefined> {
+    const portFiles = await scanPortFiles();
+    if (sessionId) {
+      const pf = portFiles.find((p) => p.sessionId === sessionId);
+      if (pf) return pf.pid;
+    }
+    const byName = portFiles.find((p) => p.sessionName === sessionName);
+    if (byName) return byName.pid;
+    const byDir = portFiles.filter((p) => p.cwd === sessionDir);
+    if (byDir.length === 1) return byDir[0]!.pid;
+    return undefined;
+  }
 
   /** Update the target chat ID (e.g. when switching from DM to group). */
   setChatId(chatId: number): void {
@@ -51,6 +69,17 @@ export class TopicManager {
           { parse_mode: "HTML", message_thread_id: existing.topicId },
         );
         updateTopicMapping(sessionName, { isOnline: true, sessionId });
+        const reusePid = await this.findRelayPid(
+          sessionName,
+          sessionDir,
+          sessionId,
+        );
+        if (reusePid !== undefined) {
+          updatePortFile(reusePid, {
+            topicId: existing.topicId,
+            topicName: sessionName,
+          });
+        }
         debug(
           `topic-manager: reusing topic ${existing.topicId} for ${sessionName}`,
         );
@@ -85,6 +114,15 @@ export class TopicManager {
       });
 
       info(`topic-manager: created topic ${topicId} for ${sessionName}`);
+
+      const newPid = await this.findRelayPid(
+        sessionName,
+        sessionDir,
+        sessionId,
+      );
+      if (newPid !== undefined) {
+        updatePortFile(newPid, { topicId, topicName: sessionName });
+      }
 
       // Best-effort: show recent history in the new topic
       try {

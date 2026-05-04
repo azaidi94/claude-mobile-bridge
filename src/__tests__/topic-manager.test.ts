@@ -45,6 +45,26 @@ afterAll(async () => {
   await rm(_topicStoreTmpDir, { recursive: true, force: true });
 });
 
+// Mock relay/discovery
+const mockUpdatePortFile = mock((_pid: number, _updates: object) => {});
+
+mock.module("../relay/discovery", () => ({
+  scanPortFiles: mock(async () => [
+    {
+      port: 9999,
+      pid: 11111,
+      ppid: 22222,
+      cwd: "/tmp/proj",
+      startedAt: "2026-05-04T00:00:00.000Z",
+      sessionId: "sid-1",
+      sessionName: "my-session",
+    },
+  ]),
+  updatePortFile: mockUpdatePortFile,
+  isRelayProcess: () => true,
+  invalidateScanCache: () => {},
+}));
+
 // Mock settings
 mock.module("../settings", () => ({
   getTerminal: () => "terminal",
@@ -262,5 +282,16 @@ describe("TopicManager", () => {
 
     const mapping = getTopicBySession("comeback");
     expect(mapping!.isOnline).toBe(true);
+  });
+
+  test("createTopic writes topicId and topicName back to port file", async () => {
+    mockUpdatePortFile.mockClear();
+    const mgr = createManager();
+    await mgr.createTopic("my-session", "/tmp/proj", "sid-1");
+    expect(mockUpdatePortFile).toHaveBeenCalledTimes(1);
+    const [pid, updates] = mockUpdatePortFile.mock.calls[0]!;
+    expect(pid).toBe(11111);
+    expect((updates as Record<string, unknown>).topicId).toBeDefined();
+    expect((updates as Record<string, unknown>).topicName).toBe("my-session");
   });
 });
