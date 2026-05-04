@@ -92,7 +92,7 @@ function claimedSessionIds(): Set<string> {
 }
 
 /**
- * Scan ~/.claude/projects/<cwd-hash>/ for a JSONL whose birthtime is closest
+ * Scan ~/.claude/projects/<cwd-with-slashes-as-dashes>/ for a JSONL whose birthtime is closest
  * to serverStartedAtMs and not already claimed by another relay instance.
  * Returns the session UUID or undefined.
  */
