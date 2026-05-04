@@ -1,3 +1,5 @@
+// Scaffolding for session-identity consumers (e.g. /sessions command, sync reconciler).
+// Populated by: relay (sessionId) → watcher (sessionName) → topic-manager (topicId/topicName).
 import type { PortFileData } from "../relay/discovery";
 
 export interface SessionMapping {
