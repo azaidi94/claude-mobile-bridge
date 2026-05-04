@@ -118,13 +118,20 @@ function discoverSessionId(): string | undefined {
       if (claimed.has(id)) continue;
       try {
         const s = statSync(join(projectDir, file));
-        if (s.birthtimeMs >= serverStartedAtMs - 30_000) {
-          // Prefer JSONL born closest to relay startup (same-start case)
+        if (s.birthtimeMs >= serverStartedAtMs - 10 * 60_000) {
+          // Prefer JSONL born closest to relay startup (same-start case).
+          // 10-minute window covers the gap between Claude starting and the
+          // relay MCP server loading (typically 1-3 minutes).
           const diff = Math.abs(s.birthtimeMs - serverStartedAtMs);
           if (!best || diff < best.diff) best = { id, diff };
         }
-        // Track most-recently-modified as fallback (relay-restart case)
-        if (!fallback || s.mtimeMs > fallback.mtime)
+        // Fallback for relay-restart: only consider files modified AFTER this
+        // relay started. A pre-existing old session's file has mtime from
+        // before our start — excluding it prevents grabbing wrong JSONLs.
+        if (
+          s.mtimeMs >= serverStartedAtMs &&
+          (!fallback || s.mtimeMs > fallback.mtime)
+        )
           fallback = { id, mtime: s.mtimeMs };
       } catch {
         // stat failed — skip
