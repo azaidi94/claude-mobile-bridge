@@ -199,16 +199,53 @@ function runDiscovery(): void {
     return; // Port file gone — stop
   }
 
-  // If we already own a sessionId, only re-discover if the JSONL was deleted
-  // (/clear or /respawn). Otherwise hold the claim — prevents stealing a new
-  // JSONL that belongs to a freshly-started sibling session.
+  // If we already own a sessionId, only re-discover if:
+  // 1. The JSONL was deleted (/clear or /respawn), OR
+  // 2. A newer JSONL exists that was written after the relay started — this
+  //    means the conversation moved to a new session (e.g. Claude started a
+  //    new conversation in the same process without /clear).
   if (currentId) {
     const projectDir = claudeProjectDir(cwd);
     try {
-      statSync(join(projectDir, `${currentId}.jsonl`));
-      // JSONL still exists — keep current sessionId
-      scheduleNextDiscovery(60_000);
-      return;
+      const currentStat = statSync(join(projectDir, `${currentId}.jsonl`));
+      // Check if a newer unclaimed JSONL exists for this dir.
+      const claimed = claimedSessionIds();
+      let newerExists = false;
+      try {
+        const files = readdirSync(projectDir);
+        for (const file of files) {
+          if (!file.endsWith(".jsonl")) continue;
+          const id = file.slice(0, -6);
+          if (
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              id,
+            )
+          )
+            continue;
+          if (id === currentId || claimed.has(id)) continue;
+          try {
+            const s = statSync(join(projectDir, file));
+            // A newer conversation: born after ours AND written after relay start.
+            if (
+              s.birthtimeMs > currentStat.birthtimeMs &&
+              s.mtimeMs >= serverStartedAtMs
+            ) {
+              newerExists = true;
+              break;
+            }
+          } catch {
+            // skip
+          }
+        }
+      } catch {
+        // projectDir unreadable — keep current
+      }
+      if (!newerExists) {
+        // JSONL still exists and no newer session — keep current sessionId
+        scheduleNextDiscovery(60_000);
+        return;
+      }
+      // Newer session found — fall through to re-discover
     } catch {
       // JSONL gone — fall through to re-discover
     }

@@ -128,6 +128,11 @@ export function createSessionsRouter(): Hono {
 
   app.get("/:id/stream", (c) => {
     const sessionId = c.req.param("id");
+    // Resolve the session name (stable across UUID drifts) to use as the SSE
+    // bus key, matching how the tailer emits events.
+    const sessions = getSessions();
+    const sessionName =
+      sessions.find((s) => s.id === sessionId)?.name ?? sessionId;
     const encoder = new TextEncoder();
     let controller: ReadableStreamDefaultController<Uint8Array>;
 
@@ -138,7 +143,7 @@ export function createSessionsRouter(): Hono {
       },
     });
 
-    const unsub = globalEventBus.subscribe(sessionId, (evt) => {
+    const unsub = globalEventBus.subscribe(sessionName, (evt) => {
       try {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
       } catch {}
@@ -187,15 +192,16 @@ export function createSessionsRouter(): Hono {
 
     const sessions = getSessions();
     const found = sessions.find((s) => s.id === sessionId);
+    const busKey = found?.name ?? sessionId;
 
     const emit = (type: SseEvent["type"], content: string) =>
-      globalEventBus.emit(sessionId, { type, content });
+      globalEventBus.emit(busKey, { type, content });
 
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
       if (found) claudeSession.loadFromRegistry(found);
-      const cb = globalEventBus.makeStatusCallback(sessionId);
+      const cb = globalEventBus.makeStatusCallback(busKey);
       claudeSession
         .sendMessageStreaming(body.text, "web", 0, cb)
         .catch(() => emit("done", ""));

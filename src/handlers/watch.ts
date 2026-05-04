@@ -601,7 +601,7 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
         void maybeNotifyContextCrossing(botApi, watchState, event.usage);
       }
       handleTailEvent(botApi, watchState, event, watchState.threadId);
-      bridgeTailToSse(globalEventBus, watchState.sessionId, event);
+      bridgeTailToSse(globalEventBus, watchState.sessionName, event);
     });
     watchState.tailer = newTailer;
     await newTailer.start();
@@ -727,22 +727,23 @@ export async function startAutoWatch(
     (await findSessionJsonlPath(sessionInfo.id)) ??
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
-  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-    }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
-    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
-  });
   const watchState: WatchState = buildWatchState({
     sessionName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
-    tailer,
+    tailer: null as unknown as SessionTailer,
     chatId,
     threadId,
   });
+  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
+    }
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
+  });
+  watchState.tailer = tailer;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start({ fromBeginning: options?.fromBeginning });
 
@@ -945,13 +946,6 @@ export async function startWatchingSession(
     (await findSessionJsonlPath(sessionInfo.id)) ??
     getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
 
-  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-    }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
-    bridgeTailToSse(globalEventBus, sessionInfo.id, event);
-  });
   // Spawn-initiated watches: the seeded sessionId is almost certainly
   // the watcher's stale-JSONL fallback for this dir. When the real id
   // shows up (after the first user prompt) we restart the tailer but
@@ -961,11 +955,19 @@ export async function startWatchingSession(
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
-    tailer,
+    tailer: null as unknown as SessionTailer,
     chatId,
     threadId,
     suppressNextIdChangeNotice: reason === "spawn",
   });
+  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
+    }
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
+  });
+  watchState.tailer = tailer;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
