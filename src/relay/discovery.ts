@@ -143,7 +143,7 @@ export function updatePortFile(
       if (!f.startsWith("channel-relay-") || !f.endsWith(".json")) continue;
       // Port file name format: channel-relay-<hash>-<pid>.json
       const pidPart = f.slice(0, -5).split("-").pop();
-      if (pidPart && parseInt(pidPart) === relayPid) {
+      if (pidPart && parseInt(pidPart, 10) === relayPid) {
         targetFile = join(STATE_DIR, f);
         break;
       }
