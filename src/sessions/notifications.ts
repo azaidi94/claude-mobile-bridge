@@ -177,6 +177,7 @@ export function createNotificationHandler(
     topicId: number,
     sessionDir: string,
     sessionId?: string,
+    claudePid?: number,
   ) => void,
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
@@ -200,7 +201,13 @@ export function createNotificationHandler(
             .createTopic(session.name, session.dir, session.id)
             .then((topicId) => {
               if (topicId && onTopicCreated)
-                onTopicCreated(session.name, topicId, session.dir, session.id);
+                onTopicCreated(
+                  session.name,
+                  topicId,
+                  session.dir,
+                  session.id,
+                  session.pid,
+                );
             })
             .catch((err) =>
               warn(`notify: topic create failed for ${session.name}: ${err}`),

@@ -159,7 +159,7 @@ if (primaryChatId !== undefined && storedTopicChatId) {
 const notifyHandler = createNotificationHandler(
   bot.api,
   topicManager,
-  (sessionName, topicId, sessionDir, sessionId) => {
+  (sessionName, topicId, sessionDir, sessionId, claudePid) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
       startAutoWatch(bot.api, chatId, topicId, sessionName, {
@@ -167,9 +167,13 @@ const notifyHandler = createNotificationHandler(
       })
         .then(async () => {
           // Ping the relay to force the JSONL to be created immediately.
-          // Without this, the relay can't discover its sessionId until the
-          // user types the first terminal message.
-          const client = await getRelayClient({ sessionId, sessionDir });
+          // Use claudePid for unambiguous targeting when multiple sessions
+          // share the same directory.
+          const client = await getRelayClient({
+            sessionId,
+            sessionDir,
+            claudePid,
+          });
           client?.sendMessage({
             chat_id: String(chatId),
             user: "bridge",
