@@ -19,13 +19,22 @@ import {
 import { createServer, type Socket } from "net";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
-import { writeFileSync, unlinkSync, mkdirSync } from "fs";
+import {
+  writeFileSync,
+  unlinkSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { STATE_DIR } from "../../paths";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
 const cwd = process.cwd();
+const serverStartedAtMs = Date.now();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 const PORT_FILE = join(
   STATE_DIR,
@@ -51,6 +60,130 @@ function removePortFile(): void {
   try {
     unlinkSync(PORT_FILE);
   } catch {}
+}
+
+/** Convert a cwd to the Claude projects directory name (slashes → dashes). */
+function claudeProjectDir(workingDir: string): string {
+  return join(homedir(), ".claude", "projects", workingDir.replace(/\//g, "-"));
+}
+
+/** Collect sessionIds already claimed by OTHER relay port files in STATE_DIR. */
+function claimedSessionIds(): Set<string> {
+  const claimed = new Set<string>();
+  try {
+    const files = readdirSync(STATE_DIR);
+    for (const f of files) {
+      if (!f.startsWith("channel-relay-") || !f.endsWith(".json")) continue;
+      // Skip our own port file
+      const pidPart = f.slice(0, -5).split("-").pop();
+      if (pidPart && parseInt(pidPart, 10) === process.pid) continue;
+      try {
+        const raw = readFileSync(join(STATE_DIR, f), "utf-8");
+        const data = JSON.parse(raw) as { sessionId?: string };
+        if (data.sessionId) claimed.add(data.sessionId);
+      } catch {
+        // Malformed — skip
+      }
+    }
+  } catch {
+    // STATE_DIR unreadable
+  }
+  return claimed;
+}
+
+/**
+ * Scan ~/.claude/projects/<cwd-with-slashes-as-dashes>/ for a JSONL whose birthtime is closest
+ * to serverStartedAtMs and not already claimed by another relay instance.
+ * Returns the session UUID or undefined.
+ */
+function discoverSessionId(): string | undefined {
+  const projectDir = claudeProjectDir(cwd);
+  const claimed = claimedSessionIds();
+  let best: { id: string; diff: number } | undefined;
+
+  try {
+    const files = readdirSync(projectDir);
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const id = file.slice(0, -6);
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          id,
+        )
+      )
+        continue;
+      if (claimed.has(id)) continue;
+      try {
+        const s = statSync(join(projectDir, file));
+        // Must have been born no earlier than 30s before relay started
+        if (s.birthtimeMs < serverStartedAtMs - 30_000) continue;
+        const diff = Math.abs(s.birthtimeMs - serverStartedAtMs);
+        if (!best || diff < best.diff) best = { id, diff };
+      } catch {
+        // stat failed — skip
+      }
+    }
+  } catch {
+    // projectDir not yet created — JSONL not written yet, will retry
+  }
+
+  return best?.id;
+}
+
+/** Re-read port file, merge `updates`, write back. Never clobbers unrelated fields. */
+function updateOwnPortFile(updates: Record<string, unknown>): void {
+  try {
+    const raw = readFileSync(PORT_FILE, "utf-8");
+    const current = JSON.parse(raw) as Record<string, unknown>;
+    writeFileSync(
+      PORT_FILE,
+      JSON.stringify({ ...current, ...updates }, null, 2),
+    );
+  } catch {
+    // Port file removed or malformed — ignore
+  }
+}
+
+const DISCOVERY_RETRY_DELAYS_MS = [3_000, 5_000, 10_000, 20_000, 30_000];
+
+let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryIndex = 0;
+
+function scheduleNextDiscovery(delayMs: number): void {
+  if (discoveryTimer) clearTimeout(discoveryTimer);
+  discoveryTimer = setTimeout(runDiscovery, delayMs);
+}
+
+function runDiscovery(): void {
+  discoveryTimer = null;
+  const id = discoverSessionId();
+
+  if (id) {
+    let currentId: string | undefined;
+    try {
+      currentId = (
+        JSON.parse(readFileSync(PORT_FILE, "utf-8")) as { sessionId?: string }
+      ).sessionId;
+    } catch {
+      return; // Port file gone — stop
+    }
+    if (id !== currentId) {
+      updateOwnPortFile({ sessionId: id });
+      process.stderr.write(`channel-relay: discovered sessionId=${id}\n`);
+    }
+    retryIndex = DISCOVERY_RETRY_DELAYS_MS.length; // switch to 60s steady-state polling
+  }
+
+  const delay =
+    retryIndex < DISCOVERY_RETRY_DELAYS_MS.length
+      ? DISCOVERY_RETRY_DELAYS_MS[retryIndex++]!
+      : 60_000;
+  scheduleNextDiscovery(delay);
+}
+
+function startSessionIdDiscoveryLoop(): void {
+  retryIndex = 0;
+  scheduleNextDiscovery(DISCOVERY_RETRY_DELAYS_MS[0]!);
 }
 
 function extractSessionIdFromArgs(args: string): string | undefined {
@@ -143,6 +276,7 @@ tcpServer.listen(0, "127.0.0.1", () => {
     process.stderr.write(
       `channel-relay: listening on port ${addr.port} (${PORT_FILE})\n`,
     );
+    startSessionIdDiscoveryLoop();
   }
 });
 
@@ -404,6 +538,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // ── Cleanup ────────────────────────────────────────────────────────────
 
 function cleanup(): void {
+  if (discoveryTimer) {
+    clearTimeout(discoveryTimer);
+    discoveryTimer = null;
+  }
   removePortFile();
   tcpServer.close();
   if (connectedClient) connectedClient.destroy();
