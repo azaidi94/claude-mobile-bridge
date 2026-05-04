@@ -166,19 +166,27 @@ const notifyHandler = createNotificationHandler(
         fromBeginning: true,
       })
         .then(async () => {
-          // Ping the relay to force the JSONL to be created immediately.
-          // Use claudePid for unambiguous targeting when multiple sessions
-          // share the same directory.
-          const client = await getRelayClient({
-            sessionId,
-            sessionDir,
-            claudePid,
-          });
-          client?.sendMessage({
-            chat_id: String(chatId),
-            user: "bridge",
-            text: `Session Name: ${sessionName}`,
-          });
+          // Ping the relay to force JSONL creation and confirm session identity.
+          // Retry with backoff: the relay's discovery loop writes sessionId ~3s
+          // after start, so the first attempt may fire before it's available.
+          const RETRY_DELAYS_MS = [0, 3_000, 7_000, 15_000];
+          for (const delay of RETRY_DELAYS_MS) {
+            if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+            const client = await getRelayClient({
+              sessionId,
+              sessionDir,
+              claudePid,
+            });
+            if (
+              client?.sendMessage({
+                chat_id: String(chatId),
+                user: "bridge",
+                text: `Session Name: ${sessionName}`,
+              })
+            )
+              return;
+          }
+          warn(`relay ping failed after retries for ${sessionName}`);
         })
         .catch((err) =>
           warn(
