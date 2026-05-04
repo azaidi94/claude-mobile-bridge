@@ -172,7 +172,12 @@ export function setSessionCleanupCallback(
 export function createNotificationHandler(
   botApi: Api,
   topicManager?: TopicManager,
-  onTopicCreated?: (sessionName: string, topicId: number) => void,
+  onTopicCreated?: (
+    sessionName: string,
+    topicId: number,
+    sessionDir: string,
+    sessionId?: string,
+  ) => void,
 ): (diff: SessionDiff) => void {
   return (diff: SessionDiff) => {
     for (const session of diff.added) {
@@ -195,7 +200,7 @@ export function createNotificationHandler(
             .createTopic(session.name, session.dir, session.id)
             .then((topicId) => {
               if (topicId && onTopicCreated)
-                onTopicCreated(session.name, topicId);
+                onTopicCreated(session.name, topicId, session.dir, session.id);
             })
             .catch((err) =>
               warn(`notify: topic create failed for ${session.name}: ${err}`),

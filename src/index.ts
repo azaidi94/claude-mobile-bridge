@@ -41,6 +41,7 @@ import {
 } from "./topics";
 import { createBot } from "./bot";
 import { session } from "./session";
+import { getRelayClient } from "./relay";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -158,16 +159,28 @@ if (primaryChatId !== undefined && storedTopicChatId) {
 const notifyHandler = createNotificationHandler(
   bot.api,
   topicManager,
-  (sessionName, topicId) => {
+  (sessionName, topicId, sessionDir, sessionId) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
       startAutoWatch(bot.api, chatId, topicId, sessionName, {
         fromBeginning: true,
-      }).catch((err) =>
-        warn(
-          `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
-        ),
-      );
+      })
+        .then(async () => {
+          // Ping the relay to force the JSONL to be created immediately.
+          // Without this, the relay can't discover its sessionId until the
+          // user types the first terminal message.
+          const client = await getRelayClient({ sessionId, sessionDir });
+          client?.sendMessage({
+            chat_id: String(chatId),
+            user: "bridge",
+            text: `Session Name: ${sessionName}`,
+          });
+        })
+        .catch((err) =>
+          warn(
+            `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
+          ),
+        );
     }
   },
 );
