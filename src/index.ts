@@ -161,7 +161,9 @@ const notifyHandler = createNotificationHandler(
   (sessionName, topicId) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
-      startAutoWatch(bot.api, chatId, topicId, sessionName).catch((err) =>
+      startAutoWatch(bot.api, chatId, topicId, sessionName, {
+        fromBeginning: true,
+      }).catch((err) =>
         warn(
           `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
         ),

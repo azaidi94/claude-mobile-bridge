@@ -686,6 +686,7 @@ export async function startAutoWatch(
   chatId: number,
   threadId: number,
   sessionName: string,
+  options?: { fromBeginning?: boolean },
 ): Promise<boolean> {
   // Auto-watch loses to user intent — both for pre-existing /watch bindings
   // and for /watch races that land while we're waiting on the session id.
@@ -743,7 +744,7 @@ export async function startAutoWatch(
     threadId,
   });
   watches.set(watchKey(chatId, threadId), watchState);
-  await tailer.start();
+  await tailer.start({ fromBeginning: options?.fromBeginning });
 
   setupIdDriftDetection(botApi, watchState);
 

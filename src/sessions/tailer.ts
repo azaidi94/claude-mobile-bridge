@@ -140,14 +140,19 @@ export class SessionTailer {
   /**
    * Start tailing the file. If the file doesn't exist yet (e.g. claude hasn't
    * written its first message), poll until it appears, then tail from offset 0.
-   * If it does exist, start from EOF so we only see new events.
+   * If it does exist, start from EOF so we only see new events — unless
+   * `fromBeginning` is true, in which case replay from offset 0.
    */
-  async start(): Promise<void> {
-    try {
-      const s = await stat(this.filePath);
-      this.offset = s.size;
-    } catch {
+  async start(options?: { fromBeginning?: boolean }): Promise<void> {
+    if (options?.fromBeginning) {
       this.offset = 0;
+    } else {
+      try {
+        const s = await stat(this.filePath);
+        this.offset = s.size;
+      } catch {
+        this.offset = 0;
+      }
     }
 
     this.tryWatchFile();
