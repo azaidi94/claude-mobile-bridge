@@ -100,6 +100,9 @@ function discoverSessionId(): string | undefined {
   const projectDir = claudeProjectDir(cwd);
   const claimed = claimedSessionIds();
   let best: { id: string; diff: number } | undefined;
+  // Fallback for relay restarts: pick the most recently modified unclaimed JSONL.
+  // The collision guard ensures two relays can't claim the same file.
+  let fallback: { id: string; mtime: number } | undefined;
 
   try {
     const files = readdirSync(projectDir);
@@ -115,10 +118,14 @@ function discoverSessionId(): string | undefined {
       if (claimed.has(id)) continue;
       try {
         const s = statSync(join(projectDir, file));
-        // Must have been born no earlier than 30s before relay started
-        if (s.birthtimeMs < serverStartedAtMs - 30_000) continue;
-        const diff = Math.abs(s.birthtimeMs - serverStartedAtMs);
-        if (!best || diff < best.diff) best = { id, diff };
+        if (s.birthtimeMs >= serverStartedAtMs - 30_000) {
+          // Prefer JSONL born closest to relay startup (same-start case)
+          const diff = Math.abs(s.birthtimeMs - serverStartedAtMs);
+          if (!best || diff < best.diff) best = { id, diff };
+        }
+        // Track most-recently-modified as fallback (relay-restart case)
+        if (!fallback || s.mtimeMs > fallback.mtime)
+          fallback = { id, mtime: s.mtimeMs };
       } catch {
         // stat failed — skip
       }
@@ -127,7 +134,7 @@ function discoverSessionId(): string | undefined {
     // projectDir not yet created — JSONL not written yet, will retry
   }
 
-  return best?.id;
+  return best?.id ?? fallback?.id;
 }
 
 /** Re-read port file, merge `updates`, write back. Never clobbers unrelated fields. */
