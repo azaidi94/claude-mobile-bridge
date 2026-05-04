@@ -4,6 +4,7 @@
  */
 
 import { readFile, readdir, unlink } from "fs/promises";
+import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { createHash } from "crypto";
@@ -19,6 +20,12 @@ export interface PortFileData {
   sessionId?: string;
   cwd: string;
   startedAt: string;
+  /** Set by bot after watcher assigns a name. */
+  sessionName?: string;
+  /** Set by bot after Telegram forum topic is created (group setups only). */
+  topicId?: number;
+  /** Set by bot after Telegram forum topic is created (group setups only). */
+  topicName?: string;
 }
 
 export interface RelaySelector {
@@ -116,6 +123,45 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
 /** Invalidate the scan cache (called when watcher detects port file change). */
 export function invalidateScanCache(): void {
   lastScanTime = 0;
+}
+
+/**
+ * Merge `updates` into the port file for the relay with the given PID.
+ * Safe for concurrent use: reads current content before writing, never
+ * overwrites fields not present in `updates`.
+ *
+ * Silently no-ops if the port file cannot be found or parsed.
+ */
+export function updatePortFile(
+  relayPid: number,
+  updates: Partial<PortFileData>,
+): void {
+  let targetFile: string | null = null;
+  try {
+    const files = readdirSync(STATE_DIR);
+    for (const f of files) {
+      if (!f.startsWith("channel-relay-") || !f.endsWith(".json")) continue;
+      // Port file name format: channel-relay-<hash>-<pid>.json
+      const pidPart = f.slice(0, -5).split("-").pop();
+      if (pidPart && parseInt(pidPart) === relayPid) {
+        targetFile = join(STATE_DIR, f);
+        break;
+      }
+    }
+  } catch {
+    return;
+  }
+  if (!targetFile) return;
+
+  try {
+    const raw = readFileSync(targetFile, "utf-8");
+    const current = JSON.parse(raw) as PortFileData;
+    const merged = { ...current, ...updates };
+    writeFileSync(targetFile, JSON.stringify(merged, null, 2));
+    invalidateScanCache();
+  } catch {
+    // Malformed file or race — silently skip
+  }
 }
 
 export async function isRelayAvailable(
