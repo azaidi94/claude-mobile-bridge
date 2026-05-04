@@ -163,17 +163,33 @@ function scheduleNextDiscovery(delayMs: number): void {
 
 function runDiscovery(): void {
   discoveryTimer = null;
-  const id = discoverSessionId();
 
-  if (id) {
-    let currentId: string | undefined;
+  let currentId: string | undefined;
+  try {
+    currentId = (
+      JSON.parse(readFileSync(PORT_FILE, "utf-8")) as { sessionId?: string }
+    ).sessionId;
+  } catch {
+    return; // Port file gone — stop
+  }
+
+  // If we already own a sessionId, only re-discover if the JSONL was deleted
+  // (/clear or /respawn). Otherwise hold the claim — prevents stealing a new
+  // JSONL that belongs to a freshly-started sibling session.
+  if (currentId) {
+    const projectDir = claudeProjectDir(cwd);
     try {
-      currentId = (
-        JSON.parse(readFileSync(PORT_FILE, "utf-8")) as { sessionId?: string }
-      ).sessionId;
+      statSync(join(projectDir, `${currentId}.jsonl`));
+      // JSONL still exists — keep current sessionId
+      scheduleNextDiscovery(60_000);
+      return;
     } catch {
-      return; // Port file gone — stop
+      // JSONL gone — fall through to re-discover
     }
+  }
+
+  const id = discoverSessionId();
+  if (id) {
     if (id !== currentId) {
       updateOwnPortFile({ sessionId: id });
       process.stderr.write(`channel-relay: discovered sessionId=${id}\n`);
