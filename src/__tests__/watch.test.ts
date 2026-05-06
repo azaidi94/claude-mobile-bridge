@@ -1218,3 +1218,52 @@ describe("watch: handleIdleWatch (notify-only branch)", () => {
     expect(sent[0]!.text).not.toContain("last said");
   });
 });
+
+describe("cross-post subscription", () => {
+  test("forwards web user_message to Telegram but not telegram source", async () => {
+    const { globalEventBus } = await import("../web/sse");
+    const { setupCrossPostSubscription } = await import("../handlers/watch");
+    const calls: Array<[number, string, unknown]> = [];
+    const mockSendMessage = mock(
+      (chatId: number, text: string, opts: unknown) => {
+        calls.push([chatId, text, opts]);
+        return Promise.resolve({ message_id: 1 });
+      },
+    );
+    const mockApi = {
+      sendMessage: mockSendMessage,
+    } as unknown as import("grammy").Api;
+
+    const fakeWatchState = {
+      chatId: 100,
+      threadId: 42,
+      sessionName: "my-session",
+    } as unknown as import("../handlers/watch").WatchState;
+
+    setupCrossPostSubscription(mockApi, fakeWatchState, globalEventBus);
+
+    globalEventBus.emit("my-session", {
+      type: "user_message",
+      source: "web",
+      content: "hello from web",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(100);
+    expect(calls[0]![1]).toContain("hello from web");
+    expect(calls[0]![2]).toMatchObject({ message_thread_id: 42 });
+
+    calls.length = 0;
+    globalEventBus.emit("my-session", {
+      type: "user_message",
+      source: "telegram",
+      content: "hello from tg",
+    });
+    expect(calls).toHaveLength(0);
+
+    calls.length = 0;
+    globalEventBus.emit("my-session", { type: "text", content: "response" });
+    expect(calls).toHaveLength(0);
+
+    fakeWatchState.unsubCrossPost?.();
+  });
+});

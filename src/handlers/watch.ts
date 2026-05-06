@@ -48,7 +48,11 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
-import { globalEventBus, type SseEvent } from "../web/sse";
+import {
+  globalEventBus,
+  type SessionEventBus,
+  type SseEvent,
+} from "../web/sse";
 import {
   recordUsage,
   computeContextPct,
@@ -195,6 +199,7 @@ export interface WatchState extends TailDisplayState {
    * Re-armed when activity resumes.
    */
   watchdogFired?: boolean;
+  unsubCrossPost?: () => void;
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -449,6 +454,7 @@ export async function sendWatchRelay(
 function cleanupWatch(state: WatchState): void {
   state.tailer.stop();
   state.relayCleanup?.();
+  state.unsubCrossPost?.();
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
   stopWatchTyping(state.chatId, state.threadId);
   forgetUsage(state.sessionId);
@@ -624,6 +630,32 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
   }, 5_000);
 }
 
+export function setupCrossPostSubscription(
+  botApi: Api,
+  watchState: WatchState,
+  bus: SessionEventBus = globalEventBus,
+): void {
+  const { chatId, threadId, sessionName } = watchState;
+
+  const unsub = bus.subscribe(sessionName, (evt) => {
+    if (evt.type !== "user_message") return;
+    if (evt.source === "telegram") return;
+    const prefix =
+      evt.source === "web"
+        ? "🌐 Web"
+        : evt.source === "cursor"
+          ? "🖱 Cursor"
+          : "🖥 Terminal";
+    botApi
+      .sendMessage(chatId, `${prefix}: ${evt.content}`, {
+        message_thread_id: threadId,
+      })
+      .catch(() => {});
+  });
+
+  watchState.unsubCrossPost = unsub;
+}
+
 // Backoff schedule for awaiting a fresh session's first JSONL write.
 // Total wait: ~37s. Brand-new Claude sessions usually populate within 1–3s.
 const AUTO_WATCH_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
@@ -748,6 +780,7 @@ export async function startAutoWatch(
   await tailer.start({ fromBeginning: options?.fromBeginning });
 
   setupIdDriftDetection(botApi, watchState);
+  setupCrossPostSubscription(botApi, watchState);
 
   // Wire relay client for replies
   const relayClient = await getRelayClient({
@@ -972,6 +1005,7 @@ export async function startWatchingSession(
   await tailer.start();
 
   setupIdDriftDetection(botApi, watchState);
+  setupCrossPostSubscription(botApi, watchState);
 
   // Wire relay client for replies. The JSONL tailer normally handles text
   // display, but if the tailer is stale (e.g. after /clear) the TCP path
