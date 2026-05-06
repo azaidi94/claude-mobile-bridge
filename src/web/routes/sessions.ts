@@ -208,6 +208,12 @@ export function createSessionsRouter(): Hono {
     const emit = (type: SseEvent["type"], content: string) =>
       globalEventBus.emit(busKey, { type, content });
 
+    globalEventBus.emit(busKey, {
+      type: "user_message",
+      source: "web",
+      content: body.text,
+    });
+
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
