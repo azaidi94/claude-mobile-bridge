@@ -13,6 +13,7 @@ import { session as claudeSession } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
+import { findNewestSessionInDir } from "../../sessions/tailer";
 
 export interface ApiSession {
   id: string;
@@ -178,10 +179,20 @@ export function createSessionsRouter(): Hono {
   app.get("/:id/history", async (c) => {
     const sessionId = c.req.param("id");
     const limit = parseInt(c.req.query("limit") ?? "200", 10);
-    const events = await readSessionHistory(
-      sessionId,
-      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200,
-    );
+    const safeLimit =
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200;
+
+    // Use the most-recently-modified JSONL in the session's directory.
+    // This keeps history visible after Claude Code restarts and starts a new
+    // session UUID in the same project — the same logic the tailer uses for
+    // drift detection.
+    const sessions = getSessions();
+    const session = sessions.find((s) => s.id === sessionId);
+    const resolvedId = session?.dir
+      ? ((await findNewestSessionInDir(session.dir)) ?? sessionId)
+      : sessionId;
+
+    const events = await readSessionHistory(resolvedId, safeLimit);
     return c.json({ events });
   });
 
