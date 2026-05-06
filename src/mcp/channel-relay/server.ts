@@ -225,10 +225,14 @@ function runDiscovery(): void {
           if (id === currentId || claimed.has(id)) continue;
           try {
             const s = statSync(join(projectDir, file));
-            // A newer conversation: born after ours AND written after relay start.
+            // Case 1: born after current AND written after relay start (new conversation).
+            // Case 2: current hasn't been touched since relay started, but this one has
+            //   (handles resumed older conversations where birthtime ordering is inverted).
+            const currentStale = currentStat.mtimeMs < serverStartedAtMs;
             if (
-              s.birthtimeMs > currentStat.birthtimeMs &&
-              s.mtimeMs >= serverStartedAtMs
+              (s.birthtimeMs > currentStat.birthtimeMs &&
+                s.mtimeMs >= serverStartedAtMs) ||
+              (currentStale && s.mtimeMs >= serverStartedAtMs)
             ) {
               newerExists = true;
               break;
