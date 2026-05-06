@@ -226,13 +226,14 @@ function runDiscovery(): void {
           try {
             const s = statSync(join(projectDir, file));
             // Case 1: born after current AND written after relay start (new conversation).
-            // Case 2: current hasn't been touched since relay started, but this one has
-            //   (handles resumed older conversations where birthtime ordering is inverted).
-            const currentStale = currentStat.mtimeMs < serverStartedAtMs;
+            // Case 2: this file's mtime is significantly more recent than current's
+            //   (handles resumed older conversations where birthtime ordering is inverted —
+            //   e.g. user resumes a session born before the currently-tracked one).
+            const RECENCY_ADVANTAGE_MS = 60 * 60 * 1000; // 1 hour
             if (
               (s.birthtimeMs > currentStat.birthtimeMs &&
                 s.mtimeMs >= serverStartedAtMs) ||
-              (currentStale && s.mtimeMs >= serverStartedAtMs)
+              s.mtimeMs > currentStat.mtimeMs + RECENCY_ADVANTAGE_MS
             ) {
               newerExists = true;
               break;
