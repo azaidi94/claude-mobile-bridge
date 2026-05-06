@@ -43,6 +43,7 @@ import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
 import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
+import { globalEventBus } from "../web/sse";
 
 /**
  * Handle incoming text messages.
@@ -345,6 +346,13 @@ export async function handleText(ctx: Context): Promise<void> {
       sessionOverride,
     );
     if (relayed) {
+      const topicCtx = isSessionTopic(ctx);
+      const busKey = topicCtx?.sessionName ?? String(chatId);
+      globalEventBus.emit(busKey, {
+        type: "user_message",
+        source: "telegram",
+        content: message,
+      });
       ctx
         .replyWithChatAction("typing", { message_thread_id: threadId })
         .catch(() => {});
