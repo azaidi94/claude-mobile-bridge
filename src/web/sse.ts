@@ -10,8 +10,10 @@ export interface SseEvent {
     | "send_file"
     | "tool_result"
     | "permission_mode"
-    | "hook_summary";
+    | "hook_summary"
+    | "user_message";
   content: string;
+  source?: "telegram" | "web" | "terminal" | "cursor";
   segmentId?: number;
   toolName?: string;
   toolInput?: Record<string, unknown>;
