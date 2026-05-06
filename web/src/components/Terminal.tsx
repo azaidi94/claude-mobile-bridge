@@ -569,7 +569,8 @@ function renderEventBody(
 }
 
 interface Turn {
-  role: "user" | "desktop" | "assistant";
+  role: "user" | "desktop" | "assistant" | "remote";
+  source?: "telegram" | "web" | "terminal" | "cursor";
   items: { evt: SseEvent; idx: number }[];
 }
 
@@ -649,6 +650,10 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
     if (evt.type === "permission_mode") return; // banner (Task 10)
     if (evt.type === "hook_summary") return; // inline card (Task 10)
     if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
+    if (evt.type === "user_message") {
+      turns.push({ role: "remote", source: evt.source, items: [{ evt, idx }] });
+      return;
+    }
     if (evt.type === "text") {
       if (evt.content.startsWith(USER_PREFIX)) {
         const stripped: SseEvent = {
@@ -711,6 +716,14 @@ const PANE_THEMES: Record<Turn["role"], PaneTheme> = {
     headerHover: "hover:bg-sky-500/25",
     headerBorderBottom: "border-sky-400/20",
   },
+  remote: {
+    label: "Remote",
+    border: "border-sky-400/25",
+    headerBg: "bg-sky-500/15",
+    headerText: "text-sky-300",
+    headerHover: "hover:bg-sky-500/20",
+    headerBorderBottom: "border-sky-400/20",
+  },
 };
 
 function turnPreview(turn: Turn): string {
@@ -721,6 +734,13 @@ function turnPreview(turn: Turn): string {
     }
   }
   return "";
+}
+
+function sourceLabel(source?: string): string {
+  if (source === "telegram") return "📱 Telegram";
+  if (source === "cursor") return "🖱 Cursor";
+  if (source === "web") return "🌐 Web";
+  return "🖥 Remote";
 }
 
 export function Terminal({ events, streaming }: TerminalProps) {
@@ -775,7 +795,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
               <span className="inline-block w-3 text-center">
                 {isCollapsed ? "▶" : "▼"}
               </span>
-              <span>{theme.label}</span>
+              <span>{turn.role === "remote" ? sourceLabel(turn.source) : theme.label}</span>
               {isCollapsed && (
                 <span className="normal-case font-normal text-terminal-muted truncate tracking-normal">
                   {turnPreview(turn)}

@@ -301,4 +301,22 @@ describe("Terminal", () => {
     expect(container.textContent).toContain("lint");
     expect(container.textContent).toContain("lint failed");
   });
+
+  test("renders user_message from telegram as a remote turn", () => {
+    const events: SseEvent[] = [
+      { type: "user_message", source: "telegram", content: "hi from telegram" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("hi from telegram");
+    expect(container.textContent).toContain("Telegram");
+  });
+
+  test("renders user_message from web with web label", () => {
+    const events: SseEvent[] = [
+      { type: "user_message", source: "web", content: "hi from web" },
+    ];
+    const { container } = render(<Terminal events={events} streaming={false} />);
+    expect(container.textContent).toContain("hi from web");
+    expect(container.textContent).toContain("Web");
+  });
 });
