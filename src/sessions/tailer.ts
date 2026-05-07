@@ -337,6 +337,20 @@ export class SessionTailer {
         return [{ type: "user", content: text }];
       }
 
+      // Background-task completion ping. Claude Code persists these as
+      // attachment entries (queued for injection at the next turn), not as
+      // user-message JSONL entries — so without this branch they'd be
+      // invisible to the bridge.
+      if (
+        entry.type === "attachment" &&
+        entry.attachment?.type === "queued_command" &&
+        entry.attachment?.commandMode === "task-notification"
+      ) {
+        const prompt = String(entry.attachment.prompt ?? "");
+        if (!prompt) return [];
+        return [{ type: "user", content: prompt }];
+      }
+
       if (entry.type === "permission-mode") {
         const mode = entry.permissionMode;
         if (typeof mode !== "string") return [];

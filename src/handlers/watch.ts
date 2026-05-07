@@ -23,6 +23,7 @@ import { isAuthorized } from "../security";
 import {
   escapeHtml,
   convertMarkdownToHtml,
+  formatTaskNotification,
   formatToolResultSummary,
   truncate,
 } from "../formatting";
@@ -1530,7 +1531,8 @@ export function handleTailEvent(
         event.content.length > 300
           ? event.content.slice(0, 300) + "…"
           : event.content;
-      const formatted = convertMarkdownToHtml(preview);
+      const taskCard = formatTaskNotification(event.content);
+      const formatted = taskCard ?? convertMarkdownToHtml(preview);
 
       let labelHtml: string;
       let labelPlain: string;

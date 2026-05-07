@@ -397,6 +397,47 @@ export function formatToolResultSummary(
 }
 
 /**
+ * Pretty-print Claude Code's `<task-notification>` injection (background-task
+ * status that Claude reinjects as user-prompt content). Returns formatted HTML,
+ * or `null` if the text doesn't contain a notification — caller falls back to
+ * its normal markdown path.
+ */
+export function formatTaskNotification(text: string): string | null {
+  const re = /<task-notification>([\s\S]*?)<\/task-notification>/g;
+  if (!re.test(text)) return null;
+
+  const statusIcon: Record<string, string> = {
+    completed: "✅",
+    failed: "❌",
+    error: "❌",
+    running: "⏳",
+    killed: "⏹",
+    cancelled: "⏹",
+    timeout: "⏱",
+  };
+
+  const replaced = text.replace(
+    /<task-notification>([\s\S]*?)<\/task-notification>/g,
+    (_full, inner: string) => {
+      const get = (tag: string): string => {
+        const m = inner.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+        return m ? m[1]!.trim() : "";
+      };
+      const status = get("status").toLowerCase();
+      const summary = get("summary");
+      const icon = statusIcon[status] ?? "🔔";
+      const label = status ? `Task ${status}` : "Task update";
+      const headline = `${icon} <b>${escapeHtml(label)}</b>`;
+      return summary
+        ? `${headline}\n<i>${escapeHtml(truncate(summary, 280))}</i>`
+        : headline;
+    },
+  );
+
+  return replaced.trim();
+}
+
+/**
  * Render a 10-cell progress bar. Glyphs are customizable so different surfaces
  * (usage panel, context bar) can share the clamp/round math but keep their look.
  */

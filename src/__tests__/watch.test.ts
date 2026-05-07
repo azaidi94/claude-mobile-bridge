@@ -365,6 +365,30 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     expect(sent[0]!.text).toContain("native input");
   });
 
+  test("user event with <task-notification> XML renders as a card, not raw XML", () => {
+    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    const xml = [
+      "<task-notification>",
+      "<task-id>bxds11oof</task-id>",
+      "<tool-use-id>toolu_01abc</tool-use-id>",
+      "<output-file>/tmp/out.txt</output-file>",
+      "<status>completed</status>",
+      '<summary>Background command "npx expo prebuild --clean" finished</summary>',
+      "</task-notification>",
+    ].join("\n");
+    handleTailEvent(api, state, { type: "user", content: xml }, 6302);
+    expect(sent).toHaveLength(1);
+    const text = sent[0]!.text as string;
+    expect(text).toContain("✅");
+    expect(text).toContain("Task completed");
+    expect(text).toContain("npx expo prebuild --clean");
+    expect(text).not.toContain("<task-notification>");
+    expect(text).not.toContain("<output-file>");
+    expect(text).not.toContain("toolu_01abc");
+  });
+
   test("user event from a foreign Telegram chat renders 💬 Chat label", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();

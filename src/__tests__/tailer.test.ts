@@ -730,6 +730,36 @@ describe("tailer: parseLine", () => {
     const events = tailer.parseLine(line);
     expect(events).toHaveLength(0);
   });
+
+  test("emits user event for task-notification attachment", () => {
+    const xml =
+      "<task-notification>\n" +
+      "<task-id>bxds11oof</task-id>\n" +
+      "<status>completed</status>\n" +
+      "<summary>Background command done</summary>\n" +
+      "</task-notification>";
+    const line = JSON.stringify({
+      type: "attachment",
+      attachment: {
+        type: "queued_command",
+        prompt: xml,
+        commandMode: "task-notification",
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("user");
+    expect(events[0]!.content).toContain("<task-notification>");
+    expect(events[0]!.content).toContain("Background command done");
+  });
+
+  test("ignores non-task-notification attachments", () => {
+    const line = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "task_reminder", content: [], itemCount: 0 },
+    });
+    expect(tailer.parseLine(line)).toHaveLength(0);
+  });
 });
 
 // ============== findSessionJsonlPath ==============
