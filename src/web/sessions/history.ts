@@ -67,8 +67,14 @@ function mapUserEntry(entry: JsonlEntry): SseEvent[] {
     is_error?: boolean;
   }>) {
     if (block.type === "text" && typeof block.text === "string") {
-      const ev = classifyUserText(block.text);
-      if (ev) events.push(ev);
+      // Only channel-relay wrapped messages are user-visible; plain text
+      // blocks in content arrays are internal tool injections (e.g. skill
+      // content) and should not be rendered.
+      const trimmed = block.text.trim();
+      if (CHANNEL_TAG_RE.test(trimmed)) {
+        const ev = classifyUserText(trimmed);
+        if (ev) events.push(ev);
+      }
     } else if (block.type === "tool_result") {
       const toolUseId = String(block.tool_use_id ?? "");
       if (!toolUseId) continue;

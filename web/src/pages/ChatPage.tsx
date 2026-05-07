@@ -42,6 +42,8 @@ export function ChatPage() {
     const unsub = api.streamSession(activeId, (evt) => {
       if (evt.type === "done") {
         setStreaming(false);
+      } else if (evt.type === "user_message" && evt.source === "web") {
+        // Suppress own echo — already shown optimistically in send()
       } else {
         setStreaming(true);
         setEvents((prev) => [...prev, evt]);
