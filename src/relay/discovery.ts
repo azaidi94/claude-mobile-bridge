@@ -10,7 +10,7 @@ import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
-import { STATE_DIR } from "../paths";
+import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 
 export interface PortFileData {
@@ -126,13 +126,30 @@ export function invalidateScanCache(): void {
 }
 
 /**
- * Merge `updates` into the port file for the relay with the given PID.
- * Safe for concurrent use: reads current content before writing, never
- * overwrites fields not present in `updates`.
- *
- * Silently no-ops if the port file cannot be found or parsed.
+ * Merge `updates` into the relay's port file. Per-PID promise queue
+ * serialises concurrent writers in the bot process so reads/writes don't
+ * interleave (e.g., watcher's `sessionName` write racing topic-manager's
+ * `topicId` write). No-ops on missing/malformed files.
  */
+const updatePortFileQueue = new Map<number, Promise<void>>();
+
 export function updatePortFile(
+  relayPid: number,
+  updates: Partial<PortFileData>,
+): void {
+  const prev = updatePortFileQueue.get(relayPid) ?? Promise.resolve();
+  const next = prev.then(() => doUpdatePortFile(relayPid, updates));
+  updatePortFileQueue.set(
+    relayPid,
+    next.finally(() => {
+      if (updatePortFileQueue.get(relayPid) === next) {
+        updatePortFileQueue.delete(relayPid);
+      }
+    }),
+  );
+}
+
+function doUpdatePortFile(
   relayPid: number,
   updates: Partial<PortFileData>,
 ): void {
@@ -140,10 +157,7 @@ export function updatePortFile(
   try {
     const files = readdirSync(STATE_DIR);
     for (const f of files) {
-      if (!f.startsWith("channel-relay-") || !f.endsWith(".json")) continue;
-      // Port file name format: channel-relay-<hash>-<pid>.json
-      const pidPart = f.slice(0, -5).split("-").pop();
-      if (pidPart && parseInt(pidPart, 10) === relayPid) {
+      if (parseRelayPortFilePid(f) === relayPid) {
         targetFile = join(STATE_DIR, f);
         break;
       }

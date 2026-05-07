@@ -155,7 +155,8 @@ export interface WatchState extends TailDisplayState {
   sessionId: string;
   sessionDir: string;
   sessionPid?: number;
-  tailer: SessionTailer;
+  /** Assigned in a second step so the tailer can close over `watchState`. Reads must use `?.`. */
+  tailer?: SessionTailer;
   lastEventTime: number;
   /** Topic thread ID — all messages go to this thread. */
   threadId: number;
@@ -255,7 +256,6 @@ function buildWatchState(args: {
   sessionId: string;
   sessionDir: string;
   sessionPid?: number;
-  tailer: SessionTailer;
   chatId: number;
   threadId: number;
   suppressNextIdChangeNotice?: boolean;
@@ -265,7 +265,6 @@ function buildWatchState(args: {
     sessionId: args.sessionId,
     sessionDir: args.sessionDir,
     sessionPid: args.sessionPid,
-    tailer: args.tailer,
     chatId: args.chatId,
     threadId: args.threadId,
     lastEventTime: Date.now(),
@@ -447,7 +446,7 @@ export async function sendWatchRelay(
 
 /** Stop tailer, relay callbacks, typing indicator; remove from watches map. */
 function cleanupWatch(state: WatchState): void {
-  state.tailer.stop();
+  state.tailer?.stop();
   state.relayCleanup?.();
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
   stopWatchTyping(state.chatId, state.threadId);
@@ -686,7 +685,6 @@ export async function startAutoWatch(
   chatId: number,
   threadId: number,
   sessionName: string,
-  options?: { fromBeginning?: boolean },
 ): Promise<boolean> {
   // Auto-watch loses to user intent — both for pre-existing /watch bindings
   // and for /watch races that land while we're waiting on the session id.
@@ -732,7 +730,6 @@ export async function startAutoWatch(
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
-    tailer: null as unknown as SessionTailer,
     chatId,
     threadId,
   });
@@ -745,7 +742,7 @@ export async function startAutoWatch(
   });
   watchState.tailer = tailer;
   watches.set(watchKey(chatId, threadId), watchState);
-  await tailer.start({ fromBeginning: options?.fromBeginning });
+  await tailer.start();
 
   setupIdDriftDetection(botApi, watchState);
 
@@ -955,7 +952,6 @@ export async function startWatchingSession(
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
-    tailer: null as unknown as SessionTailer,
     chatId,
     threadId,
     suppressNextIdChangeNotice: reason === "spawn",
@@ -1132,7 +1128,7 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
 export function _resetWatchesForTests(): void {
   for (const [, state] of watches) {
     try {
-      state.tailer.stop();
+      state.tailer?.stop();
     } catch {}
     state.relayCleanup?.();
     if (state.idCheckInterval) clearInterval(state.idCheckInterval);

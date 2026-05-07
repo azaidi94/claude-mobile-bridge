@@ -29,17 +29,20 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { STATE_DIR } from "../../paths";
+import { STATE_DIR, parseRelayPortFilePid } from "../../paths";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
 const cwd = process.cwd();
 const serverStartedAtMs = Date.now();
 
-/** Get the start time of our parent Claude process in ms since epoch. */
+/**
+ * Parent Claude process start time in ms. Anchors JSONL birthtime gating —
+ * `statSync().birthtimeMs` is unreliable on Linux ext4/xfs, so the fallback
+ * to the relay's own start may misclassify older JSONLs there.
+ */
 function getParentStartedAtMs(): number {
   try {
-    // macOS: ps lstart gives absolute start time, e.g. "Mon Jan  1 12:00:00 2024"
     const out = execSync(`ps -p ${process.ppid} -o lstart=`, {
       encoding: "utf-8",
     }).trim();
@@ -48,10 +51,14 @@ function getParentStartedAtMs(): number {
   } catch {
     // ps failed or pid gone
   }
+  process.stderr.write(
+    `channel-relay: ps lstart probe failed (platform=${process.platform}); ` +
+      `falling back to server start time for JSONL birthtime gating\n`,
+  );
   return serverStartedAtMs;
 }
 
-// JSOBLs born before this time belong to a previous Claude session.
+// JSONLs born before this time belong to a previous Claude session.
 const claudeStartedAtMs = getParentStartedAtMs();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 const PORT_FILE = join(
@@ -91,10 +98,9 @@ function claimedSessionIds(): Set<string> {
   try {
     const files = readdirSync(STATE_DIR);
     for (const f of files) {
-      if (!f.startsWith("channel-relay-") || !f.endsWith(".json")) continue;
-      // Skip our own port file
-      const pidPart = f.slice(0, -5).split("-").pop();
-      if (pidPart && parseInt(pidPart, 10) === process.pid) continue;
+      const pid = parseRelayPortFilePid(f);
+      if (pid === null) continue;
+      if (pid === process.pid) continue; // skip own port file
       try {
         const raw = readFileSync(join(STATE_DIR, f), "utf-8");
         const data = JSON.parse(raw) as { sessionId?: string };
@@ -137,7 +143,7 @@ function discoverSessionId(): string | undefined {
       try {
         const s = statSync(join(projectDir, file));
         if (s.birthtimeMs >= claudeStartedAtMs - 30_000) {
-          // Only claim JSOBLs born after this Claude process started (with a
+          // Only claim JSONLs born after this Claude process started (with a
           // 30s buffer). Anchoring to the parent PID start time rather than
           // the relay start time prevents grabbing a previous session's JSONL
           // when sessions run sequentially in the same directory.

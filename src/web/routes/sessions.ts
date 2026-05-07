@@ -14,6 +14,7 @@ import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
 import { findNewestSessionInDir } from "../../sessions/tailer";
+import { warn } from "../../logger";
 
 export interface ApiSession {
   id: string;
@@ -130,10 +131,18 @@ export function createSessionsRouter(): Hono {
   app.get("/:id/stream", (c) => {
     const sessionId = c.req.param("id");
     // Resolve the session name (stable across UUID drifts) to use as the SSE
-    // bus key, matching how the tailer emits events.
+    // bus key, matching how the tailer emits events. If `getSessions()` hasn't
+    // observed this session yet (boot race), the fallback to `sessionId` will
+    // miss any tailer events keyed by name — log so the dropped-events case
+    // is observable rather than silent.
     const sessions = getSessions();
-    const sessionName =
-      sessions.find((s) => s.id === sessionId)?.name ?? sessionId;
+    const known = sessions.find((s) => s.id === sessionId);
+    if (!known) {
+      warn("web/sse: session not in registry, using sessionId as bus key", {
+        sessionId,
+      });
+    }
+    const sessionName = known?.name ?? sessionId;
     const encoder = new TextEncoder();
     let controller: ReadableStreamDefaultController<Uint8Array>;
 
@@ -182,15 +191,19 @@ export function createSessionsRouter(): Hono {
     const safeLimit =
       Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200;
 
-    // Use the most-recently-modified JSONL in the session's directory.
-    // This keeps history visible after Claude Code restarts and starts a new
-    // session UUID in the same project — the same logic the tailer uses for
-    // drift detection.
+    // Fall back to the most-recently-modified JSONL only when this dir hosts
+    // a single live session — otherwise newest-in-dir could silently serve a
+    // sibling's history. The fallback handles Claude Code restarts that
+    // assign a new UUID to the same project (tailer uses the same logic).
     const sessions = getSessions();
     const session = sessions.find((s) => s.id === sessionId);
-    const resolvedId = session?.dir
-      ? ((await findNewestSessionInDir(session.dir)) ?? sessionId)
-      : sessionId;
+    const hasSibling =
+      session?.dir &&
+      sessions.some((s) => s.dir === session.dir && s.id !== session.id);
+    const resolvedId =
+      session?.dir && !hasSibling
+        ? ((await findNewestSessionInDir(session.dir)) ?? sessionId)
+        : sessionId;
 
     const events = await readSessionHistory(resolvedId, safeLimit);
     return c.json({ events });
