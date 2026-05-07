@@ -333,7 +333,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("user event with originChat === 'web' renders with 🌐 Web label", () => {
+  test("user event with originChat === 'web' is skipped (already on bus)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
@@ -343,26 +343,32 @@ describe("watch: handleTailEvent user-event origin filter", () => {
       { type: "user", content: "hmmm", originChat: "web" },
       6302,
     );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.text).toContain("🌐");
-    expect(sent[0]!.text).toContain("Web");
-    expect(sent[0]!.text).toContain("hmmm");
+    expect(sent).toHaveLength(0);
   });
 
-  test("user event with originChat undefined renders Desktop (terminal-typed)", () => {
+  test("user event with originChat undefined emits terminal user_message to bus", async () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
+    const { globalEventBus } = await import("../web/sse");
+    const received: import("../web/sse").SseEvent[] = [];
+    const unsub = globalEventBus.subscribe("s-6302", (evt) =>
+      received.push(evt),
+    );
     handleTailEvent(
       api,
       state,
       { type: "user", content: "native input" },
       6302,
     );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.text).toContain("🖥");
-    expect(sent[0]!.text).toContain("Desktop");
-    expect(sent[0]!.text).toContain("native input");
+    unsub();
+    expect(sent).toHaveLength(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      type: "user_message",
+      source: "terminal",
+      content: "native input",
+    });
   });
 
   test("user event from a foreign Telegram chat renders 💬 Chat label", () => {

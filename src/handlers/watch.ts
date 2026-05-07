@@ -1560,27 +1560,34 @@ export function handleTailEvent(
         // TCP fast-path already delivered this user's own Telegram message.
         break;
       }
+      if (event.originChat === "web") {
+        // Already on the bus from POST /message; setupCrossPostSubscription
+        // handles Telegram delivery.
+        break;
+      }
 
       resetDisplaySegment(botApi, state);
 
+      if (event.originChat === undefined) {
+        // Native terminal input — publish to bus so all consumers see it.
+        // setupCrossPostSubscription handles Telegram delivery from the bus.
+        const busKey = isWatchState(state) ? state.sessionName : ownChat;
+        globalEventBus.emit(busKey, {
+          type: "user_message",
+          source: "terminal",
+          content: event.content,
+        });
+        break;
+      }
+
+      // Another Telegram channel — send directly.
       const preview =
         event.content.length > 300
           ? event.content.slice(0, 300) + "…"
           : event.content;
       const formatted = convertMarkdownToHtml(preview);
-
-      let labelHtml: string;
-      let labelPlain: string;
-      if (event.originChat === undefined) {
-        labelHtml = `🖥 <b>Desktop:</b>`;
-        labelPlain = `🖥 Desktop:`;
-      } else if (event.originChat === "web") {
-        labelHtml = `🌐 <b>Web:</b>`;
-        labelPlain = `🌐 Web:`;
-      } else {
-        labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
-        labelPlain = `💬 Chat ${event.originChat}:`;
-      }
+      const labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
+      const labelPlain = `💬 Chat ${event.originChat}:`;
 
       botApi
         .sendMessage(chatId, `${labelHtml}\n${formatted}`, {
