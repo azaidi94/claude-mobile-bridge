@@ -12,7 +12,11 @@ import { promisify } from "util";
 import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
-import { scanPortFiles, invalidateScanCache } from "../relay/discovery";
+import {
+  scanPortFiles,
+  invalidateScanCache,
+  updatePortFile,
+} from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
 import { STATE_DIR } from "../paths";
 
@@ -636,6 +640,26 @@ async function refresh(): Promise<SessionDiff> {
     }
     removed.push({ name: old.name, dir: old.dir });
     info(`session removed: ${old.name} (${old.dir})`);
+  }
+
+  // Write each desktop session's assigned name back to its relay port file.
+  // This makes the port file the single source of truth for session identity.
+  const relayPidBySessionId = new Map<string, number>();
+  const relayPidByDirPpid = new Map<string, number>();
+  for (const pf of portFiles) {
+    if (pf.sessionId) relayPidBySessionId.set(pf.sessionId, pf.pid);
+    if (pf.ppid) relayPidByDirPpid.set(`${pf.cwd}\0${pf.ppid}`, pf.pid);
+  }
+  for (const si of cache.sessions.values()) {
+    if (si.source !== "desktop" || !si.name) continue;
+    const relayPid =
+      (si.id ? relayPidBySessionId.get(si.id) : undefined) ??
+      (si.pid !== undefined
+        ? relayPidByDirPpid.get(`${si.dir}\0${si.pid}`)
+        : undefined);
+    if (relayPid !== undefined) {
+      updatePortFile(relayPid, { sessionName: si.name });
+    }
   }
 
   // Validate active session

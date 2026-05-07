@@ -8,18 +8,17 @@
 
 import { describe, expect, test } from "bun:test";
 
-// Import directly from source file to avoid barrel export issues with mocking
-import {
-  formatStatusMessage,
-  getPinnedMessageId,
-  setPinnedMessageId,
-  clearPinnedMessageId,
-  type StatusInfo,
-} from "../sessions/status-message";
+async function loadStatusMessage() {
+  process.env.TELEGRAM_BOT_TOKEN ||= "test-token";
+  process.env.TELEGRAM_ALLOWED_USERS ||= "12345";
+  // Import directly from source file to avoid barrel export issues with mocking
+  return import("../sessions/status-message");
+}
 
 describe("status-message: formatStatusMessage", () => {
-  test("formats normal mode correctly", () => {
-    const status: StatusInfo = {
+  test("formats normal mode correctly", async () => {
+    const { formatStatusMessage } = await loadStatusMessage();
+    const status = {
       sessionName: "my-project",
       isPlanMode: false,
       model: "Opus 4.5",
@@ -29,8 +28,9 @@ describe("status-message: formatStatusMessage", () => {
     expect(result).toBe("✅ my-project | ⚡ Normal | Opus 4.5");
   });
 
-  test("formats plan mode correctly", () => {
-    const status: StatusInfo = {
+  test("formats plan mode correctly", async () => {
+    const { formatStatusMessage } = await loadStatusMessage();
+    const status = {
       sessionName: "my-project",
       isPlanMode: true,
       model: "Opus 4.5",
@@ -40,8 +40,9 @@ describe("status-message: formatStatusMessage", () => {
     expect(result).toBe("✅ my-project | 📋 Plan | Opus 4.5");
   });
 
-  test("handles null session name", () => {
-    const status: StatusInfo = {
+  test("handles null session name", async () => {
+    const { formatStatusMessage } = await loadStatusMessage();
+    const status = {
       sessionName: null,
       isPlanMode: false,
       model: "Sonnet 4.5",
@@ -51,8 +52,9 @@ describe("status-message: formatStatusMessage", () => {
     expect(result).toBe("✅ no session | ⚡ Normal | Sonnet 4.5");
   });
 
-  test("handles different models", () => {
-    const status: StatusInfo = {
+  test("handles different models", async () => {
+    const { formatStatusMessage } = await loadStatusMessage();
+    const status = {
       sessionName: "test",
       isPlanMode: false,
       model: "Haiku 4.5",
@@ -62,7 +64,8 @@ describe("status-message: formatStatusMessage", () => {
     expect(result).toContain("Haiku 4.5");
   });
 
-  test("mode change from normal to plan produces different text", () => {
+  test("mode change from normal to plan produces different text", async () => {
+    const { formatStatusMessage } = await loadStatusMessage();
     const normalStatus = formatStatusMessage({
       sessionName: "test",
       isPlanMode: false,
@@ -82,7 +85,9 @@ describe("status-message: formatStatusMessage", () => {
 });
 
 describe("status-message: pinned message ID management", () => {
-  test("stores and retrieves message ID by chat", () => {
+  test("stores and retrieves message ID by chat", async () => {
+    const { getPinnedMessageId, setPinnedMessageId, clearPinnedMessageId } =
+      await loadStatusMessage();
     const testChatId = Math.floor(Math.random() * 1000000000);
     clearPinnedMessageId(testChatId);
 
@@ -95,7 +100,9 @@ describe("status-message: pinned message ID management", () => {
     expect(getPinnedMessageId(testChatId)).toBeUndefined();
   });
 
-  test("handles multiple chats independently", () => {
+  test("handles multiple chats independently", async () => {
+    const { getPinnedMessageId, setPinnedMessageId, clearPinnedMessageId } =
+      await loadStatusMessage();
     const chat1 = Math.floor(Math.random() * 1000000000);
     const chat2 = Math.floor(Math.random() * 1000000000) + 1;
 
@@ -112,7 +119,9 @@ describe("status-message: pinned message ID management", () => {
     clearPinnedMessageId(chat2);
   });
 
-  test("overwrites existing message ID", () => {
+  test("overwrites existing message ID", async () => {
+    const { getPinnedMessageId, setPinnedMessageId, clearPinnedMessageId } =
+      await loadStatusMessage();
     const chatId = Math.floor(Math.random() * 1000000000);
     clearPinnedMessageId(chatId);
 

@@ -41,6 +41,7 @@ import {
 } from "./topics";
 import { createBot } from "./bot";
 import { session } from "./session";
+import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -155,12 +156,71 @@ if (primaryChatId !== undefined && storedTopicChatId) {
   setTopicManager(topicManager);
 }
 
+/**
+ * Force a freshly-spawned Claude session to write its JSONL by sending a
+ * relay message; exits as soon as the port file has a sessionId. The text is
+ * visible to Claude — the relay has no out-of-band wake channel — but the
+ * MCP `instructions` direct it to use the `reply` tool, not echo terminal.
+ */
+function pingRelayForSession(
+  sessionName: string,
+  topicId: number,
+  sessionDir: string,
+  chatId: number,
+  sessionId?: string,
+  claudePid?: number,
+): void {
+  (async () => {
+    const RETRY_DELAYS_MS = [3_000, 5_000, 7_000, 10_000, 15_000];
+    for (const delay of RETRY_DELAYS_MS) {
+      await new Promise((r) => setTimeout(r, delay));
+      try {
+        invalidateScanCache();
+        const ports = await scanPortFiles();
+        // Prefer exact match: claudePid > sessionName written to port file > sessionId.
+        // claudePid may be undefined when the session was detected before its relay
+        // wrote the port file; sessionName is written by the bot during createTopic,
+        // so it's always available by the time we retry.
+        const relayPort =
+          ports.find(
+            (pf) => claudePid !== undefined && pf.ppid === claudePid,
+          ) ??
+          ports.find((pf) => pf.sessionName === sessionName) ??
+          ports.find((pf) => pf.sessionId && pf.sessionId === sessionId);
+        if (relayPort?.sessionId) return; // relay found its JSONL, done
+        const resolvedPid = relayPort?.ppid ?? claudePid;
+        const client = await getRelayClient({
+          sessionId: relayPort?.sessionId ?? sessionId,
+          sessionDir,
+          claudePid: resolvedPid,
+        });
+        client?.sendMessage({
+          chat_id: String(chatId),
+          user: "bridge",
+          text: `Session Name: ${sessionName}`,
+        });
+      } catch (err) {
+        warn(`relay ping iteration error for ${sessionName}: ${err}`);
+      }
+    }
+    warn(`relay ping failed after retries for ${sessionName}`);
+  })().catch((err) => warn(`relay ping error for ${sessionName}: ${err}`));
+}
+
 const notifyHandler = createNotificationHandler(
   bot.api,
   topicManager,
-  (sessionName, topicId) => {
+  (sessionName, topicId, sessionDir, sessionId, claudePid) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
+      pingRelayForSession(
+        sessionName,
+        topicId,
+        sessionDir,
+        chatId,
+        sessionId,
+        claudePid,
+      );
       startAutoWatch(bot.api, chatId, topicId, sessionName).catch((err) =>
         warn(
           `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
@@ -177,10 +237,18 @@ if (topicManager && primaryChatId !== undefined) {
     sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
   );
 
-  // Start auto-watch for all online sessions with topics
+  // Start auto-watch and ping relay for all online sessions with topics
   for (const s of sessions) {
     const topic = getTopicBySession(s.name);
     if (topic) {
+      pingRelayForSession(
+        s.name,
+        topic.topicId,
+        s.dir,
+        primaryChatId,
+        s.id,
+        s.pid,
+      );
       startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
         (err) =>
           warn(

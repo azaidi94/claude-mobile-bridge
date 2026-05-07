@@ -13,6 +13,8 @@ import { session as claudeSession } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
+import { findNewestSessionInDir } from "../../sessions/tailer";
+import { warn } from "../../logger";
 
 export interface ApiSession {
   id: string;
@@ -128,6 +130,19 @@ export function createSessionsRouter(): Hono {
 
   app.get("/:id/stream", (c) => {
     const sessionId = c.req.param("id");
+    // Resolve the session name (stable across UUID drifts) to use as the SSE
+    // bus key, matching how the tailer emits events. If `getSessions()` hasn't
+    // observed this session yet (boot race), the fallback to `sessionId` will
+    // miss any tailer events keyed by name — log so the dropped-events case
+    // is observable rather than silent.
+    const sessions = getSessions();
+    const known = sessions.find((s) => s.id === sessionId);
+    if (!known) {
+      warn("web/sse: session not in registry, using sessionId as bus key", {
+        sessionId,
+      });
+    }
+    const sessionName = known?.name ?? sessionId;
     const encoder = new TextEncoder();
     let controller: ReadableStreamDefaultController<Uint8Array>;
 
@@ -138,7 +153,7 @@ export function createSessionsRouter(): Hono {
       },
     });
 
-    const unsub = globalEventBus.subscribe(sessionId, (evt) => {
+    const unsub = globalEventBus.subscribe(sessionName, (evt) => {
       try {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
       } catch {}
@@ -173,10 +188,24 @@ export function createSessionsRouter(): Hono {
   app.get("/:id/history", async (c) => {
     const sessionId = c.req.param("id");
     const limit = parseInt(c.req.query("limit") ?? "200", 10);
-    const events = await readSessionHistory(
-      sessionId,
-      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200,
-    );
+    const safeLimit =
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 2000) : 200;
+
+    // Fall back to the most-recently-modified JSONL only when this dir hosts
+    // a single live session — otherwise newest-in-dir could silently serve a
+    // sibling's history. The fallback handles Claude Code restarts that
+    // assign a new UUID to the same project (tailer uses the same logic).
+    const sessions = getSessions();
+    const session = sessions.find((s) => s.id === sessionId);
+    const hasSibling =
+      session?.dir &&
+      sessions.some((s) => s.dir === session.dir && s.id !== session.id);
+    const resolvedId =
+      session?.dir && !hasSibling
+        ? ((await findNewestSessionInDir(session.dir)) ?? sessionId)
+        : sessionId;
+
+    const events = await readSessionHistory(resolvedId, safeLimit);
     return c.json({ events });
   });
 
@@ -187,15 +216,16 @@ export function createSessionsRouter(): Hono {
 
     const sessions = getSessions();
     const found = sessions.find((s) => s.id === sessionId);
+    const busKey = found?.name ?? sessionId;
 
     const emit = (type: SseEvent["type"], content: string) =>
-      globalEventBus.emit(sessionId, { type, content });
+      globalEventBus.emit(busKey, { type, content });
 
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
       if (found) claudeSession.loadFromRegistry(found);
-      const cb = globalEventBus.makeStatusCallback(sessionId);
+      const cb = globalEventBus.makeStatusCallback(busKey);
       claudeSession
         .sendMessageStreaming(body.text, "web", 0, cb)
         .catch(() => emit("done", ""));

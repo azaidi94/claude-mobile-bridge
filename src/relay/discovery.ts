@@ -4,12 +4,13 @@
  */
 
 import { readFile, readdir, unlink } from "fs/promises";
+import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
-import { STATE_DIR } from "../paths";
+import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 
 export interface PortFileData {
@@ -19,6 +20,12 @@ export interface PortFileData {
   sessionId?: string;
   cwd: string;
   startedAt: string;
+  /** Set by bot after watcher assigns a name. */
+  sessionName?: string;
+  /** Set by bot after Telegram forum topic is created (group setups only). */
+  topicId?: number;
+  /** Set by bot after Telegram forum topic is created (group setups only). */
+  topicName?: string;
 }
 
 export interface RelaySelector {
@@ -116,6 +123,59 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
 /** Invalidate the scan cache (called when watcher detects port file change). */
 export function invalidateScanCache(): void {
   lastScanTime = 0;
+}
+
+/**
+ * Merge `updates` into the relay's port file. Per-PID promise queue
+ * serialises concurrent writers in the bot process so reads/writes don't
+ * interleave (e.g., watcher's `sessionName` write racing topic-manager's
+ * `topicId` write). No-ops on missing/malformed files.
+ */
+const updatePortFileQueue = new Map<number, Promise<void>>();
+
+export function updatePortFile(
+  relayPid: number,
+  updates: Partial<PortFileData>,
+): void {
+  const prev = updatePortFileQueue.get(relayPid) ?? Promise.resolve();
+  const next = prev.then(() => doUpdatePortFile(relayPid, updates));
+  updatePortFileQueue.set(
+    relayPid,
+    next.finally(() => {
+      if (updatePortFileQueue.get(relayPid) === next) {
+        updatePortFileQueue.delete(relayPid);
+      }
+    }),
+  );
+}
+
+function doUpdatePortFile(
+  relayPid: number,
+  updates: Partial<PortFileData>,
+): void {
+  let targetFile: string | null = null;
+  try {
+    const files = readdirSync(STATE_DIR);
+    for (const f of files) {
+      if (parseRelayPortFilePid(f) === relayPid) {
+        targetFile = join(STATE_DIR, f);
+        break;
+      }
+    }
+  } catch {
+    return;
+  }
+  if (!targetFile) return;
+
+  try {
+    const raw = readFileSync(targetFile, "utf-8");
+    const current = JSON.parse(raw) as PortFileData;
+    const merged = { ...current, ...updates };
+    writeFileSync(targetFile, JSON.stringify(merged, null, 2));
+    invalidateScanCache();
+  } catch {
+    // Malformed file or race — silently skip
+  }
 }
 
 export async function isRelayAvailable(

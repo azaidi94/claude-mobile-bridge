@@ -18,3 +18,17 @@ export const LOG_DIR =
   (process.platform === "darwin"
     ? join(homedir(), "Library", "Logs", "claude-mobile-bridge")
     : join(STATE_DIR, "logs"));
+
+/**
+ * Extract the relay PID from a port file name like
+ * `channel-relay-<dirHash>-<pid>.json`. Returns `null` for non-matching names.
+ */
+export function parseRelayPortFilePid(filename: string): number | null {
+  if (!filename.startsWith("channel-relay-") || !filename.endsWith(".json")) {
+    return null;
+  }
+  const pidPart = filename.slice(0, -5).split("-").pop();
+  if (!pidPart) return null;
+  const pid = parseInt(pidPart, 10);
+  return Number.isFinite(pid) ? pid : null;
+}
