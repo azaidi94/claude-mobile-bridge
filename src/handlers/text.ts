@@ -103,7 +103,7 @@ export async function handleText(ctx: Context): Promise<void> {
         !pendingAskUserQuestionCustom.has(chatId)
       ) {
         await ctx.reply(
-          "💬 Send messages in a session topic.\nUse /list to see sessions.",
+          "❌ Send messages in a session topic.\nUse /list to see sessions.",
         );
         return;
       }
