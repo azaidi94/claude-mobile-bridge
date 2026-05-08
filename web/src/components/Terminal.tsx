@@ -569,7 +569,8 @@ function renderEventBody(
 }
 
 interface Turn {
-  role: "user" | "desktop" | "assistant";
+  role: "user" | "desktop" | "assistant" | "remote";
+  source?: "telegram" | "web" | "terminal" | "cursor";
   items: { evt: SseEvent; idx: number }[];
 }
 
@@ -649,6 +650,10 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
     if (evt.type === "permission_mode") return; // banner (Task 10)
     if (evt.type === "hook_summary") return; // inline card (Task 10)
     if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
+    if (evt.type === "user_message") {
+      turns.push({ role: "remote", source: evt.source, items: [{ evt, idx }] });
+      return;
+    }
     if (evt.type === "text") {
       if (evt.content.startsWith(USER_PREFIX)) {
         const stripped: SseEvent = {
@@ -668,8 +673,13 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
       }
     }
     const last = turns[turns.length - 1];
-    if (!last || last.role !== "assistant") {
-      turns.push({ role: "assistant", items: [{ evt, idx }] });
+    // Carry the source onto assistant turns so cursor AI replies can be
+    // labelled "🤖 Cursor AI" instead of "Claude". Don't merge across
+    // sources — a cursor AI reply mid-conversation shouldn't fold into
+    // a preceding Claude turn.
+    const evtSource = (evt as { source?: Turn["source"] }).source;
+    if (!last || last.role !== "assistant" || last.source !== evtSource) {
+      turns.push({ role: "assistant", source: evtSource, items: [{ evt, idx }] });
     } else {
       last.items.push({ evt, idx });
     }
@@ -704,12 +714,20 @@ const PANE_THEMES: Record<Turn["role"], PaneTheme> = {
     headerBorderBottom: "border-amber-400/20",
   },
   assistant: {
-    label: "Claude",
+    label: "🤖 Claude",
     border: "border-sky-400/25",
     headerBg: "bg-sky-500/20",
     headerText: "text-sky-300",
     headerHover: "hover:bg-sky-500/25",
     headerBorderBottom: "border-sky-400/20",
+  },
+  remote: {
+    label: "Remote",
+    border: "border-violet-400/25",
+    headerBg: "bg-violet-500/15",
+    headerText: "text-violet-300",
+    headerHover: "hover:bg-violet-500/20",
+    headerBorderBottom: "border-violet-400/20",
   },
 };
 
@@ -721,6 +739,21 @@ function turnPreview(turn: Turn): string {
     }
   }
   return "";
+}
+
+function sourceLabel(source?: string): string {
+  if (source === "telegram") return "📱 Telegram";
+  if (source === "cursor") return "🖱 Cursor";
+  if (source === "web") return "🌐 Web UI";
+  if (source === "terminal") return "🖥 Terminal";
+  return "🖥 Terminal"; // safe fallback (unknown source treated as terminal)
+}
+
+/** Pick a header label for a turn, accounting for assistant-with-source. */
+function turnLabel(turn: Turn, defaultLabel: string): string {
+  if (turn.role === "remote") return sourceLabel(turn.source);
+  if (turn.role === "assistant" && turn.source === "cursor") return "🤖 Cursor AI";
+  return defaultLabel;
 }
 
 export function Terminal({ events, streaming }: TerminalProps) {
@@ -775,7 +808,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
               <span className="inline-block w-3 text-center">
                 {isCollapsed ? "▶" : "▼"}
               </span>
-              <span>{theme.label}</span>
+              <span>{turnLabel(turn, theme.label)}</span>
               {isCollapsed && (
                 <span className="normal-case font-normal text-terminal-muted truncate tracking-normal">
                   {turnPreview(turn)}
