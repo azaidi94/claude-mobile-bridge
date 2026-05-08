@@ -4,6 +4,8 @@
  * Markdown conversion and tool status display formatting.
  */
 
+import type { AskUserQuestionItem } from "./types";
+
 /**
  * Escape HTML special characters.
  */
@@ -435,6 +437,69 @@ export function formatTaskNotification(text: string): string | null {
   );
 
   return replaced.trim();
+}
+
+const ASK_USER_QUESTION_PREVIEW_MAX = 600;
+const ASK_USER_QUESTION_CARD_MAX = 3800;
+const ASK_USER_QUESTION_TRUNC_FOOTER =
+  "<i>(card truncated — see desktop for full options)</i>";
+
+/**
+ * Format Claude's built-in `AskUserQuestion` tool call as a Telegram HTML
+ * card. Render-only — answering still happens at the desktop's native picker.
+ */
+export function formatAskUserQuestion(
+  questions: AskUserQuestionItem[],
+): string {
+  const header = "❓ <b>Claude is asking</b>";
+  const footer = "<i>Answer at the desktop.</i>";
+
+  if (!questions || questions.length === 0) {
+    return `${header}\n\n<i>(no options visible)</i>\n\n${footer}`;
+  }
+
+  const blocks: string[] = [];
+  let truncated = false;
+  let runningLen = header.length + 2 + footer.length + 2;
+
+  for (const item of questions) {
+    const lines: string[] = [];
+    if (item.header) {
+      lines.push(`<i>[${escapeHtml(item.header)}]</i>`);
+    }
+    const multi = item.multiSelect ? " <i>(pick any)</i>" : "";
+    lines.push(`<b>Q:</b> ${escapeHtml(item.question)}${multi}`);
+    for (const opt of item.options ?? []) {
+      const label = `<b>${escapeHtml(opt.label)}</b>`;
+      const desc = opt.description ? ` — ${escapeHtml(opt.description)}` : "";
+      lines.push(`   • ${label}${desc}`);
+      if (opt.preview) {
+        const previewText =
+          opt.preview.length > ASK_USER_QUESTION_PREVIEW_MAX
+            ? opt.preview.slice(0, ASK_USER_QUESTION_PREVIEW_MAX) + "…"
+            : opt.preview;
+        lines.push(`     <pre>${escapeHtml(previewText)}</pre>`);
+      }
+    }
+
+    const block = lines.join("\n");
+    const sep = blocks.length === 0 ? 0 : 2;
+    // Always include the first block so we never send an empty body, even
+    // if a single oversized question exceeds the cap on its own.
+    if (
+      blocks.length > 0 &&
+      runningLen + sep + block.length > ASK_USER_QUESTION_CARD_MAX
+    ) {
+      truncated = true;
+      break;
+    }
+    blocks.push(block);
+    runningLen += sep + block.length;
+  }
+
+  const body = blocks.join("\n\n");
+  const truncNote = truncated ? `\n\n${ASK_USER_QUESTION_TRUNC_FOOTER}` : "";
+  return `${header}\n\n${body}${truncNote}\n\n${footer}`;
 }
 
 /**

@@ -10,10 +10,11 @@ import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
-import type { TokenUsage } from "../types";
+import type { AskUserQuestionItem, TokenUsage } from "../types";
 import { PROJECTS_DIR } from "./watcher";
 
 const POLL_INTERVAL_MS = 2_000;
+const ASK_USER_QUESTION_TOOL = "AskUserQuestion";
 const DEBOUNCE_MS = 200;
 const CHANNEL_RELAY_TAG = '<channel source="channel-relay"';
 
@@ -56,7 +57,8 @@ export type TailEventType =
   | "tool_result"
   | "permission_mode"
   | "hook_summary"
-  | "usage";
+  | "usage"
+  | "ask_user_question";
 
 export interface TailEvent {
   type: TailEventType;
@@ -88,6 +90,8 @@ export interface TailEvent {
   };
   /** For "usage" events: parsed assistant-turn token counts. */
   usage?: TokenUsage;
+  /** For "ask_user_question" events: the questions Claude is asking. */
+  questions?: AskUserQuestionItem[];
 }
 
 export type TailCallback = (event: TailEvent) => void;
@@ -416,6 +420,18 @@ export class SessionTailer {
 
           if (block.type === "tool_use") {
             const input = (block.input as Record<string, unknown>) || {};
+            // Render-only: card surfaces context; answering happens at desktop.
+            if (block.name === ASK_USER_QUESTION_TOOL) {
+              const auqInput = block.input as
+                | { questions?: AskUserQuestionItem[] }
+                | undefined;
+              events.push({
+                type: "ask_user_question",
+                content: "",
+                questions: auqInput?.questions ?? [],
+              });
+              continue;
+            }
             // Detect channel-relay reply/edit/react → emit as relay_reply.
             // TCP path owns Telegram delivery; never render these as tool-progress.
             if (

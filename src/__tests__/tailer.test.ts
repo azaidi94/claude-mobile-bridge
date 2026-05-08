@@ -760,6 +760,97 @@ describe("tailer: parseLine", () => {
     });
     expect(tailer.parseLine(line)).toHaveLength(0);
   });
+
+  test("AskUserQuestion emits ask_user_question event, suppresses default tool", () => {
+    const tailer = new SessionTailer("/dev/null", () => {});
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "AskUserQuestion",
+            input: {
+              questions: [
+                {
+                  question: "Pick a database?",
+                  options: [
+                    { label: "Postgres", description: "Strong" },
+                    { label: "SQLite", description: "Embedded" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    const auq = events.filter((e) => e.type === "ask_user_question");
+    const tools = events.filter((e) => e.type === "tool");
+    const turnEnd = events.filter((e) => e.type === "turn_end");
+    expect(auq).toHaveLength(1);
+    expect(tools).toHaveLength(0);
+    expect(turnEnd).toHaveLength(1);
+    expect(auq[0]!.questions).toBeDefined();
+    expect(auq[0]!.questions!).toHaveLength(1);
+    expect(auq[0]!.questions![0]!.question).toBe("Pick a database?");
+    expect(auq[0]!.questions![0]!.options).toHaveLength(2);
+  });
+
+  test("AskUserQuestion alongside another tool_use emits both events", () => {
+    const tailer = new SessionTailer("/dev/null", () => {});
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "/x.ts" },
+          },
+          {
+            type: "tool_use",
+            name: "AskUserQuestion",
+            input: {
+              questions: [
+                {
+                  question: "Continue?",
+                  options: [{ label: "Yes" }, { label: "No" }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    const types = events.map((e) => e.type);
+    expect(types).toContain("tool");
+    expect(types).toContain("ask_user_question");
+    // Has a real tool_use → no turn_end emitted.
+    expect(types).not.toContain("turn_end");
+  });
+
+  test("AskUserQuestion with malformed input emits event with empty questions", () => {
+    const tailer = new SessionTailer("/dev/null", () => {});
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "AskUserQuestion",
+            input: {},
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    const auq = events.filter((e) => e.type === "ask_user_question");
+    expect(auq).toHaveLength(1);
+    expect(auq[0]!.questions).toEqual([]);
+  });
 });
 
 // ============== findSessionJsonlPath ==============

@@ -89,6 +89,7 @@ export interface PlanApprovalState {
 export interface AskUserQuestionOption {
   label: string;
   description?: string;
+  preview?: string;
 }
 
 export interface AskUserQuestionItem {

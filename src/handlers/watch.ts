@@ -23,6 +23,7 @@ import { isAuthorized } from "../security";
 import {
   escapeHtml,
   convertMarkdownToHtml,
+  formatAskUserQuestion,
   formatTaskNotification,
   formatToolResultSummary,
   truncate,
@@ -1324,6 +1325,32 @@ export function handleTailEvent(
           trackProgress(msg);
         })
         .catch((err) => debug(`tail tool: ${err}`));
+      break;
+    }
+
+    case "ask_user_question": {
+      // User still answers at the desktop's native picker; this is observe-only.
+      if (state.currentToolMsg) {
+        botApi
+          .deleteMessage(chatId, state.currentToolMsg.message_id)
+          .catch(() => {});
+        state.currentToolMsg = null;
+      }
+      if (state.currentTextMsg && !state.segmentDone) {
+        finalizeTextMessage(botApi, state);
+      }
+      const html = formatAskUserQuestion(event.questions ?? []);
+      botApi
+        .sendMessage(chatId, html, {
+          parse_mode: "HTML",
+          ...threadOpts,
+          ...silent,
+        })
+        .then((msg) => {
+          state.currentToolMsg = msg;
+          trackProgress(msg);
+        })
+        .catch((err) => debug(`tail ask_user_question: ${err}`));
       break;
     }
 

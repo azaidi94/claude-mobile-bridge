@@ -1242,3 +1242,112 @@ describe("watch: handleIdleWatch (notify-only branch)", () => {
     expect(sent[0]!.text).not.toContain("last said");
   });
 });
+
+describe("watch: handleTailEvent ask_user_question render", () => {
+  const makeState = (
+    chatId: number,
+    threadId: number,
+    sessionDir: string,
+  ): any => ({
+    chatId,
+    threadId,
+    sessionName: `s-${threadId}`,
+    sessionId: `id-${threadId}`,
+    sessionDir,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+  });
+
+  function makeMockApi() {
+    const sent: Array<{
+      chatId: number | string;
+      text: string;
+      opts?: any;
+    }> = [];
+    const deleted: Array<{ chatId: number | string; messageId: number }> = [];
+    const api = {
+      sendMessage: (chatId: number | string, text: string, opts?: any) => {
+        sent.push({ chatId, text, opts });
+        return Promise.resolve({ message_id: sent.length });
+      },
+      deleteMessage: (chatId: number | string, messageId: number) => {
+        deleted.push({ chatId, messageId });
+        return Promise.resolve(true);
+      },
+      sendChatAction: () => Promise.resolve(true),
+    } as unknown as import("grammy").Api;
+    return { api, sent, deleted };
+  }
+
+  test("renders ask_user_question as formatted card with HTML parse_mode", () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api, sent } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "ask_user_question",
+        content: "",
+        questions: [
+          {
+            question: "Pick a database?",
+            options: [
+              { label: "Postgres", description: "Strong" },
+              { label: "SQLite" },
+            ],
+          },
+        ],
+      },
+      6302,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("❓");
+    expect(sent[0]!.text).toContain("Claude is asking");
+    expect(sent[0]!.text).toContain("Pick a database?");
+    expect(sent[0]!.text).toContain("Postgres");
+    expect(sent[0]!.text).toContain("SQLite");
+    expect(sent[0]!.text).not.toContain("🔧 AskUserQuestion");
+    expect(sent[0]!.opts?.parse_mode).toBe("HTML");
+    expect(sent[0]!.opts?.message_thread_id).toBe(6302);
+  });
+
+  test("subsequent tool event deletes the AUQ card (cycle-out)", async () => {
+    const state = makeState(-100, 6302, "/repo/x");
+    const { api, sent, deleted } = makeMockApi();
+    const { handleTailEvent } = require("../handlers/watch");
+    handleTailEvent(
+      api,
+      state,
+      {
+        type: "ask_user_question",
+        content: "",
+        questions: [
+          {
+            question: "Pick?",
+            options: [{ label: "A" }, { label: "B" }],
+          },
+        ],
+      },
+      6302,
+    );
+    // Wait one microtask for the sendMessage promise to resolve and assign
+    // currentToolMsg.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(state.currentToolMsg).not.toBeNull();
+    const auqMsgId = state.currentToolMsg.message_id;
+
+    handleTailEvent(
+      api,
+      state,
+      { type: "tool", content: "🔧 Read file.ts", toolName: "Read" },
+      6302,
+    );
+    expect(deleted).toContainEqual({ chatId: -100, messageId: auqMsgId });
+  });
+});
