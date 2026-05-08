@@ -231,11 +231,22 @@ const notifyHandler = createNotificationHandler(
   },
 );
 await startWatcher(notifyHandler);
-startCursorBridge(
-  primaryChatId !== undefined
-    ? { api: bot.api, chatId: primaryChatId }
-    : undefined,
+
+// Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
+// 0/no/off) to skip CDP target polling — useful when Cursor isn't
+// running or the user only wants the Claude Code bridge.
+const cursorBridgeEnabled = !["false", "0", "no", "off"].includes(
+  (process.env.CURSOR_BRIDGE_ENABLED ?? "").toLowerCase(),
 );
+if (cursorBridgeEnabled) {
+  startCursorBridge(
+    primaryChatId !== undefined
+      ? { api: bot.api, chatId: primaryChatId }
+      : undefined,
+  );
+} else {
+  info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
+}
 
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
