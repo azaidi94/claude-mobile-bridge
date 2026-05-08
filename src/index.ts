@@ -5,6 +5,7 @@
  */
 
 import { run } from "@grammyjs/runner";
+import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
 import { getWorkingDir } from "./settings";
 import { setRestartFn } from "./lifecycle";
@@ -230,6 +231,11 @@ const notifyHandler = createNotificationHandler(
   },
 );
 await startWatcher(notifyHandler);
+startCursorBridge(
+  primaryChatId !== undefined
+    ? { api: bot.api, chatId: primaryChatId }
+    : undefined,
+);
 
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
@@ -346,6 +352,7 @@ const stopRunner = () => {
     stopWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
+    stopCursorBridge();
     runner.stop();
   }
 };
