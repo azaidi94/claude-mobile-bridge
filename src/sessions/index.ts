@@ -13,6 +13,7 @@ export {
   setActiveSession,
   getSession,
   addTelegramSession,
+  addCursorSession,
   updateSessionId,
   updateSessionActivity,
   removeSession,

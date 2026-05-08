@@ -420,7 +420,14 @@ async function scanSessions(): Promise<{
       if (resolvedId) knownIds.add(resolvedId);
     }
 
-    // 2. Fill remaining slots with JSONL sessions (prefer port-matched, then mtime)
+    // 2. Fill remaining slots with JSONL sessions, but only if a port file
+    //    vouches for them. Headless Agent SDK invocations
+    //    (e.g. `claude --print`, `@anthropic-ai/claude-agent-sdk`) write JSONL
+    //    files to ~/.claude/projects/ but never open a channel-relay, so they
+    //    appear in the JSONL candidate list yet have no port file. Filtering
+    //    on `portSessionIds` excludes them — only relay-backed interactive
+    //    sessions are registered. Opt out with WATCHER_INCLUDE_HEADLESS=1.
+    const includeHeadless = process.env.WATCHER_INCLUDE_HEADLESS === "1";
     candidates.sort((a, b) => {
       const aMatch = portSessionIds.has(a.info.id) ? 1 : 0;
       const bMatch = portSessionIds.has(b.info.id) ? 1 : 0;
@@ -430,6 +437,7 @@ async function scanSessions(): Promise<{
     for (const { info: si } of candidates) {
       if (dirFound.length >= processCount) break;
       if (si.id && knownIds.has(si.id)) continue;
+      if (!includeHeadless && si.id && !portSessionIds.has(si.id)) continue;
       dirFound.push(si);
       if (si.id) knownIds.add(si.id);
     }
@@ -552,13 +560,14 @@ async function refresh(): Promise<SessionDiff> {
 
   const { sessions: discovered, portFiles } = await scanSessions();
 
-  // Keep telegram sessions, replace discovered ones
-  const telegramSessions: SessionInfo[] = [];
+  // Keep non-desktop sessions (telegram, cursor); only desktop sessions are
+  // rebuilt from filesystem scan. Without this, every refresh drops the
+  // cursor sessions added by addCursorSession() and they vanish from the API.
+  const preservedSessions: SessionInfo[] = [];
   for (const s of cache.sessions.values()) {
-    if (s.source === "telegram") {
-      // Keep if active in last 24h
+    if (s.source === "telegram" || s.source === "cursor") {
       if (Date.now() - s.lastActivity < MAX_AGE_MS) {
-        telegramSessions.push(s);
+        preservedSessions.push(s);
       }
     }
   }
@@ -586,8 +595,8 @@ async function refresh(): Promise<SessionDiff> {
     cache.sessions.set(si.name, si);
   }
 
-  // Add telegram sessions back
-  for (const si of telegramSessions) {
+  // Add preserved (telegram + cursor) sessions back
+  for (const si of preservedSessions) {
     // Re-generate name in case of conflict
     if (cache.sessions.has(si.name)) {
       si.name = generateName(si.dir);
@@ -835,6 +844,39 @@ export function addTelegramSession(
   saveActiveSession(); // persist
 
   return info;
+}
+
+/**
+ * Register a Cursor IDE workspace as a session.
+ * If a session with the same name exists, refreshes its lastActivity.
+ * Safe to call repeatedly — will not create duplicates.
+ *
+ * Note: unlike addTelegramSession, this does NOT set cache.active —
+ * Cursor sessions should not auto-steal the active session slot.
+ */
+export function addCursorSession(opts: {
+  name: string;
+  dir: string;
+  sessionId?: string;
+}): void {
+  if (!opts.name.trim() || !opts.dir.trim()) return;
+  const existing = cache.sessions.get(opts.name);
+  if (existing) {
+    existing.lastActivity = Date.now();
+    if (opts.sessionId) existing.id = opts.sessionId;
+    return;
+  }
+  // Cursor sessions don't have a Claude SDK session id; use the session name
+  // so the web API surfaces a non-empty id for URL routing.
+  const info: SessionInfo = {
+    id: opts.sessionId ?? opts.name,
+    name: opts.name,
+    dir: opts.dir,
+    lastActivity: Date.now(),
+    source: "cursor",
+  };
+  cache.sessions.set(opts.name, info);
+  onChangeCallback?.({ added: [info], removed: [] });
 }
 
 /**
