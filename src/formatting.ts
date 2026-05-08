@@ -27,6 +27,11 @@ export function convertMarkdownToHtml(text: string): string {
   // Store code blocks temporarily to avoid processing their contents
   const codeBlocks: string[] = [];
   const inlineCodes: string[] = [];
+  const tableBlocks: string[] = [];
+
+  // Save markdown tables first — Telegram HTML has no <table> support, so
+  // we wrap them in <pre> at the end to preserve column alignment.
+  text = extractMarkdownTables(text, tableBlocks);
 
   // Save code blocks first (```code```)
   text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
@@ -88,6 +93,13 @@ export function convertMarkdownToHtml(text: string): string {
     text = text.replace(`\x00CODEBLOCK${i}\x00`, `<pre>${escapedCode}</pre>`);
   }
 
+  // Restore tables as preformatted blocks (column alignment preserved
+  // by monospace rendering; Telegram doesn't support real tables).
+  for (let i = 0; i < tableBlocks.length; i++) {
+    const rendered = renderTableAsPre(tableBlocks[i]!);
+    text = text.replace(`\x00TABLE${i}\x00`, rendered);
+  }
+
   // Restore inline code
   for (let i = 0; i < inlineCodes.length; i++) {
     const escapedCode = escapeHtml(inlineCodes[i]!);
@@ -101,6 +113,87 @@ export function convertMarkdownToHtml(text: string): string {
   text = text.replace(/\n{3,}/g, "\n\n");
 
   return text;
+}
+
+/**
+ * Detect GFM-style markdown tables and replace them with placeholders,
+ * stashing the raw block in `out`. Identifies a table by a row that
+ * starts and ends with `|`, immediately followed by a separator row of
+ * the form `|---|---|...` (with optional `:` for alignment).
+ */
+function extractMarkdownTables(text: string, out: string[]): string {
+  const lines = text.split("\n");
+  const result: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    const next = lines[i + 1] ?? "";
+    if (isTableRow(line) && isTableSeparator(next)) {
+      const block: string[] = [line, next];
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i] ?? "")) {
+        block.push(lines[i]!);
+        i++;
+      }
+      const placeholder = `\x00TABLE${out.length}\x00`;
+      out.push(block.join("\n"));
+      result.push(placeholder);
+      continue;
+    }
+    result.push(line);
+    i++;
+  }
+  return result.join("\n");
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 1;
+}
+
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return false;
+  return /^\|[\s\-:|]+\|$/.test(trimmed) && trimmed.includes("-");
+}
+
+/**
+ * Pretty-print a markdown table block as a monospace `<pre>` with
+ * column-aligned cells. Bold formatting in cells (e.g. `**name**`) is
+ * stripped — Telegram's <pre> doesn't allow inline tags.
+ */
+function renderTableAsPre(block: string): string {
+  const lines = block.split("\n").filter((l) => l.trim());
+  if (lines.length === 0) return "";
+
+  const rows: string[][] = lines
+    .filter((l) => !isTableSeparator(l))
+    .map((l) => {
+      // Strip leading/trailing pipe, then split, then trim each cell.
+      const inner = l.trim().replace(/^\|/, "").replace(/\|$/, "");
+      return inner
+        .split("|")
+        .map((cell) => cell.trim().replace(/\*\*(.+?)\*\*/g, "$1"));
+    });
+
+  if (rows.length === 0) return "";
+
+  const colCount = Math.max(...rows.map((r) => r.length));
+  const widths: number[] = [];
+  for (let c = 0; c < colCount; c++) {
+    widths[c] = Math.max(...rows.map((r) => (r[c] ?? "").length));
+  }
+
+  const formatted = rows
+    .map((r) =>
+      r
+        .map((cell, c) => cell.padEnd(widths[c] ?? 0))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
+
+  return `<pre>${escapeHtml(formatted)}</pre>`;
 }
 
 /**
