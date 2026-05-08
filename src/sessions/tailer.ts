@@ -422,13 +422,12 @@ export class SessionTailer {
             const input = (block.input as Record<string, unknown>) || {};
             // Render-only: card surfaces context; answering happens at desktop.
             if (block.name === ASK_USER_QUESTION_TOOL) {
-              const auqInput = block.input as
-                | { questions?: AskUserQuestionItem[] }
-                | undefined;
+              const questions =
+                (input.questions as AskUserQuestionItem[] | undefined) ?? [];
               events.push({
                 type: "ask_user_question",
                 content: "",
-                questions: auqInput?.questions ?? [],
+                questions,
               });
               continue;
             }

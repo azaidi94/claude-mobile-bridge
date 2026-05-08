@@ -60,6 +60,27 @@ describe("formatAskUserQuestion", () => {
     expect(html).toContain(`<pre>${preview}</pre>`);
   });
 
+  test("caps escaped preview length even when raw input is HTML-special-heavy", () => {
+    // 600 raw `<` would expand to 2400 chars after escaping (`&lt;` × 600).
+    // The cap is on the *escaped* output, so we should see far fewer entities.
+    const preview = "<".repeat(600);
+    const html = formatAskUserQuestion([
+      {
+        question: "?",
+        options: [{ label: "A", preview }, { label: "B" }],
+      },
+    ]);
+    const match = html.match(/<pre>([\s\S]*?)<\/pre>/);
+    expect(match).not.toBeNull();
+    const rendered = match![1]!;
+    // Cap is 600 escaped chars + 1 for ellipsis. Allow tiny slack for entity
+    // boundary back-off (an entity could shrink the cut by up to 3 chars).
+    expect(rendered.length).toBeLessThanOrEqual(601);
+    expect(rendered).toEndWith("…");
+    // Must not contain a partial entity at the truncation boundary.
+    expect(rendered).not.toMatch(/&[a-z]*…$/);
+  });
+
   test("truncates oversized preview at 600 chars with ellipsis", () => {
     const preview = "x".repeat(800);
     const html = formatAskUserQuestion([

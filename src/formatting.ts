@@ -460,7 +460,15 @@ export function formatAskUserQuestion(
 
   const blocks: string[] = [];
   let truncated = false;
-  let runningLen = header.length + 2 + footer.length + 2;
+  // Reserve headroom for the truncation footer up front so the cap holds
+  // even when we end up appending it.
+  let runningLen =
+    header.length +
+    2 +
+    footer.length +
+    2 +
+    ASK_USER_QUESTION_TRUNC_FOOTER.length +
+    2;
 
   for (const item of questions) {
     const lines: string[] = [];
@@ -474,11 +482,18 @@ export function formatAskUserQuestion(
       const desc = opt.description ? ` — ${escapeHtml(opt.description)}` : "";
       lines.push(`   • ${label}${desc}`);
       if (opt.preview) {
-        const previewText =
-          opt.preview.length > ASK_USER_QUESTION_PREVIEW_MAX
-            ? opt.preview.slice(0, ASK_USER_QUESTION_PREVIEW_MAX) + "…"
-            : opt.preview;
-        lines.push(`     <pre>${escapeHtml(previewText)}</pre>`);
+        // Cap the *escaped* length so HTML-special-heavy previews can't blow
+        // past the budget (e.g. 600 raw `<` → 2400 escaped chars).
+        const escaped = escapeHtml(opt.preview);
+        let safe = escaped;
+        if (escaped.length > ASK_USER_QUESTION_PREVIEW_MAX) {
+          let cut = ASK_USER_QUESTION_PREVIEW_MAX;
+          // Don't split an HTML entity (e.g. `&am|p;`) — back off to the `&`.
+          const ampAt = escaped.lastIndexOf("&", cut);
+          if (ampAt >= 0 && escaped.indexOf(";", ampAt) >= cut) cut = ampAt;
+          safe = escaped.slice(0, cut) + "…";
+        }
+        lines.push(`     <pre>${safe}</pre>`);
       }
     }
 
