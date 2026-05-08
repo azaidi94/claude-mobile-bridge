@@ -43,6 +43,7 @@ import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
 import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
+import { globalEventBus } from "../web/sse";
 
 /**
  * Handle incoming text messages.
@@ -77,6 +78,7 @@ export async function handleText(ctx: Context): Promise<void> {
   // Topic routing — resolve session from topic context
   let threadId: number | undefined;
   let sessionOverride: SessionOverride | undefined;
+  let cursorSessionName: string | undefined;
 
   if (isTopicChat(ctx)) {
     const topicCtx = isSessionTopic(ctx);
@@ -86,12 +88,18 @@ export async function handleText(ctx: Context): Promise<void> {
       threadId = topicCtx.topicId;
       const si = getSession(topicCtx.sessionName);
       if (si) {
-        session.loadFromRegistry(si);
-        sessionOverride = {
-          sessionId: si.id || "",
-          sessionDir: si.dir,
-          sessionPid: si.pid,
-        };
+        if (si.source === "cursor") {
+          // Cursor sessions don't have a Claude SDK relay; the CursorBridge
+          // delivers via the event bus directly into Cursor's Composer.
+          cursorSessionName = si.name;
+        } else {
+          session.loadFromRegistry(si);
+          sessionOverride = {
+            sessionId: si.id || "",
+            sessionDir: si.dir,
+            sessionPid: si.pid,
+          };
+        }
       }
     } else if (isGeneralTopic(ctx)) {
       // Free text in General — nudge to use a topic
@@ -102,7 +110,7 @@ export async function handleText(ctx: Context): Promise<void> {
         !pendingAskUserQuestionCustom.has(chatId)
       ) {
         await ctx.reply(
-          "💬 Send messages in a session topic.\nUse /list to see sessions.",
+          "❌ Send messages in a session topic.\nUse /list to see sessions.",
         );
         return;
       }
@@ -331,6 +339,31 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
+  // 1.65. Cursor topic — emit to bus and return. The CursorBridge subscribes
+  // to the bus and injects the message into Cursor's Composer. Must run
+  // before the watch-relay check below, since cursor sessions have no TCP
+  // relay; the watch path would always fail with "Relay failed".
+  if (cursorSessionName) {
+    globalEventBus.emit(cursorSessionName, {
+      type: "user_message",
+      source: "telegram",
+      content: message,
+    });
+    ctx
+      .replyWithChatAction("typing", { message_thread_id: threadId })
+      .catch(() => {});
+    await auditLog(userId, username, "CURSOR_RELAY", message, "(via bus)");
+    info("request: completed", {
+      opId,
+      requestKind: "text",
+      chatId,
+      userId,
+      durationMs: elapsedMs(requestStartedAt),
+      path: "cursor_bus",
+    });
+    return;
+  }
+
   // 1.7. Check for active watch — relay message to desktop session.
   // In topic mode, pass session override so the relay targets the correct session
   // (topic routing loaded the right session above, but the watch may point elsewhere).
@@ -345,6 +378,13 @@ export async function handleText(ctx: Context): Promise<void> {
       sessionOverride,
     );
     if (relayed) {
+      const topicCtx = isSessionTopic(ctx);
+      const busKey = topicCtx?.sessionName ?? String(chatId);
+      globalEventBus.emit(busKey, {
+        type: "user_message",
+        source: "telegram",
+        content: message,
+      });
       ctx
         .replyWithChatAction("typing", { message_thread_id: threadId })
         .catch(() => {});

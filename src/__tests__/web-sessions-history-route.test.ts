@@ -64,7 +64,11 @@ describe("GET /api/sessions/:id/history", () => {
       events: Array<{ type: string; content: string }>;
     };
     expect(body.events).toHaveLength(2);
-    expect(body.events[0]!.content).toBe("🖥 hello from user");
+    // Native (no channel tag) user message → user_message+terminal
+    expect(body.events[0]).toMatchObject({
+      type: "user_message",
+      content: "hello from user",
+    });
     expect(body.events[1]!.type).toBe("text");
   });
 

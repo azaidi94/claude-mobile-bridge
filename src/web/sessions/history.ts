@@ -8,6 +8,13 @@ import { extractToolResultText } from "../../sessions/tailer";
 
 interface JsonlEntry {
   type?: string;
+  /**
+   * Origin of the message. Cursor sessions write this; CC's native
+   * JSONL doesn't (relay vs terminal is signalled via the channel tag
+   * inside content). When present, take it as the authoritative source
+   * label on the resulting SseEvent.
+   */
+  source?: "telegram" | "web" | "cursor" | "terminal";
   message?: {
     role?: "user" | "assistant";
     content?: string | unknown[];
@@ -32,13 +39,14 @@ function getClaudeDir(): string {
   return process.env.CLAUDE_DIR || `${process.env.HOME}/.claude`;
 }
 
-// Channel-relay-wrapped messages come from the web UI or Telegram
-// (<channel source="channel-relay" chat_id=…>). Untagged user entries are
-// native terminal-typed input in the desktop Claude TUI. Telegram renders
-// the former as the user's own message and the latter prefixed "🖥 Desktop:";
-// the web UI mirrors that distinction via text prefixes the Terminal
-// component then groups into "user" vs "desktop" turns.
+// Channel-relay-wrapped messages: <channel source="channel-relay"
+// chat_id="<tg-chat-id-or-'web'>" …>…</channel>. Untagged user entries
+// are native terminal input in the Claude TUI. We resolve the source
+// from the chat_id attribute and emit a single user_message event so
+// every surface labels the message identically (📱 Telegram, 🌐 Web UI,
+// 🖥 Terminal) — no more "› " / "🖥 " prefix-based classification.
 const CHANNEL_TAG_RE = /^<channel\s[^>]*>([\s\S]*?)<\/channel>\s*$/;
+const CHAT_ID_RE = /\bchat_id="([^"]+)"/;
 
 function classifyUserText(raw: string): SseEvent | null {
   const trimmed = raw.trim();
@@ -46,13 +54,31 @@ function classifyUserText(raw: string): SseEvent | null {
   const m = trimmed.match(CHANNEL_TAG_RE);
   if (m) {
     const inner = m[1]!.trim();
-    return inner ? { type: "text", content: `› ${inner}` } : null;
+    if (!inner) return null;
+    const chatId = trimmed.match(CHAT_ID_RE)?.[1];
+    const source: "telegram" | "web" = chatId === "web" ? "web" : "telegram";
+    return { type: "user_message", source, content: inner };
   }
-  return { type: "text", content: `🖥 ${trimmed}` };
+  return { type: "user_message", source: "terminal", content: trimmed };
 }
 
 function mapUserEntry(entry: JsonlEntry): SseEvent[] {
   const content = entry.message?.content;
+  // Cursor JSONL: source field is set; emit a user_message with the
+  // origin label so the Web Terminal renders it in the right pane
+  // (📱 Telegram / 🌐 Web / 🖱 Cursor / 🖥 Terminal). Native CC JSONL
+  // has no source field — fall through to channel-tag detection.
+  if (entry.source && typeof content === "string") {
+    const trimmed = content.trim();
+    if (!trimmed) return [];
+    return [
+      {
+        type: "user_message",
+        source: entry.source,
+        content: trimmed,
+      },
+    ];
+  }
   if (typeof content === "string") {
     const ev = classifyUserText(content);
     return ev ? [ev] : [];
@@ -67,8 +93,14 @@ function mapUserEntry(entry: JsonlEntry): SseEvent[] {
     is_error?: boolean;
   }>) {
     if (block.type === "text" && typeof block.text === "string") {
-      const ev = classifyUserText(block.text);
-      if (ev) events.push(ev);
+      // Only channel-relay wrapped messages are user-visible; plain text
+      // blocks in content arrays are internal tool injections (e.g. skill
+      // content) and should not be rendered.
+      const trimmed = block.text.trim();
+      if (CHANNEL_TAG_RE.test(trimmed)) {
+        const ev = classifyUserText(trimmed);
+        if (ev) events.push(ev);
+      }
     } else if (block.type === "tool_result") {
       const toolUseId = String(block.tool_use_id ?? "");
       if (!toolUseId) continue;
@@ -88,6 +120,7 @@ function mapAssistantEntry(entry: JsonlEntry, turnIdx: number): SseEvent[] {
   if (!Array.isArray(content)) return [];
   const events: SseEvent[] = [];
   let textSegment = 0;
+  const source = entry.source;
   for (const raw of content as AssistantBlock[]) {
     if (raw.type === "thinking" && raw.thinking) {
       events.push({ type: "thinking", content: raw.thinking });
@@ -100,6 +133,7 @@ function mapAssistantEntry(entry: JsonlEntry, turnIdx: number): SseEvent[] {
         type: "text",
         content: raw.text,
         segmentId: turnIdx * 100 + textSegment,
+        ...(source ? { source } : {}),
       });
       textSegment += 1;
     } else if (raw.type === "tool_use" && raw.name) {

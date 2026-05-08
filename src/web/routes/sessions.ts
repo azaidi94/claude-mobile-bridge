@@ -21,7 +21,7 @@ export interface ApiSession {
   name: string;
   dir: string;
   lastActivity: number;
-  source: "telegram" | "desktop";
+  source: "telegram" | "desktop" | "cursor";
   live: boolean;
   active: boolean;
 }
@@ -211,7 +211,7 @@ export function createSessionsRouter(): Hono {
 
   app.post("/:id/message", async (c) => {
     const sessionId = c.req.param("id");
-    const body = await c.req.json<{ text: string }>();
+    const body = await c.req.json<{ text: string; clientId?: string }>();
     if (!body.text?.trim()) return c.json({ error: "text required" }, 400);
 
     const sessions = getSessions();
@@ -220,6 +220,19 @@ export function createSessionsRouter(): Hono {
 
     const emit = (type: SseEvent["type"], content: string) =>
       globalEventBus.emit(busKey, { type, content });
+
+    globalEventBus.emit(busKey, {
+      type: "user_message",
+      source: "web",
+      content: body.text,
+      clientId: body.clientId,
+    });
+
+    if (found?.source === "cursor") {
+      // CursorBridge subscribes to the bus and injects into Composer.
+      // No SDK call — cursor sessions aren't backed by a Claude SDK process.
+      return c.json({ ok: true });
+    }
 
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
