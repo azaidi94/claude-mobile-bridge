@@ -162,6 +162,10 @@ if (primaryChatId !== undefined && storedTopicChatId) {
  * relay message; exits as soon as the port file has a sessionId. The text is
  * visible to Claude — the relay has no out-of-band wake channel — but the
  * MCP `instructions` direct it to use the `reply` tool, not echo terminal.
+ *
+ * Skipped entirely when sessionId is already known (caller saw the JSONL),
+ * since the only purpose of the ping is to learn it. Pinging anyway flooded
+ * resumed sessions with `Session Name:` text the user could see.
  */
 function pingRelayForSession(
   sessionName: string,
@@ -171,6 +175,7 @@ function pingRelayForSession(
   sessionId?: string,
   claudePid?: number,
 ): void {
+  if (sessionId) return;
   (async () => {
     const RETRY_DELAYS_MS = [3_000, 5_000, 7_000, 10_000, 15_000];
     for (const delay of RETRY_DELAYS_MS) {
