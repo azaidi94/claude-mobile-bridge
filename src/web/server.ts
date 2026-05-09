@@ -60,6 +60,18 @@ export function startWebServer(): void {
   app.use("/*", serveStatic({ root: WEB_DIST }));
 
   app.get("*", async (c) => {
+    // Hashed assets that don't exist must 404 — never fall back to index.html.
+    // Otherwise a browser holding a stale index.html (referencing a renamed
+    // bundle) silently receives HTML when it asks for JS, then tries to parse
+    // <!doctype html>… as JavaScript and the page goes blank with no error
+    // visible to a non-DevTools user.
+    const path = c.req.path;
+    if (
+      path.startsWith("/assets/") ||
+      /\.(js|css|map|json|woff2?|png|jpg|jpeg|svg|webp|ico)$/i.test(path)
+    ) {
+      return c.notFound();
+    }
     const indexPath = `${WEB_DIST}/index.html`;
     const text = await Bun.file(indexPath)
       .text()
