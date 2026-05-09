@@ -39,6 +39,12 @@ export interface RelayAskRemoteRequest {
   question: string;
   options: RelayAskRemoteOption[];
   allow_custom: boolean;
+  /**
+   * Mirrors the MCP-side timeout (default 30 min). The bot uses this to set
+   * its own timer + 5s overshoot so the MCP's tool-result error wins the
+   * race when the user never answers.
+   */
+  timeout_ms?: number;
 }
 
 type ReplyCallback = (msg: RelayReply) => void;
@@ -289,6 +295,11 @@ export class RelayClient {
           });
           break;
         }
+        const timeoutMsRaw = msg.timeout_ms;
+        const timeoutMs =
+          typeof timeoutMsRaw === "number" && timeoutMsRaw > 0
+            ? timeoutMsRaw
+            : undefined;
         const req: RelayAskRemoteRequest = {
           ask_id: askId,
           chat_id: msgChatId,
@@ -297,6 +308,7 @@ export class RelayClient {
           question: String(msg.question || ""),
           options,
           allow_custom: Boolean(msg.allow_custom),
+          timeout_ms: timeoutMs,
         };
         for (const cb of this.askRemoteCallbacks) cb(req);
         break;

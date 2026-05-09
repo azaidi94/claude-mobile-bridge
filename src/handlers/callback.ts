@@ -643,7 +643,6 @@ export async function handleCallback(ctx: Context): Promise<void> {
       ctx.api,
       callbackData,
       queryId,
-      chatId,
     );
     if (consumed) return;
   }

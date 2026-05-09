@@ -15,6 +15,10 @@ import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
 import { findNewestSessionInDir } from "../../sessions/tailer";
 import { warn } from "../../logger";
+import {
+  submitAnswerFromWeb,
+  cancelAnswerFromWeb,
+} from "../../handlers/relay-ask";
 
 export interface ApiSession {
   id: string;
@@ -268,8 +272,6 @@ export function createSessionsRouter(): Hono {
     }>();
     const askId = String(body.ask_id ?? "");
     if (!askId) return c.json({ error: "ask_id required" }, 400);
-    const { submitAnswerFromWeb, cancelAnswerFromWeb } =
-      await import("../../handlers/relay-ask");
     if (body.cancel) {
       const ok = cancelAnswerFromWeb(askId);
       return ok

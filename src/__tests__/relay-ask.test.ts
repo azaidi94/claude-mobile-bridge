@@ -20,6 +20,7 @@ import {
   cancelAnswerFromWeb,
   _resetForTests,
   _pendingCountForTests,
+  _setTimeoutOvershootForTests,
 } from "../handlers/relay-ask";
 import type { RelayAskRemoteRequest, RelayClient } from "../relay/client";
 import { globalEventBus, type SseEvent } from "../web/sse";
@@ -166,7 +167,6 @@ describe("relay-ask: post + button tap round-trip", () => {
       api,
       "askremote:a1_test:0",
       "cbq-1",
-      -1003968796171,
     );
     expect(consumed).toBe(true);
     expect(sentAnswers).toEqual([
@@ -187,12 +187,7 @@ describe("relay-ask: post + button tap round-trip", () => {
     await sleep(0);
 
     // User taps the custom button.
-    await handleAskRemoteCallback(
-      api,
-      "askremote:a1_test:custom",
-      "cbq-1",
-      -1003968796171,
-    );
+    await handleAskRemoteCallback(api, "askremote:a1_test:custom", "cbq-1");
     // No answer yet — still pending.
     expect(sentAnswers).toHaveLength(0);
     expect(_pendingCountForTests()).toBe(1);
@@ -223,12 +218,7 @@ describe("relay-ask: post + button tap round-trip", () => {
     fireAskRemote(SAMPLE_REQ);
     await sleep(0);
 
-    await handleAskRemoteCallback(
-      api,
-      "askremote:a1_test:cancel",
-      "cbq-1",
-      -1003968796171,
-    );
+    await handleAskRemoteCallback(api, "askremote:a1_test:cancel", "cbq-1");
     expect(sentAnswers).toEqual([
       { ask_id: "a1_test", error: "user cancelled" },
     ]);
@@ -245,7 +235,6 @@ describe("relay-ask: post + button tap round-trip", () => {
       api,
       "askremote:nonexistent:0",
       "cbq-9",
-      -1003968796171,
     );
     expect(consumed).toBe(true);
     expect(sentAnswers).toHaveLength(0);
@@ -258,7 +247,6 @@ describe("relay-ask: post + button tap round-trip", () => {
       api,
       "set:save:terminal:Ghostty",
       "cbq-1",
-      100,
     );
     expect(consumed).toBe(false);
   });
@@ -276,7 +264,6 @@ describe("relay-ask: post + button tap round-trip", () => {
       api,
       "askremote:a1_test:42", // out of range
       "cbq-1",
-      -1003968796171,
     );
     expect(sentAnswers).toHaveLength(0);
     // Pending entry remains since we didn't resolve.
@@ -362,12 +349,7 @@ describe("relay-ask: post + button tap round-trip", () => {
     fireAskRemote(SAMPLE_REQ);
     await sleep(0);
 
-    await handleAskRemoteCallback(
-      api,
-      "askremote:a1_test:0",
-      "cbq-1",
-      -1003968796171,
-    );
+    await handleAskRemoteCallback(api, "askremote:a1_test:0", "cbq-1");
 
     const cleared = events.find((e) => e.type === "ask_remote_cleared");
     expect(cleared).toBeDefined();
@@ -470,5 +452,78 @@ describe("relay-ask: post + button tap round-trip", () => {
     ).inline_keyboard;
     expect(kb[0]![0]!.text.length).toBeLessThanOrEqual(30);
     expect(kb[0]![0]!.text.endsWith("…")).toBe(true);
+  });
+
+  test("rejects a second concurrent ask_remote with allow_custom in same chat", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, sentAnswers } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+
+    // First request — taps "custom" so customTextPending[chatId] is set.
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+    await handleAskRemoteCallback(api, "askremote:a1_test:custom", "cbq-1");
+
+    // Second concurrent request in the same chat with allow_custom should
+    // be rejected at delivery time. The mock client's catch path sends an
+    // error frame back to the MCP via sendAskRemoteAnswer.
+    fireAskRemote({
+      ...SAMPLE_REQ,
+      ask_id: "a2_test",
+      question: "Concurrent",
+    });
+    await sleep(0);
+    await sleep(0);
+
+    const errAnswer = sentAnswers.find((s) => s.ask_id === "a2_test");
+    expect(errAnswer).toBeDefined();
+    expect(errAnswer!.error).toContain("already has an ask_remote");
+    // Original ask is still pending; only the duplicate was rejected.
+    expect(_pendingCountForTests()).toBe(1);
+  });
+
+  test("very long question + options are truncated before being sent to Telegram", async () => {
+    const { api, sent } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+
+    fireAskRemote({
+      ...SAMPLE_REQ,
+      question: "Q".repeat(2000),
+      options: [
+        { label: "L".repeat(500), description: "D".repeat(1000) },
+        { label: "Short", description: "ok" },
+      ],
+    });
+    await sleep(0);
+
+    expect(sent).toHaveLength(1);
+    // Whole HTML (escaped + envelope) must be well under Telegram's 4096 limit
+    // so sendMessage doesn't fail with "message is too long".
+    expect(sent[0]!.text.length).toBeLessThan(4096);
+  });
+
+  test("bot-side timeout fires after the request's timeout_ms + overshoot", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    _setTimeoutOvershootForTests(20); // shrink 5s default to 20ms for speed
+    const { client, fireAskRemote } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote({ ...SAMPLE_REQ, timeout_ms: 30 });
+    await sleep(0);
+    expect(_pendingCountForTests()).toBe(1);
+
+    // Wait past timeout (30) + overshoot (20) + slack.
+    await sleep(150);
+    expect(_pendingCountForTests()).toBe(0);
+
+    const cleared = events.find((e) => e.type === "ask_remote_cleared");
+    expect(cleared?.askResolution).toBe("expired");
+
+    unsubscribe();
   });
 });

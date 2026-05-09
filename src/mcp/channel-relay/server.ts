@@ -386,6 +386,13 @@ let requestCounter = 0;
 const validRequestIds = new Map<string, number>(); // id → timestamp
 const REQUEST_TTL_MS = 600_000; // 10 min
 
+// chat_ids that this session has actually received a channel message from.
+// ask_remote restricts target chats to this set so a hallucinating Claude
+// can't post inline keyboards to arbitrary Telegram chats. No TTL — chat_ids
+// aren't sensitive once seen, and the set is bounded by the (small) number
+// of distinct topics the user opens during a session.
+const validChatIds = new Set<string>();
+
 function generateRequestId(): string {
   return `r${++requestCounter}_${Date.now().toString(36)}`;
 }
@@ -466,6 +473,7 @@ function handleBotMessage(msg: {
   const requestId = generateRequestId();
   const chatId = msg.chat_id || "";
   validRequestIds.set(requestId, Date.now());
+  if (chatId) validChatIds.add(chatId);
 
   mcp.notification({
     method: "notifications/claude/channel",
@@ -750,6 +758,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           "REJECTED: ask_remote requires chat_id. Pass the chat_id from a recent <channel> tag.",
         );
       }
+      if (!validChatIds.has(chat_id)) {
+        return errorResult(
+          `REJECTED: chat_id ${chat_id} hasn't been seen in this session. ask_remote can only target chats that have sent at least one <channel> message — pass the chat_id from a recent channel notification.`,
+        );
+      }
       if (!question.trim()) {
         return errorResult("REJECTED: ask_remote question is empty.");
       }
@@ -783,6 +796,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         question,
         options,
         allow_custom,
+        timeout_ms,
       });
       if (!sent) {
         return errorResult(

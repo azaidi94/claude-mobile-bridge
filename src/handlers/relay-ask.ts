@@ -33,6 +33,8 @@ interface PendingAsk {
    * answer arrives. May be undefined for sessions the registry hasn't seen.
    */
   sessionName?: string;
+  /** Bot-side timeout — fires ~5s after MCP's so the MCP-side error wins. */
+  expiryTimer?: ReturnType<typeof setTimeout>;
 }
 
 // In-memory map: ask_id → routing context. Bot restart drops these — the MCP
@@ -40,8 +42,17 @@ interface PendingAsk {
 const pendingAsks = new Map<string, PendingAsk>();
 
 // One pending custom-text capture per chat. Next text in the chat resolves
-// the latest open ask_remote that allowed custom input.
+// the open ask_remote with allow_custom=true. Concurrent asks in the same
+// chat with allow_custom are rejected at request time (see postQuestionToTelegram)
+// so the slot is never silently overwritten.
 const customTextPending = new Map<number, string>(); // chatId → ask_id
+
+const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min — mirrors MCP default
+const DEFAULT_TIMEOUT_OVERSHOOT_MS = 5_000;
+let timeoutOvershootMs = DEFAULT_TIMEOUT_OVERSHOOT_MS;
+const MAX_QUESTION_CHARS = 600;
+const MAX_OPTION_LABEL_CHARS = 80;
+const MAX_OPTION_DESC_CHARS = 240;
 
 let botApi: Api | null = null;
 
@@ -90,8 +101,26 @@ async function postQuestionToTelegram(
       ? Number(req.thread_id)
       : undefined;
 
-  const html = formatQuestion(req.question, req.options);
-  const keyboard = buildKeyboard(req.ask_id, req.options, req.allow_custom);
+  // Reject a second concurrent ask_remote with allow_custom=true in the same
+  // chat — the customTextPending slot is single-valued, so silently letting
+  // the second overwrite the first would lose the user's first answer.
+  if (req.allow_custom && customTextPending.has(chatId)) {
+    throw new Error(
+      `chat ${chatId} already has an ask_remote awaiting a custom-text answer; resolve or cancel that one first`,
+    );
+  }
+
+  const trimmedQuestion = truncate(req.question, MAX_QUESTION_CHARS);
+  const trimmedOptions = req.options.map((o) => ({
+    label: truncate(o.label, MAX_OPTION_LABEL_CHARS),
+    description:
+      o.description !== undefined
+        ? truncate(o.description, MAX_OPTION_DESC_CHARS)
+        : undefined,
+  }));
+
+  const html = formatQuestion(trimmedQuestion, trimmedOptions);
+  const keyboard = buildKeyboard(req.ask_id, trimmedOptions, req.allow_custom);
 
   const sent = await api.sendMessage(chatId, html, {
     parse_mode: "HTML",
@@ -100,15 +129,28 @@ async function postQuestionToTelegram(
   });
 
   const sessionName = client.sessionName;
+
+  // Bot-side timeout — overshoots the MCP-side timer by 5s so the
+  // MCP's tool-result error reaches Claude first. If we win the race the
+  // user sees an "expired" card and Claude sees an error too.
+  const timeoutMs =
+    (req.timeout_ms && req.timeout_ms > 0
+      ? req.timeout_ms
+      : DEFAULT_TIMEOUT_MS) + timeoutOvershootMs;
+  const expiryTimer = setTimeout(() => {
+    expirePendingAsk(req.ask_id);
+  }, timeoutMs);
+
   pendingAsks.set(req.ask_id, {
     client,
     chatId,
     threadId,
     messageId: sent.message_id,
-    options: req.options,
+    options: trimmedOptions,
     allowCustom: req.allow_custom,
-    question: req.question,
+    question: trimmedQuestion,
     sessionName,
+    expiryTimer,
   });
 
   // Mirror to the Web UI: any open session pane subscribed to this
@@ -116,10 +158,10 @@ async function postQuestionToTelegram(
   if (sessionName) {
     globalEventBus.emit(sessionName, {
       type: "ask_remote",
-      content: req.question,
+      content: trimmedQuestion,
       askId: req.ask_id,
-      askQuestion: req.question,
-      askOptions: req.options,
+      askQuestion: trimmedQuestion,
+      askOptions: trimmedOptions,
       askAllowCustom: req.allow_custom,
     });
   }
@@ -128,9 +170,24 @@ async function postQuestionToTelegram(
     ask_id: req.ask_id,
     chat_id: chatId,
     thread_id: threadId,
-    options: req.options.length,
+    options: trimmedOptions.length,
     session: sessionName ?? "(unknown)",
+    timeout_ms: timeoutMs,
   });
+}
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+function expirePendingAsk(askId: string): void {
+  const entry = pendingAsks.get(askId);
+  if (!entry) return;
+  clearPending(askId, entry);
+  if (botApi) {
+    void editToFinal(botApi, entry, "⌛ Expired (no answer)");
+  }
+  emitCleared(entry, "expired", undefined, askId);
 }
 
 function formatQuestion(
@@ -180,7 +237,6 @@ export async function handleAskRemoteCallback(
   api: Api,
   callbackData: string,
   callbackQueryId: string,
-  fromChatId: number,
 ): Promise<boolean> {
   if (!callbackData.startsWith("askremote:")) return false;
   const parts = callbackData.split(":");
@@ -201,8 +257,7 @@ export async function handleAskRemoteCallback(
   }
 
   if (action === "cancel") {
-    pendingAsks.delete(askId);
-    customTextPending.delete(entry.chatId);
+    clearPending(askId, entry);
     entry.client.sendAskRemoteAnswer({
       ask_id: askId,
       error: "user cancelled",
@@ -228,17 +283,13 @@ export async function handleAskRemoteCallback(
     return true;
   }
   const chosen = entry.options[idx]!.label;
-  pendingAsks.delete(askId);
-  customTextPending.delete(entry.chatId);
+  clearPending(askId, entry);
   entry.client.sendAskRemoteAnswer({ ask_id: askId, answer: chosen });
   await api.answerCallbackQuery(callbackQueryId, {
     text: `Selected: ${chosen.slice(0, 40)}`,
   });
   await editToFinal(api, entry, `✅ ${chosen}`);
   emitCleared(entry, "answered", chosen, askId);
-  // fromChatId is informational; we don't gate on it (button can only come
-  // from the same chat the message was posted in).
-  void fromChatId;
   return true;
 }
 
@@ -258,8 +309,7 @@ export function tryConsumeCustomTextAnswer(
     customTextPending.delete(chatId);
     return false;
   }
-  customTextPending.delete(chatId);
-  pendingAsks.delete(askId);
+  clearPending(askId, entry);
   entry.client.sendAskRemoteAnswer({ ask_id: askId, answer: text });
   if (botApi) {
     void editToFinal(botApi, entry, `✅ ${truncateForLabel(text)}`);
@@ -277,8 +327,7 @@ export function tryConsumeCustomTextAnswer(
 export function submitAnswerFromWeb(askId: string, answer: string): boolean {
   const entry = pendingAsks.get(askId);
   if (!entry) return false;
-  pendingAsks.delete(askId);
-  customTextPending.delete(entry.chatId);
+  clearPending(askId, entry);
   entry.client.sendAskRemoteAnswer({ ask_id: askId, answer });
   if (botApi) {
     void editToFinal(botApi, entry, `✅ ${truncateForLabel(answer)}`);
@@ -293,8 +342,7 @@ export function submitAnswerFromWeb(askId: string, answer: string): boolean {
 export function cancelAnswerFromWeb(askId: string): boolean {
   const entry = pendingAsks.get(askId);
   if (!entry) return false;
-  pendingAsks.delete(askId);
-  customTextPending.delete(entry.chatId);
+  clearPending(askId, entry);
   entry.client.sendAskRemoteAnswer({
     ask_id: askId,
     error: "user cancelled (web)",
@@ -309,14 +357,14 @@ export function cancelAnswerFromWeb(askId: string): boolean {
 function emitCleared(
   entry: PendingAsk,
   resolution: "answered" | "cancelled" | "timeout" | "expired",
-  answer?: string,
-  askId?: string,
+  answer: string | undefined,
+  askId: string,
 ): void {
   if (!entry.sessionName) return;
   globalEventBus.emit(entry.sessionName, {
     type: "ask_remote_cleared",
     content: "",
-    askId: askId ?? "",
+    askId,
     askResolution: resolution,
     askAnswer: answer,
   });
@@ -353,16 +401,39 @@ async function editToWaiting(api: Api, entry: PendingAsk): Promise<void> {
 }
 
 function truncateForLabel(s: string): string {
-  return s.length > 60 ? s.slice(0, 60) + "…" : s;
+  return truncate(s, 60);
+}
+
+/**
+ * Free a pending ask: clear its bot-side timer + remove from the map. Called
+ * by every resolution path (tap / web / cancel / custom-text / expiry) so the
+ * timer never fires after the entry has already been resolved another way.
+ */
+function clearPending(askId: string, entry: PendingAsk): void {
+  if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+  pendingAsks.delete(askId);
+  customTextPending.delete(entry.chatId);
 }
 
 // ── Test hooks ─────────────────────────────────────────────────────────
 
-/** Test-only: clear all pending state. */
+/** Test-only: clear all pending state (including any open timers). */
 export function _resetForTests(): void {
+  for (const [, entry] of pendingAsks) {
+    if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+  }
   pendingAsks.clear();
   customTextPending.clear();
   botApi = null;
+  timeoutOvershootMs = DEFAULT_TIMEOUT_OVERSHOOT_MS;
+}
+
+/**
+ * Test-only: shrink the bot-side overshoot so timeout tests aren't slow.
+ * Reset by _resetForTests.
+ */
+export function _setTimeoutOvershootForTests(ms: number): void {
+  timeoutOvershootMs = ms;
 }
 
 /** Test-only: peek pending count. */

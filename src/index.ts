@@ -47,6 +47,7 @@ import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
 import { WEB_ENABLED } from "./config";
+import { initRelayAsk } from "./handlers/relay-ask";
 
 let topicManager: TopicManager | undefined;
 
@@ -117,7 +118,6 @@ info(`bot: @${botInfo.username} ready`);
 // Wire the ask_remote round-trip glue. After this call, every relay client
 // the bot connects to (now or later) auto-subscribes to ask_remote_request
 // frames and posts the question to TG with an inline keyboard.
-const { initRelayAsk } = await import("./handlers/relay-ask");
 initRelayAsk(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
