@@ -113,6 +113,12 @@ setSessionCleanupCallback((sessionName) => {
 
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+
+// Wire the ask_remote round-trip glue. After this call, every relay client
+// the bot connects to (now or later) auto-subscribes to ask_remote_request
+// frames and posts the question to TG with an inline keyboard.
+const { initRelayAsk } = await import("./handlers/relay-ask");
+initRelayAsk(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
 }

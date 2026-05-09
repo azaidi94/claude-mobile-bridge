@@ -23,6 +23,7 @@ import {
 } from "./streaming";
 import { getActiveSession } from "../sessions";
 import { pendingPlanFeedback } from "./callback";
+import { tryConsumeCustomTextAnswer } from "./relay-ask";
 import { isWatching, sendWatchRelay } from "./watch";
 import {
   createOpId,
@@ -61,6 +62,14 @@ export async function handleText(ctx: Context): Promise<void> {
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    return;
+  }
+
+  // 1.05. ask_remote custom-text capture (relay bridge two-way).
+  // Runs before topic gating so a question delivered without a thread_id
+  // (i.e. landed in General) can still be answered. The text is consumed
+  // here — never forwarded into the Claude session as a fresh prompt.
+  if (tryConsumeCustomTextAnswer(chatId, message)) {
     return;
   }
 

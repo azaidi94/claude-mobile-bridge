@@ -64,6 +64,7 @@ import {
   stopProcess,
   buildExecuteMenu,
 } from "./execute";
+import { handleAskRemoteCallback } from "./relay-ask";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -629,6 +630,22 @@ export async function handleCallback(ctx: Context): Promise<void> {
   if (callbackData.startsWith("gm:")) {
     await handleGroupModeCallback(ctx, callbackData.slice(3));
     return;
+  }
+
+  // ask_remote (relay-bridge two-way): askremote:{ask_id}:{idx|custom|cancel}
+  if (callbackData.startsWith("askremote:")) {
+    const queryId = ctx.callbackQuery?.id;
+    if (!queryId) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const consumed = await handleAskRemoteCallback(
+      ctx.api,
+      callbackData,
+      queryId,
+      chatId,
+    );
+    if (consumed) return;
   }
 
   // 6. Parse callback data: askuser:{request_id}:{option_index}

@@ -27,9 +27,24 @@ export interface RelayReact {
   emoji: string;
 }
 
+export interface RelayAskRemoteOption {
+  label: string;
+  description?: string;
+}
+
+export interface RelayAskRemoteRequest {
+  ask_id: string;
+  chat_id: string;
+  thread_id?: string;
+  question: string;
+  options: RelayAskRemoteOption[];
+  allow_custom: boolean;
+}
+
 type ReplyCallback = (msg: RelayReply) => void;
 type EditCallback = (msg: RelayEditMessage) => void;
 type ReactCallback = (msg: RelayReact) => void;
+type AskRemoteCallback = (msg: RelayAskRemoteRequest) => void;
 type DisconnectCallback = () => void;
 
 interface ScopedCallback<T> {
@@ -44,6 +59,7 @@ export class RelayClient {
   private replyCallbacks: ScopedCallback<ReplyCallback>[] = [];
   private editCallbacks: ScopedCallback<EditCallback>[] = [];
   private reactCallbacks: ScopedCallback<ReactCallback>[] = [];
+  private askRemoteCallbacks: AskRemoteCallback[] = [];
   private disconnectCallbacks: DisconnectCallback[] = [];
 
   get isConnected(): boolean {
@@ -120,6 +136,19 @@ export class RelayClient {
     return this.send({ type: "message", ...params });
   }
 
+  /**
+   * Send the user's answer back to the MCP for an in-flight ask_remote tool
+   * call. Pass `error` (instead of `answer`) to surface a failure to Claude
+   * — e.g. when the user cancels.
+   */
+  sendAskRemoteAnswer(params: {
+    ask_id: string;
+    answer?: string;
+    error?: string;
+  }): boolean {
+    return this.send({ type: "ask_remote_answer", ...params });
+  }
+
   onReply(cb: ReplyCallback, chatId?: string): void {
     this.replyCallbacks.push({ cb, chatId });
   }
@@ -142,6 +171,14 @@ export class RelayClient {
 
   offReact(cb: ReactCallback): void {
     this.reactCallbacks = this.reactCallbacks.filter((s) => s.cb !== cb);
+  }
+
+  onAskRemoteRequest(cb: AskRemoteCallback): void {
+    this.askRemoteCallbacks.push(cb);
+  }
+
+  offAskRemoteRequest(cb: AskRemoteCallback): void {
+    this.askRemoteCallbacks = this.askRemoteCallbacks.filter((c) => c !== cb);
   }
 
   onDisconnect(cb: DisconnectCallback): void {
@@ -221,6 +258,41 @@ export class RelayClient {
         for (const { cb, chatId } of this.reactCallbacks) {
           if (!chatId || chatId === msgChatId) cb(react);
         }
+        break;
+      }
+
+      case "ask_remote_request": {
+        const optionsRaw = (msg.options as unknown[]) ?? [];
+        const options: RelayAskRemoteOption[] = [];
+        for (const o of optionsRaw) {
+          if (!o || typeof o !== "object") continue;
+          const oo = o as { label?: unknown; description?: unknown };
+          const label = String(oo.label ?? "").trim();
+          if (!label) continue;
+          options.push({
+            label,
+            description:
+              oo.description !== undefined ? String(oo.description) : undefined,
+          });
+        }
+        const askId = String(msg.ask_id || "");
+        if (!askId || options.length < 1) {
+          warn("relay: dropping invalid ask_remote_request", {
+            ask_id: askId,
+            optionCount: options.length,
+          });
+          break;
+        }
+        const req: RelayAskRemoteRequest = {
+          ask_id: askId,
+          chat_id: msgChatId,
+          thread_id:
+            msg.thread_id !== undefined ? String(msg.thread_id) : undefined,
+          question: String(msg.question || ""),
+          options,
+          allow_custom: Boolean(msg.allow_custom),
+        };
+        for (const cb of this.askRemoteCallbacks) cb(req);
         break;
       }
     }
