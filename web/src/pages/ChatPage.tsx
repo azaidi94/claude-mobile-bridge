@@ -2,6 +2,24 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { api, type ApiSession, type SseEvent } from "../api";
 import { Terminal } from "../components/Terminal";
 
+/**
+ * crypto.randomUUID is only defined in secure contexts (HTTPS or localhost).
+ * The Mini App is loaded over plain HTTP on LAN IPs (e.g. 192.168.x), where
+ * crypto.randomUUID is undefined and any reference would throw — blanking
+ * the entire React tree. Fall back to a non-crypto UUID; this id is only used
+ * locally to suppress our own echo, so cryptographic strength isn't needed.
+ */
+function makeClientId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function ChatPage() {
   const [sessions, setSessions] = useState<ApiSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -11,7 +29,7 @@ export function ChatPage() {
   const [sendError, setSendError] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const clientIdRef = useRef<string>(crypto.randomUUID());
+  const clientIdRef = useRef<string>(makeClientId());
   // Tracks text we just sent — Cursor's DOM observer echoes the same
   // text back via user_message+cursor after injection, which would
   // render as "🖱 CURSOR" duplicating our optimistic "YOU" insert.
