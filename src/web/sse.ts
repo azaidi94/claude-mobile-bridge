@@ -11,7 +11,9 @@ export interface SseEvent {
     | "tool_result"
     | "permission_mode"
     | "hook_summary"
-    | "user_message";
+    | "user_message"
+    | "ask_remote"
+    | "ask_remote_cleared";
   content: string;
   source?: "telegram" | "web" | "terminal" | "cursor";
   clientId?: string;
@@ -28,6 +30,15 @@ export interface SseEvent {
     firstError?: string;
     failingHookName?: string;
   };
+  /** ask_remote: identifier for routing the answer back to the MCP. */
+  askId?: string;
+  /** ask_remote: question text + button options + custom-text affordance. */
+  askQuestion?: string;
+  askOptions?: Array<{ label: string; description?: string }>;
+  askAllowCustom?: boolean;
+  /** ask_remote_cleared: how the question was resolved, for UX hint. */
+  askResolution?: "answered" | "cancelled" | "timeout" | "expired";
+  askAnswer?: string;
 }
 
 type SseHandler = (event: SseEvent) => void;

@@ -53,6 +53,12 @@ interface ScopedCallback<T> {
 }
 
 export class RelayClient {
+  /**
+   * Session metadata, set by getRelayClient after target resolution.
+   * Used by listeners (e.g. relay-ask) to route bus emits keyed by name.
+   */
+  public sessionName?: string;
+  public sessionDir?: string;
   private socket: Socket | null = null;
   private buffer = "";
   private _isConnected = false;

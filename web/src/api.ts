@@ -39,7 +39,9 @@ export interface SseEvent {
     | "tool_result"
     | "permission_mode"
     | "hook_summary"
-    | "user_message";
+    | "user_message"
+    | "ask_remote"
+    | "ask_remote_cleared";
   content: string;
   source?: "telegram" | "web" | "terminal" | "cursor";
   clientId?: string;
@@ -48,6 +50,12 @@ export interface SseEvent {
   toolInput?: Record<string, unknown>;
   toolUseId?: string;
   isError?: boolean;
+  askId?: string;
+  askQuestion?: string;
+  askOptions?: Array<{ label: string; description?: string }>;
+  askAllowCustom?: boolean;
+  askResolution?: "answered" | "cancelled" | "timeout" | "expired";
+  askAnswer?: string;
   permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   hook?: {
     hookCount: number;
@@ -138,6 +146,29 @@ export const api = {
       body: JSON.stringify({ dir }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+
+  async submitAskRemoteAnswer(
+    askId: string,
+    answer: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${BASE}/sessions/ask-remote-answer`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ ask_id: askId, answer }),
+    });
+    return res.json();
+  },
+
+  async cancelAskRemote(
+    askId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${BASE}/sessions/ask-remote-answer`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ ask_id: askId, cancel: true }),
+    });
     return res.json();
   },
 

@@ -16,10 +16,13 @@ import {
   attachAskRemoteToRelay,
   handleAskRemoteCallback,
   tryConsumeCustomTextAnswer,
+  submitAnswerFromWeb,
+  cancelAnswerFromWeb,
   _resetForTests,
   _pendingCountForTests,
 } from "../handlers/relay-ask";
 import type { RelayAskRemoteRequest, RelayClient } from "../relay/client";
+import { globalEventBus, type SseEvent } from "../web/sse";
 
 interface SentMessage {
   chatId: number | string;
@@ -62,7 +65,7 @@ function makeMockApi() {
   return { api, sent, edits, callbackAcks };
 }
 
-function makeMockClient() {
+function makeMockClient(sessionName?: string) {
   const askRemoteHandlers: Array<(r: RelayAskRemoteRequest) => void> = [];
   const sentAnswers: Array<{
     ask_id: string;
@@ -70,6 +73,7 @@ function makeMockClient() {
     error?: string;
   }> = [];
   const client = {
+    sessionName,
     onAskRemoteRequest: (cb: (r: RelayAskRemoteRequest) => void) => {
       askRemoteHandlers.push(cb);
     },
@@ -87,6 +91,17 @@ function makeMockClient() {
     },
     sentAnswers,
   };
+}
+
+function captureBusEvents(sessionName: string): {
+  events: SseEvent[];
+  unsubscribe: () => void;
+} {
+  const events: SseEvent[] = [];
+  const unsubscribe = globalEventBus.subscribe(sessionName, (e) =>
+    events.push(e),
+  );
+  return { events, unsubscribe };
 }
 
 const SAMPLE_REQ: RelayAskRemoteRequest = {
@@ -315,6 +330,120 @@ describe("relay-ask: post + button tap round-trip", () => {
     expect(sentAnswers[0]!.ask_id).toBe("a1_test");
     expect(sentAnswers[0]!.error).toContain("Telegram 400");
     expect(_pendingCountForTests()).toBe(0);
+  });
+
+  test("ask_remote_request emits ask_remote on the bus when client.sessionName is set", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+
+    const ask = events.find((e) => e.type === "ask_remote");
+    expect(ask).toBeDefined();
+    expect(ask!.askId).toBe("a1_test");
+    expect(ask!.askQuestion).toBe("Apply the patch?");
+    expect(ask!.askOptions).toHaveLength(2);
+    expect(ask!.askAllowCustom).toBe(true);
+
+    unsubscribe();
+  });
+
+  test("answer via TG button emits ask_remote_cleared on the bus (Web UI dismisses card)", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+
+    await handleAskRemoteCallback(
+      api,
+      "askremote:a1_test:0",
+      "cbq-1",
+      -1003968796171,
+    );
+
+    const cleared = events.find((e) => e.type === "ask_remote_cleared");
+    expect(cleared).toBeDefined();
+    expect(cleared!.askId).toBe("a1_test");
+    expect(cleared!.askResolution).toBe("answered");
+    expect(cleared!.askAnswer).toBe("Yes, apply now");
+
+    unsubscribe();
+  });
+
+  test("submitAnswerFromWeb routes through MCP, edits TG msg, emits cleared", async () => {
+    const { api, edits } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, sentAnswers } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+
+    const ok = submitAnswerFromWeb("a1_test", "Yes, apply now");
+    expect(ok).toBe(true);
+    expect(sentAnswers).toEqual([
+      { ask_id: "a1_test", answer: "Yes, apply now" },
+    ]);
+    expect(edits.some((e) => e.text.includes("✅ Yes, apply now"))).toBe(true);
+
+    const cleared = events.find((e) => e.type === "ask_remote_cleared");
+    expect(cleared?.askResolution).toBe("answered");
+    expect(_pendingCountForTests()).toBe(0);
+
+    unsubscribe();
+  });
+
+  test("submitAnswerFromWeb returns false for unknown ask_id (already resolved)", () => {
+    initRelayAsk(makeMockApi().api);
+    const ok = submitAnswerFromWeb("nonexistent", "anything");
+    expect(ok).toBe(false);
+  });
+
+  test("cancelAnswerFromWeb sends error to MCP + emits cancelled cleared", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, sentAnswers } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+
+    const ok = cancelAnswerFromWeb("a1_test");
+    expect(ok).toBe(true);
+    expect(sentAnswers).toEqual([
+      { ask_id: "a1_test", error: "user cancelled (web)" },
+    ]);
+    const cleared = events.find((e) => e.type === "ask_remote_cleared");
+    expect(cleared?.askResolution).toBe("cancelled");
+
+    unsubscribe();
+  });
+
+  test("client without sessionName: TG works fine, bus stays silent", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient(undefined);
+    attachAskRemoteToRelay(client);
+    // Subscribe under any plausible key — should never fire.
+    const { events, unsubscribe } = captureBusEvents("any-key");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+
+    expect(events).toHaveLength(0);
+    expect(_pendingCountForTests()).toBe(1);
+
+    unsubscribe();
   });
 
   test("long option labels are truncated for the button display", async () => {

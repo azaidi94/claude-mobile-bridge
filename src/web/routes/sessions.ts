@@ -257,5 +257,34 @@ export function createSessionsRouter(): Hono {
     return c.json({ ok: true });
   });
 
+  // Web-side answer for an in-flight ask_remote tool call. Routes through
+  // the same MCP path TG button taps use; a 404 means the question already
+  // resolved (TG, timeout, disconnect) before this request arrived.
+  app.post("/ask-remote-answer", async (c) => {
+    const body = await c.req.json<{
+      ask_id?: string;
+      answer?: string;
+      cancel?: boolean;
+    }>();
+    const askId = String(body.ask_id ?? "");
+    if (!askId) return c.json({ error: "ask_id required" }, 400);
+    const { submitAnswerFromWeb, cancelAnswerFromWeb } =
+      await import("../../handlers/relay-ask");
+    if (body.cancel) {
+      const ok = cancelAnswerFromWeb(askId);
+      return ok
+        ? c.json({ ok: true })
+        : c.json({ error: "ask not pending" }, 404);
+    }
+    const answer = String(body.answer ?? "");
+    if (!answer.trim()) {
+      return c.json({ error: "answer required (or pass cancel:true)" }, 400);
+    }
+    const ok = submitAnswerFromWeb(askId, answer);
+    return ok
+      ? c.json({ ok: true })
+      : c.json({ error: "ask not pending" }, 404);
+  });
+
   return app;
 }

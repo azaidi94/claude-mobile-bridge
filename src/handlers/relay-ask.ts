@@ -17,6 +17,7 @@ import type { RelayClient, RelayAskRemoteRequest } from "../relay/client";
 import { escapeHtml } from "../formatting";
 import { BUTTON_LABEL_MAX_LENGTH } from "../config";
 import { debug, warn } from "../logger";
+import { globalEventBus } from "../web/sse";
 
 interface PendingAsk {
   client: RelayClient;
@@ -26,6 +27,12 @@ interface PendingAsk {
   options: { label: string; description?: string }[];
   allowCustom: boolean;
   question: string;
+  /**
+   * sessionName captured at request time so we can emit on the same bus key
+   * (and therefore the same Web UI session pane) regardless of how the
+   * answer arrives. May be undefined for sessions the registry hasn't seen.
+   */
+  sessionName?: string;
 }
 
 // In-memory map: ask_id → routing context. Bot restart drops these — the MCP
@@ -92,6 +99,7 @@ async function postQuestionToTelegram(
     ...(threadId !== undefined ? { message_thread_id: threadId } : {}),
   });
 
+  const sessionName = client.sessionName;
   pendingAsks.set(req.ask_id, {
     client,
     chatId,
@@ -100,12 +108,28 @@ async function postQuestionToTelegram(
     options: req.options,
     allowCustom: req.allow_custom,
     question: req.question,
+    sessionName,
   });
+
+  // Mirror to the Web UI: any open session pane subscribed to this
+  // sessionName's bus key sees the question as an interactive card.
+  if (sessionName) {
+    globalEventBus.emit(sessionName, {
+      type: "ask_remote",
+      content: req.question,
+      askId: req.ask_id,
+      askQuestion: req.question,
+      askOptions: req.options,
+      askAllowCustom: req.allow_custom,
+    });
+  }
+
   debug("relay-ask: posted question", {
     ask_id: req.ask_id,
     chat_id: chatId,
     thread_id: threadId,
     options: req.options.length,
+    session: sessionName ?? "(unknown)",
   });
 }
 
@@ -185,6 +209,7 @@ export async function handleAskRemoteCallback(
     });
     await api.answerCallbackQuery(callbackQueryId, { text: "Cancelled" });
     await editToFinal(api, entry, "✖ Cancelled");
+    emitCleared(entry, "cancelled", undefined, askId);
     return true;
   }
 
@@ -210,6 +235,7 @@ export async function handleAskRemoteCallback(
     text: `Selected: ${chosen.slice(0, 40)}`,
   });
   await editToFinal(api, entry, `✅ ${chosen}`);
+  emitCleared(entry, "answered", chosen, askId);
   // fromChatId is informational; we don't gate on it (button can only come
   // from the same chat the message was posted in).
   void fromChatId;
@@ -238,7 +264,62 @@ export function tryConsumeCustomTextAnswer(
   if (botApi) {
     void editToFinal(botApi, entry, `✅ ${truncateForLabel(text)}`);
   }
+  emitCleared(entry, "answered", text, askId);
   return true;
+}
+
+/**
+ * Submit an answer that originated from the Web UI's POST endpoint. Mirrors
+ * a button tap: routes to the MCP, edits the TG message to a final state,
+ * and emits an ask_remote_cleared event so other Web UI tabs (and the same
+ * tab) drop the card. Returns false if the askId is unknown / already resolved.
+ */
+export function submitAnswerFromWeb(askId: string, answer: string): boolean {
+  const entry = pendingAsks.get(askId);
+  if (!entry) return false;
+  pendingAsks.delete(askId);
+  customTextPending.delete(entry.chatId);
+  entry.client.sendAskRemoteAnswer({ ask_id: askId, answer });
+  if (botApi) {
+    void editToFinal(botApi, entry, `✅ ${truncateForLabel(answer)}`);
+  }
+  emitCleared(entry, "answered", answer, askId);
+  return true;
+}
+
+/**
+ * Web-initiated cancel — same path as the TG cancel button.
+ */
+export function cancelAnswerFromWeb(askId: string): boolean {
+  const entry = pendingAsks.get(askId);
+  if (!entry) return false;
+  pendingAsks.delete(askId);
+  customTextPending.delete(entry.chatId);
+  entry.client.sendAskRemoteAnswer({
+    ask_id: askId,
+    error: "user cancelled (web)",
+  });
+  if (botApi) {
+    void editToFinal(botApi, entry, "✖ Cancelled");
+  }
+  emitCleared(entry, "cancelled", undefined, askId);
+  return true;
+}
+
+function emitCleared(
+  entry: PendingAsk,
+  resolution: "answered" | "cancelled" | "timeout" | "expired",
+  answer?: string,
+  askId?: string,
+): void {
+  if (!entry.sessionName) return;
+  globalEventBus.emit(entry.sessionName, {
+    type: "ask_remote_cleared",
+    content: "",
+    askId: askId ?? "",
+    askResolution: resolution,
+    askAnswer: answer,
+  });
 }
 
 async function editToFinal(
