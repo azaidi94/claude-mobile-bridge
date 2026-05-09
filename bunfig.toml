@@ -1,0 +1,6 @@
+[test]
+# web/ contains vitest-based React tests run via `cd web && bun run test`.
+# They import from "vitest" and depend on a jsdom env that bun:test doesn't
+# provide, so they error out with `document is not defined` if discovered
+# by `bun test`.
+pathIgnorePatterns = ["web/**", "node_modules/**"]
