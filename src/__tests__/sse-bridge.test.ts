@@ -23,18 +23,18 @@ describe("bridgeTailToSse", () => {
     expect(emitted).toEqual([]);
   });
 
-  test("user event → text SseEvent with › prefix", () => {
+  test("user event is NOT emitted (handleTailEvent owns user_message)", () => {
+    // bridgeTailToSse used to emit text+'› ' for every user event,
+    // which produced a duplicate 'You' pane in the Web UI on top of
+    // the source-labelled remote pane that handleTailEvent emits.
+    // It now no-ops for user events.
     const e: TailEvent = {
       type: "user",
       content: "hello",
       originChat: "-1003968796171",
     };
     bridgeTailToSse(bus, SID, e);
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]!.event).toMatchObject({
-      type: "text",
-      content: "› hello",
-    });
+    expect(emitted).toHaveLength(0);
   });
 
   test("text event passes through", () => {

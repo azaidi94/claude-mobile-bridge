@@ -41,6 +41,14 @@ execute-commands.json
 
 # Claude Code user-specific settings
 .claude/settings.local.json
+.claude/settings.json
+.claude/skills/
+
+# Kiro local config
+.kiro/
+
+# Local MCP config
+.mcp.json
 
 # Finder (MacOS) folder config
 .DS_Store

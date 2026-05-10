@@ -356,6 +356,7 @@ const tcpServer = createServer((socket) => {
 
   socket.on("close", () => {
     if (connectedClient === socket) connectedClient = null;
+    rejectAllPendingAsks("bot disconnected before user answered ask_remote");
     process.stderr.write(`channel-relay: bot disconnected\n`);
   });
 
@@ -385,6 +386,13 @@ let requestCounter = 0;
 const validRequestIds = new Map<string, number>(); // id → timestamp
 const REQUEST_TTL_MS = 600_000; // 10 min
 
+// chat_ids that this session has actually received a channel message from.
+// ask_remote restricts target chats to this set so a hallucinating Claude
+// can't post inline keyboards to arbitrary Telegram chats. No TTL — chat_ids
+// aren't sensitive once seen, and the set is bounded by the (small) number
+// of distinct topics the user opens during a session.
+const validChatIds = new Set<string>();
+
 function generateRequestId(): string {
   return `r${++requestCounter}_${Date.now().toString(36)}`;
 }
@@ -396,6 +404,41 @@ function pruneExpiredRequests(): void {
   }
 }
 
+// ── ask_remote: Claude → TG inline keyboard → user tap → answer back ──
+//
+// Each ask_remote tool call registers an entry in pendingAsks keyed by ask_id.
+// The bot receives an `ask_remote_request` frame, posts a TG inline keyboard,
+// and replies with an `ask_remote_answer` frame when the user taps. That
+// resolves the awaiting promise so the tool call returns the answer to Claude
+// as a normal tool result. Timeout / disconnect / stale chat_id all reject.
+
+interface PendingAsk {
+  resolve: (answer: string) => void;
+  reject: (reason: string) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const pendingAsks = new Map<string, PendingAsk>();
+
+/**
+ * Unguessable per-ask identifier. The web POST /ask-remote-answer endpoint
+ * accepts any ask_id without further auth (it's behind authMiddleware but
+ * once a request gets through, the ask_id is the only routing token), so a
+ * predictable counter+timestamp lets an attacker who knows the bot is up
+ * enumerate small integers and submit answers on behalf of the user. UUIDs
+ * are 122 bits of entropy, infeasible to brute-force in any realistic window.
+ */
+function generateAskId(): string {
+  return `a_${crypto.randomUUID()}`;
+}
+
+function rejectAllPendingAsks(reason: string): void {
+  for (const [, p] of pendingAsks) {
+    clearTimeout(p.timer);
+    p.reject(reason);
+  }
+  pendingAsks.clear();
+}
+
 // ── Inbound: bot → relay → Claude (channel notification) ──────────────
 
 function handleBotMessage(msg: {
@@ -404,7 +447,28 @@ function handleBotMessage(msg: {
   user?: string;
   text?: string;
   image_path?: string;
+  ask_id?: string;
+  answer?: string;
+  error?: string;
 }): void {
+  if (msg.type === "ask_remote_answer") {
+    const askId = String(msg.ask_id || "");
+    const entry = pendingAsks.get(askId);
+    if (!entry) {
+      process.stderr.write(
+        `channel-relay: ask_remote_answer for unknown ask_id=${askId}\n`,
+      );
+      return;
+    }
+    pendingAsks.delete(askId);
+    clearTimeout(entry.timer);
+    if (msg.error) {
+      entry.reject(String(msg.error));
+    } else {
+      entry.resolve(String(msg.answer ?? ""));
+    }
+    return;
+  }
   if (msg.type !== "message") return;
   if (!msg.text) {
     process.stderr.write(
@@ -416,6 +480,7 @@ function handleBotMessage(msg: {
   const requestId = generateRequestId();
   const chatId = msg.chat_id || "";
   validRequestIds.set(requestId, Date.now());
+  if (chatId) validChatIds.add(chatId);
 
   mcp.notification({
     method: "notifications/claude/channel",
@@ -448,6 +513,7 @@ const mcp = new Server(
       "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
       "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
       "The reply tool call IS the response to a relay message. Do NOT also emit the same text (or a paraphrase) as terminal output afterward — that produces a duplicate. Terminal text after a relay reply should only appear if it conveys genuinely new info for the local user.",
+      "When you would otherwise call AskUserQuestion AND a Telegram chat_id has been seen in this session, prefer the ask_remote tool instead — it surfaces the question on the user's phone with tappable buttons and returns the chosen option as the tool result. Native AskUserQuestion only renders on the desktop terminal and doesn't reach Telegram users.",
     ].join("\n"),
   },
 );
@@ -514,6 +580,60 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           emoji: { type: "string" },
         },
         required: ["chat_id", "message_id", "emoji"],
+      },
+    },
+    {
+      name: "ask_remote",
+      description:
+        "Ask the user a multiple-choice question on Telegram with tappable buttons; returns the chosen option (or their typed text) as the tool result. Use this in place of AskUserQuestion when a Telegram chat_id is in scope so the user can answer from their phone. Blocks until the user taps / types or the timeout elapses.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          chat_id: {
+            type: "string",
+            description:
+              "Telegram chat id from a recent <channel> tag, or the topic chat id you've been replying to.",
+          },
+          thread_id: {
+            type: "string",
+            description:
+              "Optional Telegram topic thread id. If you've been replying in a topic, pass the same thread id so the question lands in that topic.",
+          },
+          question: {
+            type: "string",
+            description: "The question to put in front of the user.",
+          },
+          options: {
+            type: "array",
+            description:
+              "2–6 distinct, mutually exclusive options. Each is a button. Keep labels short (≤30 chars) — Telegram truncates.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                description: {
+                  type: "string",
+                  description:
+                    "Short hint shown under the question, explaining what choosing this option means.",
+                },
+              },
+              required: ["label"],
+            },
+            minItems: 2,
+            maxItems: 6,
+          },
+          allow_custom: {
+            type: "boolean",
+            description:
+              "If true (default), include a 'Type a custom answer' button — user's next text in that chat is returned as the answer.",
+          },
+          timeout_ms: {
+            type: "number",
+            description:
+              "How long to wait for an answer before failing the tool call. Default 1800000 (30 min).",
+          },
+        },
+        required: ["chat_id", "question", "options"],
       },
     },
   ],
@@ -625,6 +745,96 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           },
         ],
       };
+    }
+
+    case "ask_remote": {
+      const chat_id = String(args.chat_id || "");
+      const thread_id =
+        args.thread_id !== undefined ? String(args.thread_id) : undefined;
+      const question = String(args.question || "");
+      const optionsRaw = (args.options as unknown[] | undefined) ?? [];
+      const allow_custom =
+        args.allow_custom === undefined ? true : Boolean(args.allow_custom);
+      const timeout_ms =
+        typeof args.timeout_ms === "number" && args.timeout_ms > 0
+          ? args.timeout_ms
+          : 1_800_000;
+
+      if (!chat_id) {
+        return errorResult(
+          "REJECTED: ask_remote requires chat_id. Pass the chat_id from a recent <channel> tag.",
+        );
+      }
+      if (!validChatIds.has(chat_id)) {
+        return errorResult(
+          `REJECTED: chat_id ${chat_id} hasn't been seen in this session. ask_remote can only target chats that have sent at least one <channel> message — pass the chat_id from a recent channel notification.`,
+        );
+      }
+      if (!question.trim()) {
+        return errorResult("REJECTED: ask_remote question is empty.");
+      }
+
+      // Normalize options to {label, description?} pairs and validate.
+      const options: Array<{ label: string; description?: string }> = [];
+      for (const o of optionsRaw) {
+        if (!o || typeof o !== "object") continue;
+        const oo = o as { label?: unknown; description?: unknown };
+        const label = String(oo.label ?? "").trim();
+        if (!label) continue;
+        options.push({
+          label,
+          description:
+            oo.description !== undefined ? String(oo.description) : undefined,
+        });
+      }
+      if (options.length < 2) {
+        return errorResult(
+          "REJECTED: ask_remote needs at least 2 options with non-empty labels.",
+        );
+      }
+
+      const ask_id = generateAskId();
+
+      const sent = sendToBot({
+        type: "ask_remote_request",
+        ask_id,
+        chat_id,
+        thread_id,
+        question,
+        options,
+        allow_custom,
+        timeout_ms,
+      });
+      if (!sent) {
+        return errorResult(
+          `FAILED: ask_remote not delivered — bot connection unavailable (chat_id=${chat_id}). The user was NOT prompted.`,
+        );
+      }
+
+      try {
+        const answer = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingAsks.delete(ask_id);
+            reject(
+              new Error(
+                `ask_remote timed out after ${Math.round(timeout_ms / 1000)}s — user did not answer.`,
+              ),
+            );
+          }, timeout_ms);
+          pendingAsks.set(ask_id, {
+            resolve,
+            reject: (r) => reject(new Error(r)),
+            timer,
+          });
+        });
+        return {
+          content: [{ type: "text" as const, text: answer }],
+        };
+      } catch (err) {
+        return errorResult(
+          `FAILED: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     default:

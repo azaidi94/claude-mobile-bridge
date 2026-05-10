@@ -16,7 +16,7 @@ export interface ApiSession {
   name: string;
   dir: string;
   lastActivity: number;
-  source: "telegram" | "desktop";
+  source: "telegram" | "desktop" | "cursor";
   live: boolean;
   active: boolean;
 }
@@ -38,13 +38,24 @@ export interface SseEvent {
     | "send_file"
     | "tool_result"
     | "permission_mode"
-    | "hook_summary";
+    | "hook_summary"
+    | "user_message"
+    | "ask_remote"
+    | "ask_remote_cleared";
   content: string;
+  source?: "telegram" | "web" | "terminal" | "cursor";
+  clientId?: string;
   segmentId?: number;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolUseId?: string;
   isError?: boolean;
+  askId?: string;
+  askQuestion?: string;
+  askOptions?: Array<{ label: string; description?: string }>;
+  askAllowCustom?: boolean;
+  askResolution?: "answered" | "cancelled" | "timeout" | "expired";
+  askAnswer?: string;
   permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   hook?: {
     hookCount: number;
@@ -89,11 +100,15 @@ export const api = {
     return res.json();
   },
 
-  async sendMessage(sessionId: string, text: string): Promise<void> {
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    clientId?: string,
+  ): Promise<void> {
     await fetch(`${BASE}/sessions/${sessionId}/message`, {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, clientId }),
     });
   },
 
@@ -101,9 +116,13 @@ export const api = {
     sessionId: string,
     onEvent: (evt: SseEvent) => void,
     onError?: () => void,
+    clientId?: string,
   ): () => void {
     const initData = encodeURIComponent(getInitData());
-    const url = `${BASE}/sessions/${sessionId}/stream?initData=${initData}`;
+    const cidParam = clientId
+      ? `&clientId=${encodeURIComponent(clientId)}`
+      : "";
+    const url = `${BASE}/sessions/${sessionId}/stream?initData=${initData}${cidParam}`;
     const es = new EventSource(url);
     es.onmessage = (e) => {
       try {
@@ -127,6 +146,29 @@ export const api = {
       body: JSON.stringify({ dir }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+
+  async submitAskRemoteAnswer(
+    askId: string,
+    answer: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${BASE}/sessions/ask-remote-answer`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ ask_id: askId, answer }),
+    });
+    return res.json();
+  },
+
+  async cancelAskRemote(
+    askId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${BASE}/sessions/ask-remote-answer`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ ask_id: askId, cancel: true }),
+    });
     return res.json();
   },
 

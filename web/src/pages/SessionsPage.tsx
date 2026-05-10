@@ -50,7 +50,9 @@ export function SessionsPage({ onSwitchToChat }: SessionsPageProps) {
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {loading && <p className="text-terminal-muted text-xs p-2">Loading...</p>}
-        {sessions.map((session) => (
+        {[...sessions]
+          .sort((a, b) => b.lastActivity - a.lastActivity)
+          .map((session) => (
           <button
             type="button"
             key={session.id || session.name}
@@ -78,7 +80,7 @@ export function SessionsPage({ onSwitchToChat }: SessionsPageProps) {
               {session.active ? "active" : session.live ? "switch" : "resume"}
             </span>
           </button>
-        ))}
+          ))}
       </div>
     </div>
   );

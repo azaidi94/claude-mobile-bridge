@@ -12,6 +12,7 @@ import { RelayClient } from "./client";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
+import { attachAskRemoteToRelay } from "../handlers/relay-ask";
 
 export interface PortFileData {
   port: number;
@@ -232,6 +233,18 @@ export async function getRelayClient(
   const client = new RelayClient();
   try {
     await client.connect(target.port);
+    // Stamp session metadata on the client so listeners (relay-ask) can
+    // route bus events by sessionName without a roundtrip lookup.
+    client.sessionDir = target.cwd;
+    try {
+      const { getSessions } = await import("../sessions");
+      const match = getSessions().find(
+        (s) => s.dir === target.cwd && (!target.ppid || s.pid === target.ppid),
+      );
+      client.sessionName = match?.name;
+    } catch {
+      // Sessions module may not be initialized in tests — best-effort lookup.
+    }
     if (targetKey) {
       clientCache.set(targetKey, {
         client,
@@ -239,6 +252,9 @@ export async function getRelayClient(
         dir: target.cwd,
       });
     }
+    // Subscribe the global ask_remote handler if the bot has registered itself
+    // (initRelayAsk has been called). Safe to call before init: it no-ops.
+    attachAskRemoteToRelay(client);
     info("relay: connected", {
       cwd: target.cwd,
       relayPort: target.port,

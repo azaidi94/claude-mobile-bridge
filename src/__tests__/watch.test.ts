@@ -320,10 +320,15 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     return { api, sent };
   }
 
-  test("user event with originChat === ownChat is skipped (TCP dedup)", () => {
+  test("user event with originChat === ownChat is skipped (TCP dedup) — and does NOT emit to bus (bug_010)", async () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
+    const { globalEventBus } = await import("../web/sse");
+    const received: import("../web/sse").SseEvent[] = [];
+    const unsub = globalEventBus.subscribe("s-6302", (evt) =>
+      received.push(evt),
+    );
     handleTailEvent(
       api,
       state,
@@ -331,9 +336,13 @@ describe("watch: handleTailEvent user-event origin filter", () => {
       6302,
     );
     expect(sent).toHaveLength(0);
+    // text.ts is the single emitter for own-chat TG input — handleTailEvent
+    // must NOT also emit, otherwise the Web UI shows two '📱 Telegram' panes.
+    expect(received).toHaveLength(0);
+    unsub();
   });
 
-  test("user event with originChat === 'web' renders with 🌐 Web label", () => {
+  test("user event with originChat === 'web' is skipped (already on bus)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
@@ -343,26 +352,32 @@ describe("watch: handleTailEvent user-event origin filter", () => {
       { type: "user", content: "hmmm", originChat: "web" },
       6302,
     );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.text).toContain("🌐");
-    expect(sent[0]!.text).toContain("Web");
-    expect(sent[0]!.text).toContain("hmmm");
+    expect(sent).toHaveLength(0);
   });
 
-  test("user event with originChat undefined renders Desktop (terminal-typed)", () => {
+  test("user event with originChat undefined emits terminal user_message to bus", async () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
+    const { globalEventBus } = await import("../web/sse");
+    const received: import("../web/sse").SseEvent[] = [];
+    const unsub = globalEventBus.subscribe("s-6302", (evt) =>
+      received.push(evt),
+    );
     handleTailEvent(
       api,
       state,
       { type: "user", content: "native input" },
       6302,
     );
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.text).toContain("🖥");
-    expect(sent[0]!.text).toContain("Desktop");
-    expect(sent[0]!.text).toContain("native input");
+    unsub();
+    expect(sent).toHaveLength(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      type: "user_message",
+      source: "terminal",
+      content: "native input",
+    });
   });
 
   test("user event with <task-notification> XML renders as a card, not raw XML", () => {
@@ -1349,5 +1364,129 @@ describe("watch: handleTailEvent ask_user_question render", () => {
       6302,
     );
     expect(deleted).toContainEqual({ chatId: -100, messageId: auqMsgId });
+  });
+});
+
+describe("cross-post subscription", () => {
+  test("forwards web user_message to Telegram but not telegram source", async () => {
+    const { SessionEventBus } = await import("../web/sse");
+    const { setupCrossPostSubscription } = await import("../handlers/watch");
+    const bus = new SessionEventBus();
+    const calls: Array<[number, string, unknown]> = [];
+    const mockSendMessage = mock(
+      (chatId: number, text: string, opts: unknown) => {
+        calls.push([chatId, text, opts]);
+        return Promise.resolve({ message_id: 1 });
+      },
+    );
+    const mockApi = {
+      sendMessage: mockSendMessage,
+    } as unknown as import("grammy").Api;
+
+    const fakeWatchState = {
+      chatId: 100,
+      threadId: 42,
+      sessionName: "my-session",
+    } as unknown as import("../handlers/watch").WatchState;
+
+    setupCrossPostSubscription(mockApi, fakeWatchState, bus);
+
+    bus.emit("my-session", {
+      type: "user_message",
+      source: "web",
+      content: "hello from web",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(100);
+    expect(calls[0]![1]).toContain("hello from web");
+    expect(calls[0]![2]).toMatchObject({ message_thread_id: 42 });
+
+    calls.length = 0;
+    bus.emit("my-session", {
+      type: "user_message",
+      source: "telegram",
+      content: "hello from tg",
+    });
+    expect(calls).toHaveLength(0);
+
+    calls.length = 0;
+    bus.emit("my-session", { type: "text", content: "response" });
+    expect(calls).toHaveLength(0);
+
+    fakeWatchState.unsubCrossPost?.();
+  });
+
+  test("unsubCrossPost stops forwarding after cleanup", async () => {
+    const { SessionEventBus } = await import("../web/sse");
+    const { setupCrossPostSubscription } = await import("../handlers/watch");
+    const bus = new SessionEventBus();
+    const calls: Array<[number, string, unknown]> = [];
+    const mockApi = {
+      sendMessage: (chatId: number, text: string, opts: unknown) => {
+        calls.push([chatId, text, opts]);
+        return Promise.resolve({ message_id: 1 });
+      },
+    } as unknown as import("grammy").Api;
+
+    const fakeWatchState = {
+      chatId: 100,
+      threadId: 42,
+      sessionName: "my-session",
+    } as unknown as import("../handlers/watch").WatchState;
+
+    setupCrossPostSubscription(mockApi, fakeWatchState, bus);
+    expect(typeof fakeWatchState.unsubCrossPost).toBe("function");
+
+    bus.emit("my-session", {
+      type: "user_message",
+      source: "web",
+      content: "first",
+    });
+    expect(calls).toHaveLength(1);
+
+    // Simulate cleanupWatch path: unsubscribe, then verify no further forwards.
+    fakeWatchState.unsubCrossPost?.();
+
+    bus.emit("my-session", {
+      type: "user_message",
+      source: "web",
+      content: "after-unsub",
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("truncates long content before sending to Telegram", async () => {
+    const { SessionEventBus } = await import("../web/sse");
+    const { setupCrossPostSubscription } = await import("../handlers/watch");
+    const bus = new SessionEventBus();
+    const calls: Array<[number, string, unknown]> = [];
+    const mockApi = {
+      sendMessage: (chatId: number, text: string, opts: unknown) => {
+        calls.push([chatId, text, opts]);
+        return Promise.resolve({ message_id: 1 });
+      },
+    } as unknown as import("grammy").Api;
+
+    const fakeWatchState = {
+      chatId: 100,
+      threadId: 42,
+      sessionName: "my-session",
+    } as unknown as import("../handlers/watch").WatchState;
+
+    setupCrossPostSubscription(mockApi, fakeWatchState, bus);
+
+    const long = "x".repeat(5000);
+    bus.emit("my-session", {
+      type: "user_message",
+      source: "web",
+      content: long,
+    });
+
+    expect(calls).toHaveLength(1);
+    const sentText = calls[0]![1] as string;
+    expect(sentText.length).toBeLessThan(400);
+    expect(sentText.endsWith("…")).toBe(true);
+
+    fakeWatchState.unsubCrossPost?.();
   });
 });

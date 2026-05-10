@@ -17,6 +17,7 @@ import {
   setActiveSession,
   getSession,
   addTelegramSession,
+  addCursorSession,
   updateSessionId,
   updateSessionActivity,
 } from "../sessions";
@@ -216,6 +217,17 @@ describe("session-manager: session discovery", () => {
     const session = getSession(name);
     expect(session).not.toBeNull();
     expect(session!.source).toBe("telegram");
+  });
+
+  test("refresh preserves cursor sessions", async () => {
+    const name = `cursor-preserved-${uniqueId()}`;
+    addCursorSession({ name, dir: `/tmp/cursor-project-${uniqueId()}` });
+
+    await forceRefresh();
+
+    const session = getSession(name);
+    expect(session).not.toBeNull();
+    expect(session!.source).toBe("cursor");
   });
 
   test("discovered sessions have desktop source", () => {

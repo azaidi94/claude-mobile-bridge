@@ -5,6 +5,7 @@
  */
 
 import { run } from "@grammyjs/runner";
+import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
 import { getWorkingDir } from "./settings";
 import { setRestartFn } from "./lifecycle";
@@ -46,6 +47,7 @@ import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
 import { WEB_ENABLED } from "./config";
+import { initRelayAsk } from "./handlers/relay-ask";
 
 let topicManager: TopicManager | undefined;
 
@@ -112,6 +114,11 @@ setSessionCleanupCallback((sessionName) => {
 
 const botInfo = await bot.api.getMe();
 info(`bot: @${botInfo.username} ready`);
+
+// Wire the ask_remote round-trip glue. After this call, every relay client
+// the bot connects to (now or later) auto-subscribes to ask_remote_request
+// frames and posts the question to TG with an inline keyboard.
+initRelayAsk(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
 }
@@ -161,6 +168,10 @@ if (primaryChatId !== undefined && storedTopicChatId) {
  * relay message; exits as soon as the port file has a sessionId. The text is
  * visible to Claude — the relay has no out-of-band wake channel — but the
  * MCP `instructions` direct it to use the `reply` tool, not echo terminal.
+ *
+ * Skipped entirely when sessionId is already known (caller saw the JSONL),
+ * since the only purpose of the ping is to learn it. Pinging anyway flooded
+ * resumed sessions with `Session Name:` text the user could see.
  */
 function pingRelayForSession(
   sessionName: string,
@@ -170,6 +181,7 @@ function pingRelayForSession(
   sessionId?: string,
   claudePid?: number,
 ): void {
+  if (sessionId) return;
   (async () => {
     const RETRY_DELAYS_MS = [3_000, 5_000, 7_000, 10_000, 15_000];
     for (const delay of RETRY_DELAYS_MS) {
@@ -230,6 +242,22 @@ const notifyHandler = createNotificationHandler(
   },
 );
 await startWatcher(notifyHandler);
+
+// Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
+// 0/no/off) to skip CDP target polling — useful when Cursor isn't
+// running or the user only wants the Claude Code bridge.
+const cursorBridgeEnabled = !["false", "0", "no", "off"].includes(
+  (process.env.CURSOR_BRIDGE_ENABLED ?? "").toLowerCase(),
+);
+if (cursorBridgeEnabled) {
+  startCursorBridge(
+    primaryChatId !== undefined
+      ? { api: bot.api, chatId: primaryChatId }
+      : undefined,
+  );
+} else {
+  info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
+}
 
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
@@ -346,6 +374,7 @@ const stopRunner = () => {
     stopWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
+    stopCursorBridge();
     runner.stop();
   }
 };

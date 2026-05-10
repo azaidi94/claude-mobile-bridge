@@ -3,6 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { diffLines } from "diff";
 import type { SseEvent } from "../api";
+import { api } from "../api";
 
 interface TerminalProps {
   events: SseEvent[];
@@ -569,7 +570,8 @@ function renderEventBody(
 }
 
 interface Turn {
-  role: "user" | "desktop" | "assistant";
+  role: "user" | "desktop" | "assistant" | "remote";
+  source?: "telegram" | "web" | "terminal" | "cursor";
   items: { evt: SseEvent; idx: number }[];
 }
 
@@ -622,6 +624,155 @@ function PermissionModeBanner({ events }: { events: SseEvent[] }) {
   );
 }
 
+interface AskOpenRecord {
+  askId: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  allowCustom: boolean;
+}
+
+/**
+ * Walk the event log and return only the asks that are still open — every
+ * ask_remote adds, every matching ask_remote_cleared (or duplicate ask_id)
+ * removes. Renders bottom-up so newest open question is at the bottom.
+ */
+function collectOpenAsks(events: SseEvent[]): AskOpenRecord[] {
+  const open = new Map<string, AskOpenRecord>();
+  for (const e of events) {
+    if (e.type === "ask_remote" && e.askId) {
+      open.set(e.askId, {
+        askId: e.askId,
+        question: e.askQuestion ?? e.content,
+        options: e.askOptions ?? [],
+        allowCustom: e.askAllowCustom !== false,
+      });
+    } else if (e.type === "ask_remote_cleared" && e.askId) {
+      open.delete(e.askId);
+    }
+  }
+  return [...open.values()];
+}
+
+function AskRemoteCard({ ask }: { ask: AskOpenRecord }) {
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [customText, setCustomText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (answer: string, marker: string) => {
+    if (submitting) return;
+    setSubmitting(marker);
+    setError(null);
+    try {
+      const res = await api.submitAskRemoteAnswer(ask.askId, answer);
+      if (!res.ok) {
+        setError(res.error ?? "failed to submit");
+        setSubmitting(null);
+      }
+      // On success the bus emits ask_remote_cleared which removes this card.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSubmitting(null);
+    }
+  };
+
+  const cancel = async () => {
+    if (submitting) return;
+    setSubmitting("cancel");
+    setError(null);
+    try {
+      const res = await api.cancelAskRemote(ask.askId);
+      if (!res.ok) {
+        setError(res.error ?? "failed to cancel");
+        setSubmitting(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-md border border-amber-400/40 bg-amber-500/10 overflow-hidden">
+      <div className="px-3 py-1.5 bg-amber-500/20 text-amber-200 text-[11px] uppercase tracking-wider font-semibold border-b border-amber-400/30">
+        ❓ Claude is asking
+      </div>
+      <div className="px-3 py-2 text-sm text-terminal-text">
+        <div className="font-medium mb-2">{ask.question}</div>
+        <div className="space-y-2">
+          {ask.options.map((o, i) => {
+            const marker = `opt:${i}`;
+            const busy = submitting === marker;
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={submitting !== null}
+                onClick={() => submit(o.label, marker)}
+                className={`w-full text-left rounded border border-terminal-muted/30 px-2 py-1.5 hover:border-amber-400/60 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
+              >
+                <span className="font-medium text-terminal-text">
+                  {busy ? "submitting…" : `${i + 1}. ${o.label}`}
+                </span>
+                {o.description && (
+                  <div className="text-[11px] text-terminal-muted mt-0.5">
+                    {o.description}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {ask.allowCustom && (
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={customText}
+              onChange={(e) => setCustomText(e.target.value)}
+              placeholder="Or type a custom answer…"
+              disabled={submitting !== null}
+              className="flex-1 rounded bg-terminal-bg border border-terminal-muted/30 px-2 py-1 text-sm focus:outline-none focus:border-amber-400/60 disabled:opacity-50"
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && !submitting) {
+                  e.preventDefault();
+                  cancel();
+                  return;
+                }
+                if (
+                  e.key === "Enter" &&
+                  customText.trim() &&
+                  !submitting
+                ) {
+                  e.preventDefault();
+                  submit(customText.trim(), "custom");
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!customText.trim() || submitting !== null}
+              onClick={() => submit(customText.trim(), "custom")}
+              className="rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-3 py-1 text-sm text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Send
+            </button>
+          </div>
+        )}
+        <div className="mt-2 flex items-center justify-between text-[11px]">
+          <button
+            type="button"
+            disabled={submitting !== null}
+            onClick={cancel}
+            className="text-terminal-muted hover:text-amber-300 transition-colors disabled:opacity-50"
+          >
+            ✖ Cancel
+          </button>
+          {error && <span className="text-red-400">{error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HookSummaryCard({ event }: { event: SseEvent }) {
   if (event.type !== "hook_summary" || !event.hook) return null;
   const h = event.hook;
@@ -648,7 +799,13 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
     if (evt.type === "tool_result") return; // correlated to tool, not its own row
     if (evt.type === "permission_mode") return; // banner (Task 10)
     if (evt.type === "hook_summary") return; // inline card (Task 10)
+    if (evt.type === "ask_remote") return; // dedicated card below
+    if (evt.type === "ask_remote_cleared") return; // bookkeeping only
     if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
+    if (evt.type === "user_message") {
+      turns.push({ role: "remote", source: evt.source, items: [{ evt, idx }] });
+      return;
+    }
     if (evt.type === "text") {
       if (evt.content.startsWith(USER_PREFIX)) {
         const stripped: SseEvent = {
@@ -668,8 +825,13 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
       }
     }
     const last = turns[turns.length - 1];
-    if (!last || last.role !== "assistant") {
-      turns.push({ role: "assistant", items: [{ evt, idx }] });
+    // Carry the source onto assistant turns so cursor AI replies can be
+    // labelled "🤖 Cursor AI" instead of "Claude". Don't merge across
+    // sources — a cursor AI reply mid-conversation shouldn't fold into
+    // a preceding Claude turn.
+    const evtSource = (evt as { source?: Turn["source"] }).source;
+    if (!last || last.role !== "assistant" || last.source !== evtSource) {
+      turns.push({ role: "assistant", source: evtSource, items: [{ evt, idx }] });
     } else {
       last.items.push({ evt, idx });
     }
@@ -704,12 +866,20 @@ const PANE_THEMES: Record<Turn["role"], PaneTheme> = {
     headerBorderBottom: "border-amber-400/20",
   },
   assistant: {
-    label: "Claude",
+    label: "🤖 Claude",
     border: "border-sky-400/25",
     headerBg: "bg-sky-500/20",
     headerText: "text-sky-300",
     headerHover: "hover:bg-sky-500/25",
     headerBorderBottom: "border-sky-400/20",
+  },
+  remote: {
+    label: "Remote",
+    border: "border-violet-400/25",
+    headerBg: "bg-violet-500/15",
+    headerText: "text-violet-300",
+    headerHover: "hover:bg-violet-500/20",
+    headerBorderBottom: "border-violet-400/20",
   },
 };
 
@@ -721,6 +891,21 @@ function turnPreview(turn: Turn): string {
     }
   }
   return "";
+}
+
+function sourceLabel(source?: string): string {
+  if (source === "telegram") return "📱 Telegram";
+  if (source === "cursor") return "🖱 Cursor";
+  if (source === "web") return "🌐 Web UI";
+  if (source === "terminal") return "🖥 Terminal";
+  return "🖥 Terminal"; // safe fallback (unknown source treated as terminal)
+}
+
+/** Pick a header label for a turn, accounting for assistant-with-source. */
+function turnLabel(turn: Turn, defaultLabel: string): string {
+  if (turn.role === "remote") return sourceLabel(turn.source);
+  if (turn.role === "assistant" && turn.source === "cursor") return "🤖 Cursor AI";
+  return defaultLabel;
 }
 
 export function Terminal({ events, streaming }: TerminalProps) {
@@ -754,6 +939,9 @@ export function Terminal({ events, streaming }: TerminalProps) {
   }
 
   const turns = groupIntoTurns(events);
+  // Long event logs make collectOpenAsks O(n) on every render; memoize so a
+  // typing-flurry of state updates doesn't re-walk the whole stream.
+  const openAsks = useMemo(() => collectOpenAsks(events), [events]);
 
   return (
     <div className="flex-1 overflow-y-auto p-3 text-sm leading-snug">
@@ -775,7 +963,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
               <span className="inline-block w-3 text-center">
                 {isCollapsed ? "▶" : "▼"}
               </span>
-              <span>{theme.label}</span>
+              <span>{turnLabel(turn, theme.label)}</span>
               {isCollapsed && (
                 <span className="normal-case font-normal text-terminal-muted truncate tracking-normal">
                   {turnPreview(turn)}
@@ -801,6 +989,9 @@ export function Terminal({ events, streaming }: TerminalProps) {
         .map((e, i) => (
           <HookSummaryCard key={`hook-${i}`} event={e} />
         ))}
+      {openAsks.map((ask) => (
+        <AskRemoteCard key={ask.askId} ask={ask} />
+      ))}
       {streaming && (
         <span className="inline-block w-2 h-4 bg-terminal-green animate-pulse" />
       )}

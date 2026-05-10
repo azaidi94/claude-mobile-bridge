@@ -36,7 +36,7 @@ describe("readSessionHistory", () => {
     expect(events).toEqual([]);
   });
 
-  test("native (non-channel-tagged) user text is prefixed with 🖥 for Desktop turn", async () => {
+  test("native (non-channel-tagged) user text is emitted as user_message+terminal", async () => {
     const sid = "sid-user-string";
     writeFixture(sid, [
       { type: "user", message: { role: "user", content: "hello" } },
@@ -44,10 +44,14 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 100);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "text", content: "🖥 hello" });
+    expect(events[0]).toMatchObject({
+      type: "user_message",
+      source: "terminal",
+      content: "hello",
+    });
   });
 
-  test("channel-relay-tagged user text is stripped and prefixed with › for You turn", async () => {
+  test("channel-relay-tagged web message → user_message+web", async () => {
     const sid = "sid-user-channel";
     writeFixture(sid, [
       {
@@ -69,7 +73,40 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 100);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "text", content: "› hmmm" });
+    expect(events[0]).toMatchObject({
+      type: "user_message",
+      source: "web",
+      content: "hmmm",
+    });
+  });
+
+  test("channel-relay-tagged TG message → user_message+telegram", async () => {
+    const sid = "sid-user-tg";
+    writeFixture(sid, [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                '<channel source="channel-relay" chat_id="-100123" request_id="r2" user="azaidiuk" ts="2026-04-23T09:44:29.709Z">' +
+                "from telegram" +
+                "</channel>",
+            },
+          ],
+        },
+      },
+    ]);
+    const { readSessionHistory } = await load();
+    const events = await readSessionHistory(sid, 100);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "user_message",
+      source: "telegram",
+      content: "from telegram",
+    });
   });
 
   test("tool_result content blocks surface as tool_result SseEvents", async () => {
@@ -264,7 +301,11 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 100);
     expect(events).toHaveLength(1);
-    expect(events[0]!.content).toBe("🖥 kept");
+    expect(events[0]).toMatchObject({
+      type: "user_message",
+      source: "terminal",
+      content: "kept",
+    });
   });
 
   test("caps to the last N events when limit is exceeded", async () => {
@@ -277,7 +318,7 @@ describe("readSessionHistory", () => {
     const { readSessionHistory } = await load();
     const events = await readSessionHistory(sid, 10);
     expect(events).toHaveLength(10);
-    expect(events[0]!.content).toBe("🖥 msg40");
-    expect(events[9]!.content).toBe("🖥 msg49");
+    expect(events[0]!.content).toBe("msg40");
+    expect(events[9]!.content).toBe("msg49");
   });
 });

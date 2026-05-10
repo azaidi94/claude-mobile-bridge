@@ -132,6 +132,21 @@ export class SessionTailer {
     this.callback = callback;
   }
 
+  /**
+   * Pre-seek to start tailing from the beginning of the file rather than EOF.
+   * Used when the watch's drift detector swaps to a freshly-created JSONL —
+   * the new file is, by definition, all-new content for the new conversation,
+   * and the user's first prompt may already be on disk before this tailer's
+   * start() runs. Without this, EOF positioning skips it.
+   *
+   * Must be called before start(). No-op once start() has run.
+   */
+  startFromBeginning(): void {
+    this.offset = 0;
+    this.startAtOffsetZero = true;
+  }
+  private startAtOffsetZero = false;
+
   private trackRelayToolUse(id: string | undefined): void {
     if (!id) return;
     this.relayToolUseIds.add(id);
@@ -144,14 +159,21 @@ export class SessionTailer {
   /**
    * Start tailing the file. If the file doesn't exist yet (e.g. claude hasn't
    * written its first message), poll until it appears, then tail from offset 0.
-   * If it does exist, start from EOF so we only see new events.
+   * If it does exist, start from EOF so we only see new events — UNLESS the
+   * caller invoked startFromBeginning() (drift-detected new conversation),
+   * in which case we tail from offset 0 so the user's first prompt isn't
+   * skipped.
    */
   async start(): Promise<void> {
-    try {
-      const s = await stat(this.filePath);
-      this.offset = s.size;
-    } catch {
+    if (this.startAtOffsetZero) {
       this.offset = 0;
+    } else {
+      try {
+        const s = await stat(this.filePath);
+        this.offset = s.size;
+      } catch {
+        this.offset = 0;
+      }
     }
 
     this.tryWatchFile();
@@ -162,6 +184,12 @@ export class SessionTailer {
       if (!this.watcher) this.tryWatchFile();
       this.readNew();
     }, POLL_INTERVAL_MS);
+
+    // Drift-restart path: drain immediately so the user's first prompt isn't
+    // delayed by up to POLL_INTERVAL_MS waiting for the next poll tick.
+    if (this.startAtOffsetZero && this.offset === 0) {
+      void this.readNew();
+    }
 
     debug(`tailer: started at offset ${this.offset}`);
   }

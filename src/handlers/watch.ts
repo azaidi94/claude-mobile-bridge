@@ -50,7 +50,11 @@ import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
 import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
 import { getRecentHistory } from "../sessions/history";
-import { globalEventBus, type SseEvent } from "../web/sse";
+import {
+  globalEventBus,
+  type SessionEventBus,
+  type SseEvent,
+} from "../web/sse";
 import {
   recordUsage,
   computeContextPct,
@@ -81,7 +85,10 @@ export function bridgeTailToSse(
 
   switch (event.type) {
     case "user":
-      bus.emit(sessionId, { type: "text", content: `› ${event.content}` });
+      // user events are emitted to the bus as user_message+source by
+      // handleTailEvent; doing it here as well would produce a second
+      // pane in the Web UI ("You" via "› " prefix on top of "🖥 Remote"
+      // / "📱 Telegram" via the source-aware emit).
       return;
     case "text":
       bus.emit(sessionId, { type: "text", content: event.content });
@@ -198,6 +205,7 @@ export interface WatchState extends TailDisplayState {
    * Re-armed when activity resumes.
    */
   watchdogFired?: boolean;
+  unsubCrossPost?: () => void;
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -450,6 +458,7 @@ export async function sendWatchRelay(
 function cleanupWatch(state: WatchState): void {
   state.tailer?.stop();
   state.relayCleanup?.();
+  state.unsubCrossPost?.();
   if (state.idCheckInterval) clearInterval(state.idCheckInterval);
   stopWatchTyping(state.chatId, state.threadId);
   forgetUsage(state.sessionId);
@@ -604,6 +613,12 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       handleTailEvent(botApi, watchState, event, watchState.threadId);
       bridgeTailToSse(globalEventBus, watchState.sessionName, event);
     });
+    // Drift-detected new conversation: read from the start of the new JSONL.
+    // The user's first prompt typically lands on disk before drift detection
+    // notices the new sessionId, and the default EOF positioning would skip
+    // it — TG would then miss the message even though Web UI history shows
+    // it (Web UI reads JSONL on demand, not via this tailer).
+    newTailer.startFromBeginning();
     watchState.tailer = newTailer;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
@@ -623,6 +638,34 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       )
       .catch(() => {});
   }, 5_000);
+}
+
+export function setupCrossPostSubscription(
+  botApi: Api,
+  watchState: WatchState,
+  bus: SessionEventBus = globalEventBus,
+): void {
+  const { chatId, threadId, sessionName } = watchState;
+
+  const unsub = bus.subscribe(sessionName, (evt) => {
+    if (evt.type !== "user_message") return;
+    if (evt.source === "telegram") return;
+    const prefix =
+      evt.source === "web"
+        ? "🌐 Web"
+        : evt.source === "cursor"
+          ? "🖱 Cursor"
+          : "🖥 Terminal";
+    const preview =
+      evt.content.length > 300 ? evt.content.slice(0, 300) + "…" : evt.content;
+    botApi
+      .sendMessage(chatId, `${prefix}: ${preview}`, {
+        message_thread_id: threadId,
+      })
+      .catch(() => {});
+  });
+
+  watchState.unsubCrossPost = unsub;
 }
 
 // Backoff schedule for awaiting a fresh session's first JSONL write.
@@ -696,6 +739,15 @@ export async function startAutoWatch(
     return false;
   }
 
+  // Cursor sessions have no JSONL/relay — the cursor-bridge owns
+  // cross-posting via wireCrossPost in src/cursor/index.ts. Setting up
+  // a watch here would just register a second bus subscription on the
+  // same session and double-post user messages.
+  const existingInfo = getSession(sessionName);
+  if (existingInfo?.source === "cursor") {
+    return false;
+  }
+
   const sessionInfo = await _awaitSessionId(sessionName);
   if (!sessionInfo?.id) {
     warn("auto-watch: start failed, missing session id after retries", {
@@ -747,6 +799,7 @@ export async function startAutoWatch(
   await tailer.start();
 
   setupIdDriftDetection(botApi, watchState);
+  setupCrossPostSubscription(botApi, watchState);
 
   // Wire relay client for replies
   const relayClient = await getRelayClient({
@@ -970,6 +1023,7 @@ export async function startWatchingSession(
   await tailer.start();
 
   setupIdDriftDetection(botApi, watchState);
+  setupCrossPostSubscription(botApi, watchState);
 
   // Wire relay client for replies. The JSONL tailer normally handles text
   // display, but if the tailer is stale (e.g. after /clear) the TCP path
@@ -1546,32 +1600,60 @@ export function handleTailEvent(
 
     case "user": {
       const ownChat = String(chatId);
-      if (event.originChat === ownChat) {
-        // TCP fast-path already delivered this user's own Telegram message.
-        break;
-      }
+
+      // Web-sourced messages were already emitted to the bus by the
+      // POST /message handler; nothing to do here.
+      if (event.originChat === "web") break;
+
+      // Own TG chat: text.ts already emitted a user_message+telegram to the
+      // bus right after sendWatchRelay returned, AND the user can see their
+      // own message in the TG topic natively. Bail before re-emitting —
+      // otherwise the Web UI's session pane shows two stacked '📱 Telegram'
+      // entries per message (text.ts's emit + this handler's emit).
+      if (event.originChat === ownChat) break;
+
+      // Always emit a user_message to the bus so SSE consumers (Web UI)
+      // see the user input in a single, source-labelled remote pane.
+      // Source labels:
+      //   - originChat set (foreign TG chat) → "telegram"
+      //   - originChat undefined             → "terminal" (native CC input)
+      // Own-chat TG already returned above. setupCrossPostSubscription
+      // filters source=telegram, so foreign TG messages don't echo back.
+      const busKey = isWatchState(state) ? state.sessionName : ownChat;
+      globalEventBus.emit(busKey, {
+        type: "user_message",
+        source: event.originChat !== undefined ? "telegram" : "terminal",
+        content: event.content,
+      });
 
       resetDisplaySegment(botApi, state);
 
+      // <task-notification> XML is injected by Claude's Stop hook
+      // (originChat undefined). Render as a card to TG.
+      const taskCard = formatTaskNotification(event.content);
+      if (taskCard) {
+        botApi
+          .sendMessage(chatId, taskCard, {
+            parse_mode: "HTML",
+            ...threadOpts,
+            ...silent,
+          })
+          .catch(() => {});
+        break;
+      }
+
+      // Native terminal input — setupCrossPostSubscription forwards the
+      // bus emit above as "🖥 Terminal: ..." to TG.
+      if (event.originChat === undefined) break;
+
+      // Foreign Telegram chat — direct send with cross-chat label.
       const preview =
         event.content.length > 300
           ? event.content.slice(0, 300) + "…"
           : event.content;
-      const taskCard = formatTaskNotification(event.content);
-      const formatted = taskCard ?? convertMarkdownToHtml(preview);
-
-      let labelHtml: string;
-      let labelPlain: string;
-      if (event.originChat === undefined) {
-        labelHtml = `🖥 <b>Desktop:</b>`;
-        labelPlain = `🖥 Desktop:`;
-      } else if (event.originChat === "web") {
-        labelHtml = `🌐 <b>Web:</b>`;
-        labelPlain = `🌐 Web:`;
-      } else {
-        labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
-        labelPlain = `💬 Chat ${event.originChat}:`;
-      }
+      const formatted = convertMarkdownToHtml(preview);
+      const labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
+      const labelPlain = `💬 Chat ${event.originChat}:`;
 
       botApi
         .sendMessage(chatId, `${labelHtml}\n${formatted}`, {

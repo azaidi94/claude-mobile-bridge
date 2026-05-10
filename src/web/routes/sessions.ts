@@ -15,13 +15,17 @@ import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
 import { findNewestSessionInDir } from "../../sessions/tailer";
 import { warn } from "../../logger";
+import {
+  submitAnswerFromWeb,
+  cancelAnswerFromWeb,
+} from "../../handlers/relay-ask";
 
 export interface ApiSession {
   id: string;
   name: string;
   dir: string;
   lastActivity: number;
-  source: "telegram" | "desktop";
+  source: "telegram" | "desktop" | "cursor";
   live: boolean;
   active: boolean;
 }
@@ -211,7 +215,7 @@ export function createSessionsRouter(): Hono {
 
   app.post("/:id/message", async (c) => {
     const sessionId = c.req.param("id");
-    const body = await c.req.json<{ text: string }>();
+    const body = await c.req.json<{ text: string; clientId?: string }>();
     if (!body.text?.trim()) return c.json({ error: "text required" }, 400);
 
     const sessions = getSessions();
@@ -220,6 +224,19 @@ export function createSessionsRouter(): Hono {
 
     const emit = (type: SseEvent["type"], content: string) =>
       globalEventBus.emit(busKey, { type, content });
+
+    globalEventBus.emit(busKey, {
+      type: "user_message",
+      source: "web",
+      content: body.text,
+      clientId: body.clientId,
+    });
+
+    if (found?.source === "cursor") {
+      // CursorBridge subscribes to the bus and injects into Composer.
+      // No SDK call — cursor sessions aren't backed by a Claude SDK process.
+      return c.json({ ok: true });
+    }
 
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
@@ -242,6 +259,33 @@ export function createSessionsRouter(): Hono {
     setActiveSession(name);
     claudeSession.loadFromRegistry(found);
     return c.json({ ok: true });
+  });
+
+  // Web-side answer for an in-flight ask_remote tool call. Routes through
+  // the same MCP path TG button taps use; a 404 means the question already
+  // resolved (TG, timeout, disconnect) before this request arrived.
+  app.post("/ask-remote-answer", async (c) => {
+    const body = await c.req.json<{
+      ask_id?: string;
+      answer?: string;
+      cancel?: boolean;
+    }>();
+    const askId = String(body.ask_id ?? "");
+    if (!askId) return c.json({ error: "ask_id required" }, 400);
+    if (body.cancel) {
+      const ok = cancelAnswerFromWeb(askId);
+      return ok
+        ? c.json({ ok: true })
+        : c.json({ error: "ask not pending" }, 404);
+    }
+    const answer = String(body.answer ?? "");
+    if (!answer.trim()) {
+      return c.json({ error: "answer required (or pass cancel:true)" }, 400);
+    }
+    const ok = submitAnswerFromWeb(askId, answer);
+    return ok
+      ? c.json({ ok: true })
+      : c.json({ error: "ask not pending" }, 404);
   });
 
   return app;

@@ -947,6 +947,34 @@ describe("tailer: lifecycle", () => {
     expect(events).toHaveLength(0);
   });
 
+  test("startFromBeginning() reads existing file content from offset 0 (drift restart)", async () => {
+    // Simulates the watch.ts drift path: a fresh JSONL has the user's first
+    // prompt already on disk before our tailer attaches. Without this opt-in,
+    // EOF positioning would skip the message and TG would lose it (the bug
+    // that hit saas-builder on 2026-05-10).
+    const userLine = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: "review https://github.com/example/foo and propose changes",
+      },
+    });
+    await writeFile(testFile, userLine + "\n");
+
+    const events: TailEvent[] = [];
+    const tailer = new SessionTailer(testFile, (e) => events.push(e));
+    tailer.startFromBeginning();
+    await tailer.start();
+    // Allow the initial readNew() to flush.
+    await new Promise((r) => setTimeout(r, 50));
+    tailer.stop();
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    const userEvt = events.find((e) => e.type === "user");
+    expect(userEvt).toBeDefined();
+    expect(userEvt!.content).toContain("review https://github.com/example/foo");
+  });
+
   test("stop cleans up without errors", async () => {
     const tailer = new SessionTailer(testFile, () => {});
     await tailer.start();
