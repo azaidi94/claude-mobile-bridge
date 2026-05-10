@@ -74,6 +74,17 @@ export interface CursorBridgeOptions {
   aiFlushDelayMs?: number;
 }
 
+/**
+ * Cap on `seenMessages` — every distinct human message in the session adds
+ * an entry, and entries are never removed by themselves. Without a bound, a
+ * long-running session with thousands of messages would grow this to MBs.
+ * 2000 mirrors the JSONL tail truncation. Set iterates in insertion order, so
+ * eviction is FIFO — the oldest message becomes re-eligible for the dedup
+ * check, which is acceptable: if a 2000-message-old line repeats verbatim
+ * we'll re-emit it, far better than unbounded growth.
+ */
+const SEEN_MESSAGES_MAX = 2000;
+
 export class CursorBridge {
   private unsubBus: (() => void) | null = null;
   private unsubNotification: (() => void) | null = null;
@@ -119,7 +130,7 @@ export class CursorBridge {
       awaitPromise: false,
     });
     for (const msg of parseSnapshotResult(snapshotResult)) {
-      this.seenMessages.add(msg);
+      this.addSeen(msg);
     }
 
     // Subscribe to Runtime.bindingCalled — new messages from Cursor
@@ -145,7 +156,7 @@ export class CursorBridge {
             return;
           }
           if (this.seenMessages.has(text)) return;
-          this.seenMessages.add(text);
+          this.addSeen(text);
           // A new human message means the prior AI turn is finished —
           // flush any pending AI buffer now so order is preserved.
           this.flushAiBuffer();
@@ -313,5 +324,18 @@ export class CursorBridge {
     for (const [k, t] of this.recentlyInjected) {
       if (t < cutoff) this.recentlyInjected.delete(k);
     }
+  }
+
+  /**
+   * FIFO-bounded insert into seenMessages. Set iterates in insertion order,
+   * so once we hit the cap the oldest entry is dropped before the new one
+   * is added — keeps memory bounded over a long session.
+   */
+  private addSeen(text: string): void {
+    if (this.seenMessages.size >= SEEN_MESSAGES_MAX) {
+      const oldest = this.seenMessages.values().next().value;
+      if (oldest !== undefined) this.seenMessages.delete(oldest);
+    }
+    this.seenMessages.add(text);
   }
 }

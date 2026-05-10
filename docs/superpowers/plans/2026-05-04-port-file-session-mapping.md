@@ -418,7 +418,7 @@ const BASE: PortFileData = {
   port: 12345,
   pid: 73988,
   ppid: 73928,
-  cwd: "/Users/azaidi/Projects/foo",
+  cwd: "/tmp/projects/foo",
   startedAt: "2026-05-04T15:12:26.609Z",
 };
 
@@ -452,7 +452,7 @@ describe("resolveSessionMapping", () => {
     expect(result!.relayPid).toBe(73988);
     expect(result!.relayPort).toBe(12345);
     expect(result!.claudePid).toBe(73928);
-    expect(result!.cwd).toBe("/Users/azaidi/Projects/foo");
+    expect(result!.cwd).toBe("/tmp/projects/foo");
     expect(result!.topicId).toBeUndefined();
     expect(result!.topicName).toBeUndefined();
   });

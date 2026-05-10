@@ -102,7 +102,7 @@ test("parses message-format assistant thinking block (no top-level type)", () =>
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/azaidi/Projects/Cursor/AHZ/claude-mobile-bridge
+cd <repo>
 bun test src/__tests__/tailer.test.ts 2>&1 | grep -E "FAIL|PASS|message-format"
 ```
 

@@ -107,9 +107,9 @@ async function attachBridge(target: CdpTarget): Promise<void> {
   const sessionName = deriveSessionName(target.title);
   // If another window already produced the same session name (two open
   // tabs in the same workspace), suffix with target id to disambiguate.
-  const finalName = bridges.has(target.id)
-    ? sessionName
-    : findUniqueName(sessionName, target.id);
+  // syncBridges guards `bridges.has(target.id)` before calling here, so the
+  // current target is always new — no need to check before disambiguating.
+  const finalName = findUniqueName(sessionName, target.id);
 
   const sessionDir = homedir();
 

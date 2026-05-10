@@ -1,3 +1,5 @@
+import { warn } from "../logger";
+
 export interface CdpTarget {
   id: string;
   type: string;
@@ -49,28 +51,47 @@ export class CdpClient {
     };
 
     ws.onmessage = (event) => {
-      const msg = JSON.parse(String(event.data)) as {
+      // Wrap parse + dispatch — a single malformed frame must not throw out
+      // of the handler. ws.onmessage is assigned once on connect; if it ever
+      // throws, the runtime swallows the error and the bridge silently stops
+      // receiving CDP events until reconnect. A handler-level handler also
+      // catches throws inside the dispatched notification handlers below.
+      let msg: {
         id?: number;
         method?: string;
         result?: unknown;
         error?: { message: string };
         params?: Record<string, unknown>;
       };
+      try {
+        msg = JSON.parse(String(event.data));
+      } catch (err) {
+        warn(
+          `cdp-client: dropping malformed CDP frame (${event.data?.toString().slice(0, 120)}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
 
-      if (msg.id !== undefined) {
-        const handler = this.pending.get(msg.id);
-        if (!handler) return;
-        this.pending.delete(msg.id);
-        if (msg.error) {
-          handler.reject(new Error(msg.error.message));
-        } else {
-          handler.resolve(msg.result);
+      try {
+        if (msg.id !== undefined) {
+          const handler = this.pending.get(msg.id);
+          if (!handler) return;
+          this.pending.delete(msg.id);
+          if (msg.error) {
+            handler.reject(new Error(msg.error.message));
+          } else {
+            handler.resolve(msg.result);
+          }
+        } else if (msg.method) {
+          const handlers = this.notificationHandlers.get(msg.method);
+          if (handlers) {
+            for (const h of handlers) h(msg.params ?? {});
+          }
         }
-      } else if (msg.method) {
-        const handlers = this.notificationHandlers.get(msg.method);
-        if (handlers) {
-          for (const h of handlers) h(msg.params ?? {});
-        }
+      } catch (err) {
+        warn(
+          `cdp-client: dispatch error for ${msg.method ?? "id=" + msg.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     };
 

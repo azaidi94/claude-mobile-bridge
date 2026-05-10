@@ -732,6 +732,11 @@ function AskRemoteCard({ ask }: { ask: AskOpenRecord }) {
               disabled={submitting !== null}
               className="flex-1 rounded bg-terminal-bg border border-terminal-muted/30 px-2 py-1 text-sm focus:outline-none focus:border-amber-400/60 disabled:opacity-50"
               onKeyDown={(e) => {
+                if (e.key === "Escape" && !submitting) {
+                  e.preventDefault();
+                  cancel();
+                  return;
+                }
                 if (
                   e.key === "Enter" &&
                   customText.trim() &&
@@ -934,6 +939,9 @@ export function Terminal({ events, streaming }: TerminalProps) {
   }
 
   const turns = groupIntoTurns(events);
+  // Long event logs make collectOpenAsks O(n) on every render; memoize so a
+  // typing-flurry of state updates doesn't re-walk the whole stream.
+  const openAsks = useMemo(() => collectOpenAsks(events), [events]);
 
   return (
     <div className="flex-1 overflow-y-auto p-3 text-sm leading-snug">
@@ -981,7 +989,7 @@ export function Terminal({ events, streaming }: TerminalProps) {
         .map((e, i) => (
           <HookSummaryCard key={`hook-${i}`} event={e} />
         ))}
-      {collectOpenAsks(events).map((ask) => (
+      {openAsks.map((ask) => (
         <AskRemoteCard key={ask.askId} ask={ask} />
       ))}
       {streaming && (

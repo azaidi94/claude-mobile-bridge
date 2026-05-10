@@ -2,6 +2,10 @@
 /**
  * Diagnose the Cursor bridge by talking directly to Cursor's CDP.
  *
+ * Manual diagnostic tool — NOT part of the bot's startup path, not invoked
+ * from any test, not on the production hot path. Run by hand when the
+ * Cursor integration misbehaves.
+ *
  * Verifies each selector the observer + injector rely on, attempts an
  * injection probe, and reports what failed. Run while Cursor is open.
  *

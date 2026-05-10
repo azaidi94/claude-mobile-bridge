@@ -68,6 +68,7 @@ function makeMockApi() {
 
 function makeMockClient(sessionName?: string) {
   const askRemoteHandlers: Array<(r: RelayAskRemoteRequest) => void> = [];
+  const disconnectHandlers: Array<() => void> = [];
   const sentAnswers: Array<{
     ask_id: string;
     answer?: string;
@@ -77,6 +78,9 @@ function makeMockClient(sessionName?: string) {
     sessionName,
     onAskRemoteRequest: (cb: (r: RelayAskRemoteRequest) => void) => {
       askRemoteHandlers.push(cb);
+    },
+    onDisconnect: (cb: () => void) => {
+      disconnectHandlers.push(cb);
     },
     sendAskRemoteAnswer: mock(
       (params: { ask_id: string; answer?: string; error?: string }) => {
@@ -89,6 +93,9 @@ function makeMockClient(sessionName?: string) {
     client,
     fireAskRemote: (req: RelayAskRemoteRequest) => {
       for (const h of askRemoteHandlers) h(req);
+    },
+    fireDisconnect: () => {
+      for (const h of disconnectHandlers) h();
     },
     sentAnswers,
   };
@@ -589,5 +596,45 @@ describe("relay-ask: post + button tap round-trip", () => {
     expect(cleared?.askResolution).toBe("expired");
 
     unsubscribe();
+  });
+
+  test("relay disconnect cleans up bot-side pending asks (cloud bug #3)", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, fireDisconnect } =
+      makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+    const { events, unsubscribe } = captureBusEvents("cdm-test");
+
+    fireAskRemote(SAMPLE_REQ);
+    await sleep(0);
+    expect(_pendingCountForTests()).toBe(1);
+
+    fireDisconnect();
+    expect(_pendingCountForTests()).toBe(0);
+
+    const cleared = events.find((e) => e.type === "ask_remote_cleared");
+    expect(cleared?.askResolution).toBe("cancelled");
+    unsubscribe();
+  });
+
+  test("relay disconnect only clears entries owned by THAT client (cloud bug #3)", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const a = makeMockClient("session-a");
+    const b = makeMockClient("session-b");
+    attachAskRemoteToRelay(a.client);
+    attachAskRemoteToRelay(b.client);
+
+    // Different thread_ids so the per-(chat,thread) dup-custom guard
+    // doesn't reject the second one.
+    a.fireAskRemote({ ...SAMPLE_REQ, ask_id: "ask-from-a", thread_id: "1" });
+    b.fireAskRemote({ ...SAMPLE_REQ, ask_id: "ask-from-b", thread_id: "2" });
+    await sleep(0);
+    expect(_pendingCountForTests()).toBe(2);
+
+    // Only client A drops — client B's pending ask must be untouched.
+    a.fireDisconnect();
+    expect(_pendingCountForTests()).toBe(1);
   });
 });

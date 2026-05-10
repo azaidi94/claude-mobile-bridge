@@ -142,7 +142,7 @@ describe("CdpClient", () => {
 - [ ] **Step 2: Run tests to see them fail**
 
 ```bash
-cd /Users/azaidi/Projects/Cursor/AHZ/claude-mobile-bridge
+cd <repo>
 bun test src/__tests__/cursor-cdp.test.ts
 ```
 

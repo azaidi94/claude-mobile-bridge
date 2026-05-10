@@ -524,32 +524,32 @@ Edit `~/Library/LaunchAgents/com.azaidi.claude-bot.plist`:
 
 ```xml
     <key>StandardOutPath</key>
-    <string>/Users/azaidi/Library/Logs/claude-mobile-bridge/bot.log</string>
+    <string>/Users/&lt;you&gt;/Library/Logs/claude-mobile-bridge/bot.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/azaidi/Library/Logs/claude-mobile-bridge/bot.log</string>
+    <string>/Users/&lt;you&gt;/Library/Logs/claude-mobile-bridge/bot.log</string>
 ```
 
-(launchd does not expand `~`, so the absolute path is required.)
+(launchd does not expand `~`, so the absolute path is required — substitute your actual home dir.)
 
 - [ ] **Step 3: Ensure log dir exists (launchd will not create it)**
 
 ```bash
-mkdir -p /Users/azaidi/Library/Logs/claude-mobile-bridge
+mkdir -p ~/Library/Logs/claude-mobile-bridge
 ```
 
 - [ ] **Step 4: Reload launchd**
 
 ```bash
-launchctl bootout gui/$(id -u) /Users/azaidi/Library/LaunchAgents/com.azaidi.claude-bot.plist
-launchctl bootstrap gui/$(id -u) /Users/azaidi/Library/LaunchAgents/com.azaidi.claude-bot.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.azaidi.claude-bot.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.azaidi.claude-bot.plist
 ```
 
 Verify:
 
 ```bash
 launchctl list | grep com.azaidi.claude-bot
-ls -la /Users/azaidi/Library/Logs/claude-mobile-bridge/bot.log
+ls -la ~/Library/Logs/claude-mobile-bridge/bot.log
 ```
 
 Expected: bot listed with non-zero PID, new log file is being written.
@@ -629,7 +629,7 @@ This is the manual verification step — no code changes.
 The Task 7 launchctl reload already restarted it. Verify:
 
 ```bash
-tail -50 /Users/azaidi/Library/Logs/claude-mobile-bridge/bot.log
+tail -50 ~/Library/Logs/claude-mobile-bridge/bot.log
 ```
 
 Expected: see `bot: @AHZ_CB_bot ready` line near the end. No "no exact match for session" warnings for sessions that have just had their relays restarted.
@@ -659,13 +659,13 @@ Send a message to the saas-builder topic in Telegram. Expected: message reaches 
 Check the logs for migration lines:
 
 ```bash
-grep -E "(migrated|migration)" /Users/azaidi/Library/Logs/claude-mobile-bridge/bot.log | head
+grep -E "(migrated|migration)" ~/Library/Logs/claude-mobile-bridge/bot.log | head
 ```
 
 Expected (if there was anything in /tmp to migrate): one line per migrated file, e.g.
 
 ```
-status: migrated 3 pinned msg(s) from /tmp/... to /Users/azaidi/.claude-mobile-bridge/...
+status: migrated 3 pinned msg(s) from /tmp/... to ~/.claude-mobile-bridge/...
 ```
 
 - [ ] **Step 5: Confirm /tmp is now lean**

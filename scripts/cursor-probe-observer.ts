@@ -5,6 +5,9 @@
  * mutations to a window-global; you trigger an AI response in Cursor;
  * re-run this script to see what the observer caught.
  *
+ * Manual diagnostic tool — NOT part of the bot's startup path, not
+ * invoked from any test. Run by hand when AI replies aren't surfacing.
+ *
  * Usage:
  *   1. bun run scripts/cursor-probe-observer.ts install
  *   2. trigger an AI response in Cursor

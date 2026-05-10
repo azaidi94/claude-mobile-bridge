@@ -418,10 +418,17 @@ interface PendingAsk {
   timer: ReturnType<typeof setTimeout>;
 }
 const pendingAsks = new Map<string, PendingAsk>();
-let askCounter = 0;
 
+/**
+ * Unguessable per-ask identifier. The web POST /ask-remote-answer endpoint
+ * accepts any ask_id without further auth (it's behind authMiddleware but
+ * once a request gets through, the ask_id is the only routing token), so a
+ * predictable counter+timestamp lets an attacker who knows the bot is up
+ * enumerate small integers and submit answers on behalf of the user. UUIDs
+ * are 122 bits of entropy, infeasible to brute-force in any realistic window.
+ */
 function generateAskId(): string {
-  return `a${++askCounter}_${Date.now().toString(36)}`;
+  return `a_${crypto.randomUUID()}`;
 }
 
 function rejectAllPendingAsks(reason: string): void {

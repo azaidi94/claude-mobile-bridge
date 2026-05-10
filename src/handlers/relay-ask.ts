@@ -91,6 +91,31 @@ export function attachAskRemoteToRelay(client: RelayClient): void {
       });
     }
   });
+
+  // When the relay client drops, MCP's rejectAllPendingAsks already cleans
+  // up its pending Map and sends an error tool result to Claude. The bot
+  // side has matching entries in pendingAsks with timers running for up to
+  // 30 min — without this hook they'd linger and the TG keyboard would
+  // remain tappable but inert (taps would land on a stale askId, cause a
+  // sendAskRemoteAnswer to a closed socket, no-op). Edit the message to a
+  // final state and emit ask_remote_cleared so any open Web UI card drops.
+  client.onDisconnect(() => {
+    const orphans: Array<[string, PendingAsk]> = [];
+    for (const [id, entry] of pendingAsks) {
+      if (entry.client === client) orphans.push([id, entry]);
+    }
+    if (orphans.length === 0) return;
+    debug(
+      `relay-ask: cleaning up ${orphans.length} pending ask(s) after relay disconnect`,
+    );
+    for (const [id, entry] of orphans) {
+      clearPending(id, entry);
+      if (botApi) {
+        void editToFinal(botApi, entry, "✖ Session disconnected");
+      }
+      emitCleared(entry, "cancelled", undefined, id);
+    }
+  });
 }
 
 async function postQuestionToTelegram(
