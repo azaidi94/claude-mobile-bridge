@@ -29,9 +29,11 @@ export function convertMarkdownToHtml(text: string): string {
   const inlineCodes: string[] = [];
   const tableBlocks: string[] = [];
 
-  // Save markdown tables first — Telegram HTML has no <table> support, so
-  // we wrap them in <pre> at the end to preserve column alignment.
-  text = extractMarkdownTables(text, tableBlocks);
+  // Code blocks must be stashed BEFORE table extraction. extractMarkdownTables
+  // is line-based with no fence awareness, so a `| col |` row inside a fenced
+  // code block would otherwise be matched as a real table — restoration then
+  // produces nested <pre><pre>…</pre></pre> which Telegram rejects with
+  // "Bad Request: can't parse entities" (bug_002 from review).
 
   // Save code blocks first (```code```)
   text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
@@ -44,6 +46,11 @@ export function convertMarkdownToHtml(text: string): string {
     inlineCodes.push(code);
     return `\x00INLINECODE${inlineCodes.length - 1}\x00`;
   });
+
+  // Save markdown tables — Telegram HTML has no <table> support, so we wrap
+  // them in <pre> at the end to preserve column alignment. Now safe because
+  // anything inside a code fence is already a placeholder.
+  text = extractMarkdownTables(text, tableBlocks);
 
   // Escape HTML entities in the remaining text
   text = escapeHtml(text);

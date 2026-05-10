@@ -67,9 +67,12 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 1.05. ask_remote custom-text capture (relay bridge two-way).
   // Runs before topic gating so a question delivered without a thread_id
-  // (i.e. landed in General) can still be answered. The text is consumed
-  // here — never forwarded into the Claude session as a fresh prompt.
-  if (tryConsumeCustomTextAnswer(chatId, message)) {
+  // (i.e. landed in General) can still be answered. Keyed by (chat, thread)
+  // so sibling topics in a forum chat don't have their input hijacked by
+  // an open ask_remote in another topic. The text is consumed here — never
+  // forwarded into the Claude session as a fresh prompt.
+  const incomingThreadId = ctx.message?.message_thread_id;
+  if (tryConsumeCustomTextAnswer(chatId, incomingThreadId, message)) {
     return;
   }
 

@@ -67,4 +67,49 @@ describe("convertMarkdownToHtml: tables", () => {
     expect(html).toContain("<pre>");
     expect(html).toMatch(/left.*right/);
   });
+
+  test("table-shaped lines INSIDE a fenced code block render as code, not nested <pre> (bug_002)", () => {
+    const md = [
+      "Here's how to write a markdown table:",
+      "",
+      "```",
+      "| col | col2 |",
+      "|-----|------|",
+      "| a   | b    |",
+      "```",
+      "",
+      "End.",
+    ].join("\n");
+    const html = convertMarkdownToHtml(md);
+    // Should contain exactly one <pre> (the code block); table extractor
+    // must NOT have run on the lines inside the fence.
+    expect(html).not.toMatch(/<pre>\s*<pre>/);
+    expect(html).not.toMatch(/<\/pre>\s*<\/pre>/);
+    // The pipe-table syntax is preserved verbatim inside the code block.
+    expect(html).toContain("| col | col2 |");
+    expect(html).toContain("|-----|------|");
+    // Surrounding prose still rendered.
+    expect(html).toContain("Here's how to write a markdown table:");
+    expect(html).toContain("End.");
+  });
+
+  test("real table after a fenced code block still renders correctly (bug_002 corollary)", () => {
+    const md = [
+      "```",
+      "| ignore | this |",
+      "```",
+      "",
+      "Now a real one:",
+      "",
+      "| Run | Result |",
+      "|-----|--------|",
+      "| 1   | pass   |",
+    ].join("\n");
+    const html = convertMarkdownToHtml(md);
+    // Fenced block is rendered as code (preserved verbatim).
+    expect(html).toContain("| ignore | this |");
+    // Real table after the fence is rendered as a <pre> aligned block.
+    expect(html).toMatch(/Run\s+Result/);
+    expect(html).not.toMatch(/<pre>\s*<pre>/);
+  });
 });

@@ -8,6 +8,7 @@ import { CursorSessionLog } from "./session-log";
 import type { CdpClient } from "./cdp-client";
 import type { SessionEventBus, SseEvent } from "../web/sse";
 import { warn, info, debug } from "../logger";
+import { updateSessionActivity } from "../sessions";
 
 const HUMAN_BINDING = "cursorBridgeHumanMsg";
 const AI_BINDING = "cursorBridgeAiMsg";
@@ -149,6 +150,10 @@ export class CursorBridge {
           // flush any pending AI buffer now so order is preserved.
           this.flushAiBuffer();
           debug(`cursor-bridge: human msg: ${text.slice(0, 80)}`);
+          // Heartbeat the registry so a long-lived but actively-used
+          // Cursor window doesn't get pruned by refresh()'s 24h MAX_AGE
+          // check (bug_007). lastActivity was only set at attach time.
+          updateSessionActivity(sessionName);
           // Native cursor input — recorded with source: cursor.
           void this.log?.appendUser(text, "cursor");
           bus.emit(sessionName, {
@@ -157,6 +162,8 @@ export class CursorBridge {
             content: text,
           });
         } else if (params.name === AI_BINDING) {
+          // AI activity is also user-driven traffic for prune purposes.
+          updateSessionActivity(sessionName);
           this.bufferAiFragment(text);
         }
       },

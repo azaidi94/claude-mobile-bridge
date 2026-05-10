@@ -193,9 +193,10 @@ describe("relay-ask: post + button tap round-trip", () => {
     expect(_pendingCountForTests()).toBe(1);
     expect(edits[0]!.text).toContain("Send your answer as a message");
 
-    // User sends free-text in the same chat.
+    // User sends free-text in the same (chat, thread).
     const consumed = tryConsumeCustomTextAnswer(
       -1003968796171,
+      33308,
       "Apply only fixture A but skip B",
     );
     expect(consumed).toBe(true);
@@ -206,7 +207,70 @@ describe("relay-ask: post + button tap round-trip", () => {
   });
 
   test("custom-text in a chat without a pending custom-await is not consumed", () => {
-    expect(tryConsumeCustomTextAnswer(99999, "hello")).toBe(false);
+    expect(tryConsumeCustomTextAnswer(99999, undefined, "hello")).toBe(false);
+  });
+
+  test("custom-text in a sibling topic is NOT consumed by another topic's open ask (bug_001)", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, sentAnswers } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+
+    // Topic 33308 has an open ask_remote awaiting custom text.
+    fireAskRemote({ ...SAMPLE_REQ, ask_id: "a1", thread_id: "33308" });
+    await sleep(0);
+    await handleAskRemoteCallback(api, "askremote:a1:custom", "cbq-1");
+    expect(_pendingCountForTests()).toBe(1);
+
+    // User types in topic 33409 (sibling) — must NOT be consumed.
+    const consumedSibling = tryConsumeCustomTextAnswer(
+      -1003968796171,
+      33409,
+      "this should NOT be hijacked",
+    );
+    expect(consumedSibling).toBe(false);
+    expect(sentAnswers).toHaveLength(0);
+    // Original ask still pending in 33308.
+    expect(_pendingCountForTests()).toBe(1);
+
+    // Typing in the correct thread does consume it.
+    const consumedSelf = tryConsumeCustomTextAnswer(
+      -1003968796171,
+      33308,
+      "this answers the right ask",
+    );
+    expect(consumedSelf).toBe(true);
+    expect(sentAnswers).toEqual([
+      { ask_id: "a1", answer: "this answers the right ask" },
+    ]);
+  });
+
+  test("two ask_remote in different topics of same chat coexist (bug_001 corollary)", async () => {
+    const { api } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote, sentAnswers } = makeMockClient("cdm-test");
+    attachAskRemoteToRelay(client);
+
+    fireAskRemote({ ...SAMPLE_REQ, ask_id: "aT1", thread_id: "33308" });
+    await sleep(0);
+    fireAskRemote({ ...SAMPLE_REQ, ask_id: "aT2", thread_id: "33409" });
+    await sleep(0);
+
+    // Both should be pending — duplicate guard is per-thread, not per-chat.
+    expect(_pendingCountForTests()).toBe(2);
+
+    // Tap custom on each — both slots populate.
+    await handleAskRemoteCallback(api, "askremote:aT1:custom", "cbq-1");
+    await handleAskRemoteCallback(api, "askremote:aT2:custom", "cbq-2");
+
+    // Each thread's text resolves only its own ask.
+    tryConsumeCustomTextAnswer(-1003968796171, 33308, "for T1");
+    tryConsumeCustomTextAnswer(-1003968796171, 33409, "for T2");
+
+    expect(sentAnswers).toEqual([
+      { ask_id: "aT1", answer: "for T1" },
+      { ask_id: "aT2", answer: "for T2" },
+    ]);
   });
 
   test("cancel button sends error back + clears pending", async () => {

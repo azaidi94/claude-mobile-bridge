@@ -6,6 +6,8 @@ import { homedir } from "os";
 import type { Api } from "grammy";
 import { getTopicBySession } from "../topics";
 import { addCursorSession, removeSession } from "../sessions";
+import { convertMarkdownToHtml, escapeHtml } from "../formatting";
+import { TELEGRAM_SAFE_LIMIT } from "../config";
 
 const CURSOR_CDP_PORT = Number(process.env.CURSOR_CDP_PORT ?? 9222);
 const SYNC_INTERVAL_MS = 5_000;
@@ -167,6 +169,14 @@ async function wireCrossPost(
     if (stopped) return;
     const initialTopic = getTopicBySession(sessionName);
     if (initialTopic) {
+      // Window may have closed during the poll — syncBridges cleanup ran
+      // before we got here, but couldn't unsub because we hadn't subscribed
+      // yet. Re-check ownership here so we don't leak a subscription tied
+      // to a detached bridge (bug_004).
+      const stillAttached = [...bridges.values()].some(
+        (b) => b.sessionName === sessionName,
+      );
+      if (!stillAttached) return;
       // Avoid duplicate subscriptions on reconnect
       crossPostUnsubs.get(sessionName)?.();
       const unsub = globalEventBus.subscribe(sessionName, (evt: SseEvent) => {
@@ -188,9 +198,19 @@ async function wireCrossPost(
         // topics shortly after the bridge attaches).
         const currentTopic = getTopicBySession(sessionName);
         if (!currentTopic) return;
-        const body = `${label}: ${evt.content}`.slice(0, 4000);
+        // Render markdown the same way the watch.ts assistant path does,
+        // so Cursor AI replies with tables / fenced code / **bold** land
+        // in TG with the same formatting as Claude Code replies. Without
+        // parse_mode the user sees raw `|` `**` ``` characters (bug_012).
+        const labelHtml = `<b>${escapeHtml(label)}:</b>`;
+        const bodyHtml = convertMarkdownToHtml(evt.content);
+        let html = `${labelHtml}\n${bodyHtml}`;
+        if (html.length > TELEGRAM_SAFE_LIMIT) {
+          html = html.slice(0, TELEGRAM_SAFE_LIMIT) + "…";
+        }
         fwd.api
-          .sendMessage(fwd.chatId, body, {
+          .sendMessage(fwd.chatId, html, {
+            parse_mode: "HTML",
             message_thread_id: currentTopic.topicId,
           })
           .catch(() => {});

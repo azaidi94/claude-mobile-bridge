@@ -41,11 +41,17 @@ interface PendingAsk {
 // will time out the corresponding tool calls, which is the right behavior.
 const pendingAsks = new Map<string, PendingAsk>();
 
-// One pending custom-text capture per chat. Next text in the chat resolves
-// the open ask_remote with allow_custom=true. Concurrent asks in the same
-// chat with allow_custom are rejected at request time (see postQuestionToTelegram)
-// so the slot is never silently overwritten.
-const customTextPending = new Map<number, string>(); // chatId → ask_id
+// One pending custom-text capture per (chat, thread) — keyed at thread
+// granularity so a forum chat with many session topics doesn't have its
+// sibling topics' typed messages hijacked by an open ask_remote in another
+// topic. Concurrent asks in the SAME thread with allow_custom are rejected
+// at request time (see postQuestionToTelegram) so the slot is never
+// silently overwritten.
+const customTextPending = new Map<string, string>(); // "chat|thread" → ask_id
+
+function customKey(chatId: number, threadId: number | undefined): string {
+  return `${chatId}|${threadId ?? 0}`;
+}
 
 const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min — mirrors MCP default
 const DEFAULT_TIMEOUT_OVERSHOOT_MS = 5_000;
@@ -102,11 +108,12 @@ async function postQuestionToTelegram(
       : undefined;
 
   // Reject a second concurrent ask_remote with allow_custom=true in the same
-  // chat — the customTextPending slot is single-valued, so silently letting
-  // the second overwrite the first would lose the user's first answer.
-  if (req.allow_custom && customTextPending.has(chatId)) {
+  // (chat, thread) — the customTextPending slot is single-valued per thread,
+  // so silently letting the second overwrite the first would lose the user's
+  // first answer. Different threads in the same chat are independent.
+  if (req.allow_custom && customTextPending.has(customKey(chatId, threadId))) {
     throw new Error(
-      `chat ${chatId} already has an ask_remote awaiting a custom-text answer; resolve or cancel that one first`,
+      `chat ${chatId} thread ${threadId ?? "(none)"} already has an ask_remote awaiting a custom-text answer; resolve or cancel that one first`,
     );
   }
 
@@ -269,7 +276,7 @@ export async function handleAskRemoteCallback(
   }
 
   if (action === "custom") {
-    customTextPending.set(entry.chatId, askId);
+    customTextPending.set(customKey(entry.chatId, entry.threadId), askId);
     await api.answerCallbackQuery(callbackQueryId, {
       text: "Send your answer as a message in this chat.",
     });
@@ -294,19 +301,22 @@ export async function handleAskRemoteCallback(
 }
 
 /**
- * Try to consume a free-text message as a custom answer to a pending ask_remote.
- * Returns true if the text was consumed (caller should not process it further);
- * false if no pending custom-input ask exists in this chat.
+ * Try to consume a free-text message as a custom answer to a pending ask_remote
+ * in the SAME (chat, thread). Returns true if the text was consumed (caller
+ * should not process it further); false if no pending custom-input ask exists
+ * for this exact thread. Sibling topics in the same chat aren't hijacked.
  */
 export function tryConsumeCustomTextAnswer(
   chatId: number,
+  threadId: number | undefined,
   text: string,
 ): boolean {
-  const askId = customTextPending.get(chatId);
+  const k = customKey(chatId, threadId);
+  const askId = customTextPending.get(k);
   if (!askId) return false;
   const entry = pendingAsks.get(askId);
   if (!entry) {
-    customTextPending.delete(chatId);
+    customTextPending.delete(k);
     return false;
   }
   clearPending(askId, entry);
@@ -412,7 +422,7 @@ function truncateForLabel(s: string): string {
 function clearPending(askId: string, entry: PendingAsk): void {
   if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
   pendingAsks.delete(askId);
-  customTextPending.delete(entry.chatId);
+  customTextPending.delete(customKey(entry.chatId, entry.threadId));
 }
 
 // ── Test hooks ─────────────────────────────────────────────────────────

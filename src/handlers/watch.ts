@@ -1599,23 +1599,26 @@ export function handleTailEvent(
       // POST /message handler; nothing to do here.
       if (event.originChat === "web") break;
 
+      // Own TG chat: text.ts already emitted a user_message+telegram to the
+      // bus right after sendWatchRelay returned, AND the user can see their
+      // own message in the TG topic natively. Bail before re-emitting —
+      // otherwise the Web UI's session pane shows two stacked '📱 Telegram'
+      // entries per message (text.ts's emit + this handler's emit).
+      if (event.originChat === ownChat) break;
+
       // Always emit a user_message to the bus so SSE consumers (Web UI)
       // see the user input in a single, source-labelled remote pane.
       // Source labels:
-      //   - originChat set         → "telegram" (own or foreign chat)
-      //   - originChat undefined   → "terminal" (native CC input)
-      // setupCrossPostSubscription filters source=telegram, so own/foreign
-      // TG messages don't echo back to TG.
+      //   - originChat set (foreign TG chat) → "telegram"
+      //   - originChat undefined             → "terminal" (native CC input)
+      // Own-chat TG already returned above. setupCrossPostSubscription
+      // filters source=telegram, so foreign TG messages don't echo back.
       const busKey = isWatchState(state) ? state.sessionName : ownChat;
       globalEventBus.emit(busKey, {
         type: "user_message",
         source: event.originChat !== undefined ? "telegram" : "terminal",
         content: event.content,
       });
-
-      // Own TG chat: user already sees their own message in the topic.
-      // No further side-effect.
-      if (event.originChat === ownChat) break;
 
       resetDisplaySegment(botApi, state);
 

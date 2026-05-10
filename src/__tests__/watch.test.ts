@@ -320,10 +320,15 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     return { api, sent };
   }
 
-  test("user event with originChat === ownChat is skipped (TCP dedup)", () => {
+  test("user event with originChat === ownChat is skipped (TCP dedup) — and does NOT emit to bus (bug_010)", async () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
+    const { globalEventBus } = await import("../web/sse");
+    const received: import("../web/sse").SseEvent[] = [];
+    const unsub = globalEventBus.subscribe("s-6302", (evt) =>
+      received.push(evt),
+    );
     handleTailEvent(
       api,
       state,
@@ -331,6 +336,10 @@ describe("watch: handleTailEvent user-event origin filter", () => {
       6302,
     );
     expect(sent).toHaveLength(0);
+    // text.ts is the single emitter for own-chat TG input — handleTailEvent
+    // must NOT also emit, otherwise the Web UI shows two '📱 Telegram' panes.
+    expect(received).toHaveLength(0);
+    unsub();
   });
 
   test("user event with originChat === 'web' is skipped (already on bus)", () => {
