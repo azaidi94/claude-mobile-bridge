@@ -613,6 +613,12 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       handleTailEvent(botApi, watchState, event, watchState.threadId);
       bridgeTailToSse(globalEventBus, watchState.sessionName, event);
     });
+    // Drift-detected new conversation: read from the start of the new JSONL.
+    // The user's first prompt typically lands on disk before drift detection
+    // notices the new sessionId, and the default EOF positioning would skip
+    // it — TG would then miss the message even though Web UI history shows
+    // it (Web UI reads JSONL on demand, not via this tailer).
+    newTailer.startFromBeginning();
     watchState.tailer = newTailer;
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
