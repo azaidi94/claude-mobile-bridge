@@ -15,6 +15,7 @@
     "dev:debug": "DEBUG=1 bun --watch run src/index.ts",
     "typecheck": "bunx tsc --noEmit",
     "smoke": "bun run scripts/smoke.ts",
+    "install-hooks": "bash scripts/install-hooks.sh",
     "test": "bun run test:isolated",
     "test:isolated": "export TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-test-token}; export TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-1}; for f in src/__tests__/*.test.ts; do bun test \"$f\" || exit 1; done",
     "prepare": "husky"

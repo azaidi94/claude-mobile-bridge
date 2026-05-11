@@ -1212,6 +1212,14 @@ export function _getWatchForTests(
   return watches.get(watchKey(chatId, threadId));
 }
 
+/** Return the first active watch whose sessionDir matches `cwd`, or null. */
+export function findWatchByDir(cwd: string): WatchState | null {
+  for (const [, w] of watches) {
+    if (w.sessionDir === cwd) return w;
+  }
+  return null;
+}
+
 /** Return the active watch for a given topic, if any. */
 export function getWatch(
   chatId: number,

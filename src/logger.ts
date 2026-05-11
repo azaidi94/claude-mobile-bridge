@@ -5,6 +5,8 @@
  * DEBUG=1 enables debug level logs.
  */
 
+import { writeToBotLog } from "./log-rotation";
+
 type Level = "info" | "warn" | "error" | "debug";
 export type LogFields = Record<string, unknown>;
 
@@ -103,6 +105,7 @@ function writeLine(level: Level, line: string): void {
   const stream =
     level === "warn" || level === "error" ? process.stderr : process.stdout;
   stream.write(`${line}\n`);
+  writeToBotLog(`${line}\n`);
 }
 
 export function log(

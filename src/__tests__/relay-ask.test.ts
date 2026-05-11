@@ -638,3 +638,96 @@ describe("relay-ask: post + button tap round-trip", () => {
     expect(_pendingCountForTests()).toBe(1);
   });
 });
+
+describe("relay-ask: thread_id fallback via session→topic store (regression 2026-05-11)", () => {
+  beforeEach(async () => {
+    _resetForTests();
+    const { clearTopicStore } = await import("../topics/topic-store");
+    clearTopicStore();
+  });
+
+  test("when ask_remote_request omits thread_id, postQuestionToTelegram resolves the bot's topic mapping", async () => {
+    const { setChatId, addTopicMapping } =
+      await import("../topics/topic-store");
+    setChatId(-1003968796171);
+    addTopicMapping({
+      sessionName: "UML",
+      topicId: 37030,
+      sessionDir: "/repo/uml",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    const { api, sent } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("UML");
+    attachAskRemoteToRelay(client);
+
+    // Mirror what MCP sends when Claude doesn't include thread_id —
+    // notably the channel-relay <channel> tag doesn't surface thread_id,
+    // so Claude has no source of truth for it. Without the fallback, this
+    // request would post to chat-general instead of the UML topic.
+    fireAskRemote({
+      ask_id: "a_thread_fallback",
+      chat_id: "-1003968796171",
+      // thread_id intentionally omitted
+      question: "Pick one",
+      options: [{ label: "A" }, { label: "B" }],
+      allow_custom: false,
+    });
+    await sleep(0);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.opts?.message_thread_id).toBe(37030);
+  });
+
+  test("explicit thread_id in the request still wins over the fallback", async () => {
+    const { setChatId, addTopicMapping } =
+      await import("../topics/topic-store");
+    setChatId(-1003968796171);
+    addTopicMapping({
+      sessionName: "UML",
+      topicId: 37030,
+      sessionDir: "/repo/uml",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    const { api, sent } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("UML");
+    attachAskRemoteToRelay(client);
+
+    fireAskRemote({
+      ask_id: "a_thread_explicit",
+      chat_id: "-1003968796171",
+      thread_id: "99999", // explicit, not the store's mapping
+      question: "Pick one",
+      options: [{ label: "A" }, { label: "B" }],
+      allow_custom: false,
+    });
+    await sleep(0);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.opts?.message_thread_id).toBe(99999);
+  });
+
+  test("with no session mapping and no thread_id, message goes to chat-general (no crash)", async () => {
+    const { api, sent } = makeMockApi();
+    initRelayAsk(api);
+    const { client, fireAskRemote } = makeMockClient("UnknownSession");
+    attachAskRemoteToRelay(client);
+
+    fireAskRemote({
+      ask_id: "a_thread_none",
+      chat_id: "-1003968796171",
+      question: "Pick one",
+      options: [{ label: "A" }, { label: "B" }],
+      allow_custom: false,
+    });
+    await sleep(0);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.opts?.message_thread_id).toBeUndefined();
+  });
+});

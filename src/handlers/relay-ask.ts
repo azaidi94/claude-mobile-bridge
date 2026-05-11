@@ -16,8 +16,9 @@ import { InlineKeyboard } from "grammy";
 import type { RelayClient, RelayAskRemoteRequest } from "../relay/client";
 import { escapeHtml } from "../formatting";
 import { BUTTON_LABEL_MAX_LENGTH } from "../config";
-import { debug, warn } from "../logger";
+import { debug, info, warn } from "../logger";
 import { globalEventBus } from "../web/sse";
+import { getThreadId } from "../topics";
 
 interface PendingAsk {
   client: RelayClient;
@@ -49,6 +50,12 @@ const pendingAsks = new Map<string, PendingAsk>();
 // silently overwritten.
 const customTextPending = new Map<string, string>(); // "chat|thread" → ask_id
 
+// Parallel custom-text pending map for bridge:* callbacks. Uses a callback
+// rather than an ask_id so the bridge orchestrator's waiter can be invoked
+// directly without touching pendingAsks. One slot per (chat, thread) —
+// same granularity contract as customTextPending above.
+const customBridgeTextPending = new Map<string, (text: string) => void>(); // "chat|thread" → callback
+
 function customKey(chatId: number, threadId: number | undefined): string {
   return `${chatId}|${threadId ?? 0}`;
 }
@@ -73,11 +80,27 @@ export function initRelayAsk(api: Api): void {
  */
 export function attachAskRemoteToRelay(client: RelayClient): void {
   if (!botApi) {
-    debug("relay-ask: skipping attach — botApi not yet initialized");
+    // Promoted from debug to warn — if this fires we silently drop all
+    // ask_remote frames on this client, which is hard to diagnose otherwise.
+    warn(
+      "relay-ask: skipping attach — botApi not yet initialized (ask_remote will silently fail on this client)",
+      undefined,
+      { sessionName: client.sessionName, sessionDir: client.sessionDir },
+    );
     return;
   }
+  debug("relay-ask: attached ask_remote listener", {
+    sessionName: client.sessionName,
+    sessionDir: client.sessionDir,
+  });
   const api = botApi;
   client.onAskRemoteRequest(async (req) => {
+    debug("relay-ask: received ask_remote_request from MCP", {
+      ask_id: req.ask_id,
+      chat_id: req.chat_id,
+      thread_id: req.thread_id,
+      options: req.options.length,
+    });
     try {
       await postQuestionToTelegram(api, client, req);
     } catch (err) {
@@ -118,7 +141,7 @@ export function attachAskRemoteToRelay(client: RelayClient): void {
   });
 }
 
-async function postQuestionToTelegram(
+export async function postQuestionToTelegram(
   api: Api,
   client: RelayClient,
   req: RelayAskRemoteRequest,
@@ -127,10 +150,25 @@ async function postQuestionToTelegram(
   if (!Number.isFinite(chatId)) {
     throw new Error(`invalid chat_id: ${req.chat_id}`);
   }
-  const threadId =
+  // Resolve threadId: prefer what MCP/Claude passed; fall back to the bot's
+  // own session→topic mapping when ask_remote is called without thread_id
+  // (the channel-relay <channel> tag doesn't surface thread_id to Claude, so
+  // any ask_remote that hasn't been explicitly threaded would otherwise
+  // post to the chat general instead of the originating topic).
+  let threadId: number | undefined =
     req.thread_id && Number.isFinite(Number(req.thread_id))
       ? Number(req.thread_id)
       : undefined;
+  if (threadId === undefined && client.sessionName) {
+    const fallback = getThreadId(client.sessionName);
+    if (typeof fallback === "number" && Number.isFinite(fallback)) {
+      threadId = fallback;
+      debug("relay-ask: resolved thread_id via session→topic store", {
+        sessionName: client.sessionName,
+        threadId,
+      });
+    }
+  }
 
   // Reject a second concurrent ask_remote with allow_custom=true in the same
   // (chat, thread) — the customTextPending slot is single-valued per thread,
@@ -337,6 +375,15 @@ export function tryConsumeCustomTextAnswer(
   text: string,
 ): boolean {
   const k = customKey(chatId, threadId);
+
+  // Check bridge custom-text waiters first (installed by handleBridgeCallback).
+  const bridgeCb = customBridgeTextPending.get(k);
+  if (bridgeCb) {
+    customBridgeTextPending.delete(k);
+    bridgeCb(text);
+    return true;
+  }
+
   const askId = customTextPending.get(k);
   if (!askId) return false;
   const entry = pendingAsks.get(askId);
@@ -450,6 +497,207 @@ function clearPending(askId: string, entry: PendingAsk): void {
   customTextPending.delete(customKey(entry.chatId, entry.threadId));
 }
 
+/**
+ * Build an inline-keyboard for an AUQ-bridge question. Same shape as
+ * the MCP `ask_remote` keyboard but emits `bridge:*` callback data so
+ * taps reach handleBridgeCallback, not handleAskRemoteCallback.
+ */
+function buildBridgeKeyboard(
+  requestId: string,
+  questionIndex: number,
+  options: Array<{ label: string; description?: string }>,
+  allowCustom: boolean,
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  options.forEach((opt, i) => {
+    const label = opt.label;
+    const display =
+      label.length > BUTTON_LABEL_MAX_LENGTH
+        ? label.slice(0, BUTTON_LABEL_MAX_LENGTH - 1) + "…"
+        : label;
+    kb.text(display, `bridge:${requestId}:${questionIndex}:${i}`).row();
+  });
+  if (allowCustom) {
+    kb.text(
+      "✍️ Type custom answer",
+      `bridge:${requestId}:${questionIndex}:custom`,
+    );
+  }
+  return kb;
+}
+
+/**
+ * Post an AUQ-bridge question to a TG chat (with thread support). Returns
+ * the sent message_id so the orchestrator can edit/delete it on cancel.
+ *
+ * This is a parallel to postQuestionToTelegram for the bridge code path —
+ * it uses `bridge:*` callback data instead of `askremote:*` and doesn't
+ * touch pendingAsks (the bridge has its own registry).
+ */
+export async function sendBridgeQuestion(
+  api: Api,
+  args: {
+    requestId: string;
+    questionIndex: number;
+    chatId: number;
+    threadId?: number;
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+    allowCustom: boolean;
+  },
+): Promise<number> {
+  const trimmedQuestion = truncate(args.question, MAX_QUESTION_CHARS);
+  const trimmedOptions = args.options.map((o) => ({
+    label: truncate(o.label, MAX_OPTION_LABEL_CHARS),
+    description:
+      o.description !== undefined
+        ? truncate(o.description, MAX_OPTION_DESC_CHARS)
+        : undefined,
+  }));
+  const html = formatQuestion(trimmedQuestion, trimmedOptions);
+  const keyboard = buildBridgeKeyboard(
+    args.requestId,
+    args.questionIndex,
+    trimmedOptions,
+    args.allowCustom,
+  );
+  const sent = await api.sendMessage(args.chatId, html, {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+    ...(args.threadId !== undefined
+      ? { message_thread_id: args.threadId }
+      : {}),
+  });
+  return sent.message_id;
+}
+
+/**
+ * Edit a previously-sent bridge TG card to remove buttons and indicate the
+ * question was resolved (either answered on another surface or cancelled
+ * locally). Best-effort — swallows errors since the card may already be
+ * stale (deleted by the user, etc.).
+ */
+export async function editBridgeCardCancelled(
+  api: Api,
+  chatId: number,
+  messageId: number,
+  threadId: number | undefined,
+  reason:
+    | "answered_locally"
+    | "answered_on_web"
+    | "answered_on_tg"
+    | "cancelled",
+): Promise<void> {
+  const label = {
+    answered_locally: "✓ Answered locally",
+    answered_on_web: "✓ Answered on Web",
+    answered_on_tg: "✓ Answered on TG",
+    cancelled: "✗ Cancelled",
+  }[reason];
+  await api
+    .editMessageText(chatId, messageId, label)
+    .catch((err) => debug(`bridge card edit failed: ${err}`));
+}
+
+// ── AUQ-bridge callback routing ─────────────────────────────────────────────
+
+/**
+ * Handle a button tap with callback_data of shape
+ *   `bridge:<requestId>:<questionIndex>:<optionIndex|custom>`
+ *
+ * Returns true if the callback was for a bridge:* button (consumed); false if
+ * the prefix doesn't match.
+ *
+ * Custom-text path: installs a one-shot callback into customBridgeTextPending
+ * (same (chat, thread) key as customTextPending). tryConsumeCustomTextAnswer
+ * checks that map first so the next free-text message in the thread is
+ * delivered to _injectTgAnswer rather than to an ask_remote entry.
+ */
+export async function handleBridgeCallback(
+  api: Api,
+  callbackData: string,
+  callbackQueryId: string,
+  chatId: number,
+  threadId: number | undefined,
+): Promise<boolean> {
+  if (!callbackData.startsWith("bridge:")) return false;
+
+  const parts = callbackData.split(":");
+  // Expected: ["bridge", requestId, questionIndex, tag]
+  if (parts.length !== 4) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "invalid bridge callback" })
+      .catch(() => {});
+    return true;
+  }
+
+  const requestId = parts[1]!;
+  const questionIndex = parseInt(parts[2]!, 10);
+  const tag = parts[3]!;
+
+  if (!Number.isFinite(questionIndex)) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "invalid question index" })
+      .catch(() => {});
+    return true;
+  }
+
+  const { get } = await import("./auq-bridge-registry");
+  const bridge = get(requestId);
+  if (!bridge) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "expired" })
+      .catch(() => {});
+    return true;
+  }
+
+  const q = bridge.questions[questionIndex];
+  if (!q) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "invalid question" })
+      .catch(() => {});
+    return true;
+  }
+
+  if (tag === "custom") {
+    // Install a one-shot waiter: the next text message in this (chat, thread)
+    // will be delivered to _injectTgAnswer for this requestId + questionIndex.
+    const k = customKey(chatId, threadId);
+    customBridgeTextPending.set(k, (text: string) => {
+      void import("./auq-bridge").then(({ _injectTgAnswer }) => {
+        _injectTgAnswer(requestId, questionIndex, text);
+      });
+    });
+    await api
+      .answerCallbackQuery(callbackQueryId, {
+        text: "Type your answer in chat",
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  const optionIndex = parseInt(tag, 10);
+  if (!Number.isFinite(optionIndex) || !q.options[optionIndex]) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "invalid option" })
+      .catch(() => {});
+    return true;
+  }
+
+  const answer = q.options[optionIndex]!.label;
+  const { _injectTgAnswer } = await import("./auq-bridge");
+  if (_injectTgAnswer(requestId, questionIndex, answer)) {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: `✓ ${answer}` })
+      .catch(() => {});
+  } else {
+    await api
+      .answerCallbackQuery(callbackQueryId, { text: "already answered" })
+      .catch(() => {});
+  }
+  return true;
+}
+
 // ── Test hooks ─────────────────────────────────────────────────────────
 
 /** Test-only: clear all pending state (including any open timers). */
@@ -459,6 +707,7 @@ export function _resetForTests(): void {
   }
   pendingAsks.clear();
   customTextPending.clear();
+  customBridgeTextPending.clear();
   botApi = null;
   timeoutOvershootMs = DEFAULT_TIMEOUT_OVERSHOOT_MS;
 }

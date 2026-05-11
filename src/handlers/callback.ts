@@ -64,7 +64,7 @@ import {
   stopProcess,
   buildExecuteMenu,
 } from "./execute";
-import { handleAskRemoteCallback } from "./relay-ask";
+import { handleAskRemoteCallback, handleBridgeCallback } from "./relay-ask";
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -643,6 +643,24 @@ export async function handleCallback(ctx: Context): Promise<void> {
       ctx.api,
       callbackData,
       queryId,
+    );
+    if (consumed) return;
+  }
+
+  // AUQ-bridge inline keyboard: bridge:<requestId>:<questionIndex>:<optionIndex|custom>
+  if (callbackData.startsWith("bridge:")) {
+    const queryId = ctx.callbackQuery?.id;
+    if (!queryId) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const threadId = ctx.callbackQuery?.message?.message_thread_id;
+    const consumed = await handleBridgeCallback(
+      ctx.api,
+      callbackData,
+      queryId,
+      chatId,
+      threadId,
     );
     if (consumed) return;
   }
