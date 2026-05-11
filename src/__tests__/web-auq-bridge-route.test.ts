@@ -165,4 +165,33 @@ describe("GET /api/auq-bridge/:id/answer", () => {
     });
     expect(res.status).toBe(408);
   });
+
+  test("deletes the registry entry when the long-poll client disconnects", async () => {
+    const app = await buildApp();
+    const { register, _allForTests } =
+      await import("../handlers/auq-bridge-registry");
+    register({
+      requestId: "auq_abort",
+      toolUseId: "t",
+      sessionName: "s",
+      chatId: 1,
+      threadId: 2,
+      questions: [{ question: "Q", options: [{ label: "A" }, { label: "B" }] }],
+    });
+    expect(_allForTests().has("auq_abort")).toBe(true);
+
+    const ac = new AbortController();
+    const req = new Request(
+      "http://local/api/auq-bridge/auq_abort/answer?wait_ms=2000",
+      {
+        headers: { Authorization: `Bearer ${SECRET}` },
+        signal: ac.signal,
+      },
+    );
+    void Promise.resolve(app.fetch(req)).catch(() => null);
+    await new Promise((r) => setTimeout(r, 20));
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(_allForTests().has("auq_abort")).toBe(false);
+  });
 });

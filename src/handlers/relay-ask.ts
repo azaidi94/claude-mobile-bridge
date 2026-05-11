@@ -594,7 +594,9 @@ export async function editBridgeCardCancelled(
     answered_on_tg: "✓ Answered on TG",
     cancelled: "✗ Cancelled",
   }[reason];
-  await api.editMessageText(chatId, messageId, label).catch(() => {});
+  await api
+    .editMessageText(chatId, messageId, label)
+    .catch((err) => debug(`bridge card edit failed: ${err}`));
 }
 
 // ── AUQ-bridge callback routing ─────────────────────────────────────────────

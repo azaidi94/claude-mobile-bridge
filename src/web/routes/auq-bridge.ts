@@ -69,6 +69,9 @@ export function createAuqBridgeRouter(): Hono {
       parseInt(c.req.query("wait_ms") ?? "30000", 10) || 30000,
       60_000,
     );
+    // If the long-poll client disconnects before we resolve, drop the registry
+    // entry so it doesn't leak (worker can re-POST a fresh bridge if needed).
+    c.req.raw.signal.addEventListener("abort", () => deleteEntry(id));
     const result = await waitFor(id, waitMs);
     if (result.status === "timeout") return c.json({ status: "timeout" }, 408);
     deleteEntry(id);

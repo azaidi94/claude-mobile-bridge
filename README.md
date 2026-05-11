@@ -68,12 +68,13 @@ echo "RELAY_AUQ_SECRET=$(openssl rand -hex 32)" >> .env
 
 **2. Restart the bot** so it picks up the new env var.
 
-**3. Install the hook scripts** to `~/.claude/hooks/` (you'll need both `claude-remote-auq-bridge.sh` and `claude-remote-auq-worker.ts` — copy them from this repo's release artifacts or symlink them from a checkout):
+**3. Install the hook scripts** — symlinks `hooks/claude-remote-auq-bridge.sh` and `hooks/claude-remote-auq-worker.ts` into `~/.claude/hooks/`:
 
 ```bash
-chmod +x ~/.claude/hooks/claude-remote-auq-bridge.sh
-chmod +x ~/.claude/hooks/claude-remote-auq-worker.ts
+bun run install-hooks
 ```
+
+Symlinks (not copies), so edits in the checkout apply immediately without re-installing.
 
 **4. Register the `PreToolUse` hook** in `~/.claude/settings.json` (replace `<your-username>` with your actual username):
 

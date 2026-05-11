@@ -2,9 +2,7 @@ import "./ensure-test-env";
 import { describe, test, expect } from "bun:test";
 
 async function load() {
-  return import(
-    `${process.env.HOME}/.claude/hooks/claude-remote-auq-worker.ts`
-  );
+  return import(`${import.meta.dir}/../../hooks/claude-remote-auq-worker.ts`);
 }
 
 describe("worker: generateTmuxKeys", () => {

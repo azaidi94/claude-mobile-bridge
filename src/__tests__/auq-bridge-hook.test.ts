@@ -4,10 +4,7 @@ import { spawnSync } from "child_process";
 import { join } from "path";
 import { existsSync } from "fs";
 
-const HOOK = join(
-  process.env.HOME!,
-  ".claude/hooks/claude-remote-auq-bridge.sh",
-);
+const HOOK = join(import.meta.dir, "../../hooks/claude-remote-auq-bridge.sh");
 
 describe("AUQ-bridge hook script", () => {
   test("exists and is executable", () => {
