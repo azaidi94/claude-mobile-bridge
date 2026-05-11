@@ -272,6 +272,33 @@ export function createSessionsRouter(): Hono {
     }>();
     const askId = String(body.ask_id ?? "");
     if (!askId) return c.json({ error: "ask_id required" }, 400);
+
+    // AUQ-bridge route — handled before the MCP ask_remote path so bridge:*
+    // askIds never reach submitAnswerFromWeb (which is for MCP-only).
+    if (askId.startsWith("bridge:")) {
+      const { parseBridgeAskId, _injectWebAnswer } =
+        await import("../../handlers/auq-bridge");
+      const parsed = parseBridgeAskId(askId);
+      if (!parsed) return c.json({ error: "invalid bridge askId" }, 400);
+      if (body.cancel) {
+        // M1: cancellation from Web UI isn't supported for the bridge (the TG
+        // side has no way to cancel either; cancellation only flows from the
+        // local TUI via bus tool_result observation).
+        return c.json({ error: "cancel not supported for bridge" }, 400);
+      }
+      const answer = String(body.answer ?? "");
+      if (!answer.trim()) return c.json({ error: "answer required" }, 400);
+      const ok = _injectWebAnswer(
+        parsed.requestId,
+        parsed.questionIndex,
+        answer,
+      );
+      return ok
+        ? c.json({ ok: true })
+        : c.json({ error: "bridge not pending" }, 404);
+    }
+
+    // Existing MCP ask_remote path (unchanged)
     if (body.cancel) {
       const ok = cancelAnswerFromWeb(askId);
       return ok

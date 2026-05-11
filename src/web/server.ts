@@ -4,6 +4,7 @@ import { createSessionsRouter } from "./routes/sessions";
 import { createAgentsRouter } from "./routes/agents";
 import { createSystemRouter } from "./routes/system";
 import { createTasksRouter } from "./routes/tasks";
+import { createAuqBridgeRouter } from "./routes/auq-bridge";
 import { WEB_PORT, WEB_URL } from "../config";
 import { info } from "../logger";
 import { resolve, dirname } from "path";
@@ -42,6 +43,7 @@ export function startWebServer(): void {
   app.route("/api/agents", createAgentsRouter());
   app.route("/api/system", createSystemRouter());
   app.route("/api/tasks", createTasksRouter());
+  app.route("/api/auq-bridge", createAuqBridgeRouter());
 
   // Cache-Control headers. Hashed assets in /assets/ are safe to cache forever
   // (the filename changes per build); index.html must always revalidate or the

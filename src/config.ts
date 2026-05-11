@@ -313,6 +313,14 @@ export const WEB_URL =
 export const WEB_APP_SHORT_URL = process.env.WEB_APP_SHORT_URL?.trim() || "";
 
 /**
+ * Shared secret the AUQ-bridge hook + worker include as Bearer auth when
+ * calling /api/auq-bridge. Localhost-only by design, but the secret stops
+ * any other local process from hijacking pending AUQs. Empty = bridge
+ * disabled (hook will refuse to spawn workers).
+ */
+export const RELAY_AUQ_SECRET = process.env.RELAY_AUQ_SECRET?.trim() || "";
+
+/**
  * If true, bypass auth for direct-to-port requests from loopback or RFC 1918
  * LAN addresses (no X-Forwarded-For / X-Real-IP header).
  * Safe behind a reverse proxy because proxies always set X-Forwarded-For.

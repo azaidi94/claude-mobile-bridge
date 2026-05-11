@@ -18,6 +18,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Interrupt with `!`** - Prefix message to interrupt current query
 - **MCP support** - Configure external tools in `mcp-config.ts`
 - **Interactive buttons** - Claude can present options as tappable buttons
+- **Remote-answerable AskUserQuestion** - Built-in `AskUserQuestion` cards relay to Telegram and the Web UI via a `PreToolUse` hook; tap an option on mobile (or answer locally) to resolve the desktop's clarifying question — first answer wins.
 
 ## Quick Start
 
@@ -48,6 +49,65 @@ TELEGRAM_ALLOWED_USERS=123456789  # Your Telegram user ID (get from @userinfobot
 ```
 
 See `.env.example` for all options (working dir, allowed paths, voice transcription, rate limits, etc).
+
+### AskUserQuestion remote bridge (optional)
+
+When Claude Code calls its built-in `AskUserQuestion`, by default it blocks the desktop terminal waiting for a local answer. This bridge surfaces the question on Telegram and the Web UI in parallel — first answer on any surface wins.
+
+**1. Generate a shared secret in `.env`:**
+
+```bash
+echo "RELAY_AUQ_SECRET=$(openssl rand -hex 32)" >> .env
+```
+
+> **Important**: also export the secret in your shell profile (`~/.bash_profile` or `~/.zshrc`) so the PreToolUse hook can read it when CC spawns it. The bot reads from `.env`, but the hook runs as a child of CC's shell, not the bot.
+>
+> ```bash
+> echo 'export RELAY_AUQ_SECRET="..."' >> ~/.bash_profile  # use the same value as in .env
+> ```
+
+**2. Restart the bot** so it picks up the new env var.
+
+**3. Install the hook scripts** to `~/.claude/hooks/` (you'll need both `claude-remote-auq-bridge.sh` and `claude-remote-auq-worker.ts` — copy them from this repo's release artifacts or symlink them from a checkout):
+
+```bash
+chmod +x ~/.claude/hooks/claude-remote-auq-bridge.sh
+chmod +x ~/.claude/hooks/claude-remote-auq-worker.ts
+```
+
+**4. Register the `PreToolUse` hook** in `~/.claude/settings.json` (replace `<your-username>` with your actual username):
+
+```json
+"PreToolUse": [
+  {
+    "matcher": "AskUserQuestion",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "/Users/<your-username>/.claude/hooks/claude-remote-auq-bridge.sh"
+      }
+    ]
+  }
+]
+```
+
+Drop this inside the existing `"hooks": { ... }` object alongside other entries like `Notification`/`SessionStart`/`Stop`.
+
+**5. Verify**: with the bot running and a Telegram topic watching the project, trigger an `AskUserQuestion` in that project's Claude session — the question card should appear in TG and Web UI within ~2s. Tap an option on mobile or answer locally; the first answer wins.
+
+Requirements:
+
+- Claude Code v2.1.85 or later (uses the `permissionDecision: "allow"` hook contract introduced there)
+- tmux (mobile-injected answers use `tmux send-keys` to type into the local TUI pane)
+- The bot must be running on the same host as Claude Code (the hook calls `localhost`)
+
+## Logs
+
+- `~/Library/Logs/claude-mobile-bridge/bot.log` — primary log, written by the bot itself. Rotates automatically:
+  - On every bot restart (existing non-empty bot.log → bot.log.1, shifting older archives up)
+  - When size exceeds 10MB
+  - Keeps 5 archives (`bot.log.1` through `bot.log.5`); oldest dropped on rotation
+- `~/Library/Logs/claude-mobile-bridge/bot-bootstrap.log` — launchd-managed stdout/stderr. Captures bun's startup output and any uncaught errors before the logger initializes. Grows unbounded but typically tiny.
 
 ### 3. Create a Forum Group
 

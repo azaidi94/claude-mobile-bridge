@@ -4,6 +4,13 @@
  * Multi-session Claude Code control via Telegram.
  */
 
+import { setupBotLogRotation } from "./log-rotation";
+import { homedir } from "os";
+import { join } from "path";
+setupBotLogRotation(
+  join(homedir(), "Library", "Logs", "claude-mobile-bridge", "bot.log"),
+);
+
 import { run } from "@grammyjs/runner";
 import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
@@ -48,6 +55,7 @@ import pkg from "../package.json";
 import { startWebServer } from "./web/server";
 import { WEB_ENABLED } from "./config";
 import { initRelayAsk } from "./handlers/relay-ask";
+import { setBotApiForBridge } from "./handlers/auq-bridge";
 
 let topicManager: TopicManager | undefined;
 
@@ -119,6 +127,7 @@ info(`bot: @${botInfo.username} ready`);
 // the bot connects to (now or later) auto-subscribes to ask_remote_request
 // frames and posts the question to TG with an inline keyboard.
 initRelayAsk(bot.api);
+setBotApiForBridge(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
 }
