@@ -194,4 +194,30 @@ describe("GET /api/auq-bridge/:id/answer", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(_allForTests().has("auq_abort")).toBe(false);
   });
+
+  test("waiters suspended on waitFor() unblock immediately when the entry is deleted", async () => {
+    // Regression: deleteEntry must resolve pending waiters so HTTP-poll
+    // handlers don't sit on a closed socket until the natural timeout.
+    const { register, waitFor, deleteEntry } =
+      await import("../handlers/auq-bridge-registry");
+    register({
+      requestId: "auq_delete_unblock",
+      toolUseId: "t",
+      sessionName: "s",
+      chatId: 1,
+      threadId: 2,
+      questions: [{ question: "Q", options: [{ label: "A" }, { label: "B" }] }],
+    });
+
+    const start = Date.now();
+    const pending = waitFor("auq_delete_unblock", 10_000);
+    // Give the waiter a tick to register, then delete.
+    await new Promise((r) => setTimeout(r, 5));
+    deleteEntry("auq_delete_unblock");
+    const result = await pending;
+    const elapsed = Date.now() - start;
+    expect(result.status).toBe("cancelled");
+    if (result.status === "cancelled") expect(result.reason).toBe("deleted");
+    expect(elapsed).toBeLessThan(500); // not waiting 10s — unblocked promptly
+  });
 });

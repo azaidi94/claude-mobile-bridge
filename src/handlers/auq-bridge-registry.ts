@@ -103,6 +103,20 @@ export function waitFor(
 }
 
 export function deleteEntry(requestId: string): void {
+  // Resolve any pending waiters before removing the entry so callers
+  // suspended on waitFor() unblock immediately rather than sitting on a
+  // dead socket until the natural timeout. Without this, an HTTP-poll
+  // disconnect would unhook the registry entry but leave the handler's
+  // `await waitFor(id, waitMs)` running for up to 60s.
+  const b = bridges.get(requestId);
+  if (b && b.waiters.length > 0) {
+    const cancelled: BridgeResolution = {
+      status: "cancelled",
+      reason: "deleted",
+    };
+    for (const w of b.waiters) w(cancelled);
+    b.waiters = [];
+  }
   bridges.delete(requestId);
 }
 
