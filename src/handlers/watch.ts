@@ -45,6 +45,7 @@ import {
   forceRefresh,
 } from "../sessions";
 import { info, debug, warn, elapsedMs } from "../logger";
+import { isBridgeOnline } from "../bridge-health";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
@@ -193,6 +194,11 @@ export interface WatchState extends TailDisplayState {
    * notification ping with the elapsed time. Cleared after firing.
    */
   pendingRunCompletion?: { startedAt: number; prompt: string };
+  /**
+   * Tail events dropped while the TG bridge was offline. Flushed as one
+   * summary message when bridge-health flips back to online.
+   */
+  skippedWhileOffline?: number;
   /**
    * True when the last JSONL event was assistant text/tool/thinking — i.e.
    * Claude is "mid-turn" from the watchdog's perspective. Cleared on user /
@@ -355,6 +361,34 @@ export function isWatchingAny(chatId: number): boolean {
     if (k.startsWith(prefix)) return true;
   }
   return false;
+}
+
+/**
+ * Bridge-recovery hook. Walks active watches and sends one summary per
+ * topic for any events that were dropped while bridge-health was offline.
+ * Called from index.ts when bridge-health flips back online.
+ */
+export async function flushBridgeReconnectSummaries(
+  botApi: Api,
+): Promise<void> {
+  for (const state of watches.values()) {
+    const skipped = state.skippedWhileOffline ?? 0;
+    if (skipped === 0) continue;
+    state.skippedWhileOffline = 0;
+    try {
+      await botApi.sendMessage(
+        state.chatId,
+        `⏸ <i>Skipped ${skipped} watch event${skipped === 1 ? "" : "s"} while bridge was offline. Scroll the desktop JSONL for full history.</i>`,
+        {
+          parse_mode: "HTML",
+          message_thread_id: state.threadId,
+          disable_notification: true,
+        },
+      );
+    } catch (err) {
+      warn(`watch: flush reconnect summary failed: ${err}`);
+    }
+  }
 }
 
 /**
@@ -1279,6 +1313,18 @@ export function handleTailEvent(
   threadId?: number,
 ): void {
   if (state.finalReplyReceived) return;
+
+  // Drop sends while the bridge is offline — grammy's send queue otherwise
+  // accumulates and drains at TG's ~1 msg/sec on reconnect. Watchdog state
+  // still ticks so it doesn't false-fire as "stuck" once the bridge is back.
+  if (!isBridgeOnline()) {
+    if (isWatchState(state)) {
+      state.lastEventTime = Date.now();
+      state.watchdogFired = false;
+      state.skippedWhileOffline = (state.skippedWhileOffline ?? 0) + 1;
+    }
+    return;
+  }
 
   const { chatId } = state;
   const threadOpts = threadId ? { message_thread_id: threadId } : {};

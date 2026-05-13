@@ -39,7 +39,9 @@ import {
   startWatchdog,
   stopWatchByName,
   stopWatchdog,
+  flushBridgeReconnectSummaries,
 } from "./handlers";
+import { onBridgeChange } from "./bridge-health";
 import {
   loadTopicStore,
   setChatId,
@@ -135,6 +137,15 @@ if (WEB_ENABLED) {
 // Watchdog scans active watches for mid-turn idle and pings the topic
 // (or auto-sends "continue" when WATCHDOG_AUTO_CONTINUE is set).
 startWatchdog(bot.api);
+
+// On TG reconnect, emit one "skipped N events" summary per affected watch
+// instead of replaying the backlog one-by-one through grammy's send queue.
+onBridgeChange((online) => {
+  if (!online) return;
+  flushBridgeReconnectSummaries(bot.api).catch((err) =>
+    warn(`flush reconnect summaries failed: ${err}`),
+  );
+});
 
 // Periodic retry for topics whose startup auto-watch failed (e.g. session
 // briefly invisible to scanSessions when the bot booted). Skip topics that

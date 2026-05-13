@@ -51,6 +51,7 @@ export {
   startWatchdog,
   stopWatchdog,
   markPendingRunCompletion,
+  flushBridgeReconnectSummaries,
 } from "./watch";
 export { sendViaRelay, type RelayResult } from "./relay-bridge";
 export {

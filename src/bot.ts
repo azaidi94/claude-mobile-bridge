@@ -8,6 +8,7 @@
 import { Bot } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { installBridgeHealthTransformer } from "./bridge-health";
 import { ALLOWED_USERS } from "./config";
 import { getGroupModeSetting } from "./settings";
 import {
@@ -73,6 +74,11 @@ export function createBot(options: BotOptions): Bot {
   // (e.g. after a long reply) doesn't silently drop the next message in
   // sendHtmlWithPlainFallback. Caps wait at 60s — anything longer fails fast.
   bot.api.config.use(autoRetry({ maxDelaySeconds: 60, maxRetryAttempts: 5 }));
+
+  // Track Telegram reachability AFTER autoRetry so we only see post-retry
+  // failures. Watch handlers consult isBridgeOnline() to drop tail-event
+  // sends during outages instead of letting them pile up in grammy's queue.
+  installBridgeHealthTransformer(bot.api);
 
   // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(

@@ -36,6 +36,9 @@ const mockBot: any = {
 
 mock.module("grammy", () => ({
   Bot: mock(() => mockBot),
+  // bridge-health imports HttpError to discriminate network vs API errors.
+  HttpError: class HttpError extends Error {},
+  GrammyError: class GrammyError extends Error {},
 }));
 
 mock.module("@grammyjs/runner", () => ({
