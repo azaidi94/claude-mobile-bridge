@@ -21,3 +21,11 @@ export {
 } from "./topic-router";
 
 export { TopicManager } from "./topic-manager";
+
+export {
+  recordTopicCreated,
+  recordTopicDeleted,
+  readLedger,
+  readActiveLedger,
+} from "./topic-ledger";
+export type { LedgerEntry } from "./topic-ledger";

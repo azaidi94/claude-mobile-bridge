@@ -31,6 +31,16 @@ let syncTimer: Timer | null = null;
 let stopped = false;
 let telegramForward: TelegramForward | undefined;
 
+/**
+ * Session names of Cursor windows with a currently-connected bridge. This is
+ * the authoritative liveness signal for cursor sessions — when a window closes,
+ * `syncBridges()` drops its entry — so /cleanzombie can tell a live cursor
+ * topic from a stale one without relying on transcript-file existence.
+ */
+export function getActiveCursorSessionNames(): Set<string> {
+  return new Set([...bridges.values()].map((b) => b.sessionName));
+}
+
 export function startCursorBridge(opts?: TelegramForward): void {
   stopped = false;
   telegramForward = opts;
