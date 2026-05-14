@@ -5,6 +5,7 @@ import {
   deleteEntry,
 } from "../../handlers/auq-bridge-registry";
 import { findWatchByDir } from "../../handlers/watch";
+import { getTopicBySessionDir, getTopicStore } from "../../topics/topic-store";
 
 interface PostBody {
   request_id: string;
@@ -40,26 +41,44 @@ export function createAuqBridgeRouter(): Hono {
     if (!body?.request_id || !body?.cwd || !body?.questions?.length) {
       return c.json({ error: "missing fields" }, 400);
     }
+    // Route order:
+    //  1. Active /watch for the cwd (legacy single-topic / explicit subscribe)
+    //  2. Topic store mapping by sessionDir (group-forum mode: each session
+    //     has its own topic, so the topic is the routing key — no /watch
+    //     required). Without this fallback, AUQs from sessions that have a
+    //     topic but no active watch silently 404 and never reach Telegram.
     const watch = findWatchByDir(body.cwd);
-    if (!watch) return c.json({ error: "no active watch for cwd" }, 404);
+    let chatId: number;
+    let threadId: number;
+    let sessionName: string;
+    if (watch) {
+      chatId = watch.chatId;
+      threadId = watch.threadId;
+      sessionName = watch.sessionName;
+    } else {
+      const topic = getTopicBySessionDir(body.cwd);
+      const store = getTopicStore();
+      if (!topic || !store.chatId) {
+        return c.json({ error: "no watch or topic for cwd" }, 404);
+      }
+      chatId = store.chatId;
+      threadId = topic.topicId;
+      sessionName = topic.sessionName;
+    }
 
     register({
       requestId: body.request_id,
       toolUseId: body.tool_use_id,
-      sessionName: watch.sessionName,
-      chatId: watch.chatId,
-      threadId: watch.threadId,
+      sessionName,
+      chatId,
+      threadId,
       questions: body.questions,
       tmuxPane: body.tmux_pane,
     });
     const { startBridgeFromRoute } = await import("../../handlers/auq-bridge");
     startBridgeFromRoute(body.request_id).catch(() => {});
 
-    return c.json({
-      request_id: body.request_id,
-      chatId: watch.chatId,
-      threadId: watch.threadId,
-    });
+    return c.json({ request_id: body.request_id, chatId, threadId });
   });
 
   app.get("/:id/answer", async (c) => {

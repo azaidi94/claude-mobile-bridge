@@ -101,7 +101,19 @@ async function main(): Promise<void> {
     }),
   }).catch(() => null);
 
-  if (!postRes || !postRes.ok) return;
+  if (!postRes) {
+    console.error(
+      `auq-bridge-worker: POST ${BASE} failed (network) request_id=${input.request_id} cwd=${input.cwd}`,
+    );
+    return;
+  }
+  if (!postRes.ok) {
+    const bodyText = await postRes.text().catch(() => "");
+    console.error(
+      `auq-bridge-worker: POST ${BASE} → HTTP ${postRes.status} ${bodyText} request_id=${input.request_id} cwd=${input.cwd}`,
+    );
+    return;
+  }
 
   let result: AnswerResp | null = null;
   for (let i = 0; i < MAX_LONGPOLL_RETRIES; i++) {
