@@ -47,6 +47,8 @@ import {
   setChatId,
   getTopicBySession,
   getThreadId,
+  getTopicStore,
+  backfillLedgerFromStore,
   TopicManager,
 } from "./topics";
 import { createBot } from "./bot";
@@ -94,6 +96,16 @@ info(
 await loadChatIds();
 await loadPinnedMessageIds();
 await loadTopicStore();
+
+// Backfill the topic ledger from the store on startup, so any mapping
+// that pre-dates the ledger is visible to /cleanzombie's liveness pass.
+// Idempotent — already-recorded topic ids are skipped.
+try {
+  const added = await backfillLedgerFromStore(getTopicStore().topics);
+  if (added > 0) info(`topic-ledger: backfilled ${added} pre-ledger topic(s)`);
+} catch (err) {
+  warn(`topic-ledger: backfill failed: ${err}`);
+}
 
 // Wire up mode change callback to update pinned status
 session.onModeChange = (isPlanMode) => {
@@ -173,7 +185,6 @@ const autoWatchRetryTimer: Timer = setInterval(() => {
 
 const chatIdSet = getChatIds();
 // Prefer the stored topic chat ID (may be a group), fall back to first registered chat
-import { getTopicStore } from "./topics";
 const storedTopicChatId = getTopicStore().chatId;
 const primaryChatId =
   storedTopicChatId || ([...chatIdSet][0] as number | undefined);

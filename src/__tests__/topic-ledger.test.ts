@@ -116,6 +116,64 @@ describe("topic-ledger", () => {
     expect(active.map((e) => e.topicId)).toEqual([100]);
   });
 
+  test("backfillLedgerFromStore appends a created event for missing topicIds and skips known ones", async () => {
+    const {
+      recordTopicCreated,
+      recordTopicDeleted,
+      backfillLedgerFromStore,
+      readLedger,
+    } = await import("../topics/topic-ledger");
+    // Pre-existing: topic 100 in the ledger (already created), topic 200 was created+deleted.
+    await recordTopicCreated({
+      topicId: 100,
+      sessionName: "alpha",
+      sessionDir: "/repo/alpha",
+    });
+    await recordTopicCreated({
+      topicId: 200,
+      sessionName: "beta",
+      sessionDir: "/repo/beta",
+    });
+    await recordTopicDeleted(200);
+
+    // Store has 100, 200, 300, 400 — 300/400 are pre-ledger mappings.
+    const added = await backfillLedgerFromStore([
+      { topicId: 100, sessionName: "alpha", sessionDir: "/repo/alpha" },
+      { topicId: 200, sessionName: "beta", sessionDir: "/repo/beta" },
+      {
+        topicId: 300,
+        sessionName: "gamma",
+        sessionDir: "/repo/gamma",
+        sessionId: "id-g",
+      },
+      { topicId: 400, sessionName: "delta", sessionDir: "/repo/delta" },
+    ]);
+    expect(added).toBe(2);
+
+    // Idempotent — second run adds nothing.
+    expect(
+      await backfillLedgerFromStore([
+        { topicId: 100, sessionName: "alpha", sessionDir: "/repo/alpha" },
+        { topicId: 200, sessionName: "beta", sessionDir: "/repo/beta" },
+        { topicId: 300, sessionName: "gamma", sessionDir: "/repo/gamma" },
+        { topicId: 400, sessionName: "delta", sessionDir: "/repo/delta" },
+      ]),
+    ).toBe(0);
+
+    // Topic 200 stays tombstoned (a backfill must not resurrect a deleted entry).
+    const all = await readLedger();
+    expect(all.find((e) => e.topicId === 200)!.deletedAt).toBeTruthy();
+    // The backfilled entries land as active.
+    expect(all.find((e) => e.topicId === 300)).toMatchObject({
+      sessionName: "gamma",
+      sessionDir: "/repo/gamma",
+      sessionId: "id-g",
+    });
+    expect(all.find((e) => e.topicId === 400)).toMatchObject({
+      sessionName: "delta",
+    });
+  });
+
   test("appends one JSONL line per event", async () => {
     const { recordTopicCreated, recordTopicDeleted } =
       await import("../topics/topic-ledger");
