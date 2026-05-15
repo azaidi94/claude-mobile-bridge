@@ -135,6 +135,12 @@ export function getSessionByTopic(topicId: number): TopicMapping | undefined {
   return store.topics.find((t) => t.topicId === topicId);
 }
 
+export function getTopicBySessionDir(
+  sessionDir: string,
+): TopicMapping | undefined {
+  return store.topics.find((t) => t.sessionDir === sessionDir);
+}
+
 export function updateTopicMapping(
   sessionName: string,
   update: Partial<TopicMapping>,

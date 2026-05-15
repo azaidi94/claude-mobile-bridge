@@ -20,6 +20,8 @@ describe("POST /api/auq-bridge", () => {
     const { _resetWatchesForTests, _registerWatchForTests } =
       await import("../handlers/watch");
     _resetWatchesForTests();
+    const { clearTopicStore } = await import("../topics/topic-store");
+    clearTopicStore();
     _registerWatchForTests({
       chatId: 100,
       threadId: 42,
@@ -86,6 +88,51 @@ describe("POST /api/auq-bridge", () => {
       }),
     });
     expect(res.status).toBe(404);
+  });
+
+  test("200 + request_id falls back to topic store when no watch matches", async () => {
+    // Group-forum mode: each session has its own topic, so the topic↔sessionDir
+    // mapping is the routing key — no active /watch is required for AUQ to
+    // reach Telegram.
+    const { _resetWatchesForTests } = await import("../handlers/watch");
+    _resetWatchesForTests();
+    const { clearTopicStore, setChatId, addTopicMapping } =
+      await import("../topics/topic-store");
+    clearTopicStore();
+    setChatId(-100200300);
+    addTopicMapping({
+      topicId: 9999,
+      sessionName: "saas-builder",
+      sessionDir: "/repo/saas",
+      sessionId: "sid",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    const app = await buildApp();
+    const res = await app.request("/api/auq-bridge", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({
+        request_id: "auq_topic",
+        tool_use_id: "toolu_z",
+        session_id: "sid",
+        cwd: "/repo/saas",
+        questions: [{ question: "Q", options: [{ label: "A" }] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      request_id: string;
+      chatId: number;
+      threadId: number;
+    };
+    expect(body.request_id).toBe("auq_topic");
+    expect(body.chatId).toBe(-100200300);
+    expect(body.threadId).toBe(9999);
   });
 
   test("200 + request_id when watch matches", async () => {
