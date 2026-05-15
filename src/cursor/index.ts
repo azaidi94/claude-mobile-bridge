@@ -5,9 +5,11 @@ import { info, warn } from "../logger";
 import { homedir } from "os";
 import type { Api } from "grammy";
 import { getTopicBySession } from "../topics";
-import { addCursorSession, removeSession } from "../sessions";
+import { addCursorSession, removeSession, getSessions } from "../sessions";
+import { scanPortFiles } from "../relay/discovery";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
+import { basename } from "path";
 
 const CURSOR_CDP_PORT = Number(process.env.CURSOR_CDP_PORT ?? 9222);
 const SYNC_INTERVAL_MS = 5_000;
@@ -121,7 +123,7 @@ async function attachBridge(target: CdpTarget): Promise<void> {
   // current target is always new — no need to check before disambiguating.
   const finalName = findUniqueName(sessionName, target.id);
 
-  const sessionDir = homedir();
+  const sessionDir = await resolveCursorSessionDir(target.title);
 
   try {
     const cdpClient = await connectCdpTarget(target.webSocketDebuggerUrl);
@@ -249,4 +251,69 @@ function deriveSessionName(title: string): string {
   const last = dashSplit[dashSplit.length - 1] ?? title;
   const candidate = last.trim().slice(0, 40).replace(/\s+/g, "-").toLowerCase();
   return candidate ? `cursor-${candidate}` : "cursor-ide";
+}
+
+/**
+ * Cursor's CDP /json/list doesn't expose the workspace fsPath — only a window
+ * title and the workbench-app URL. Fall back to looking at the workspace name
+ * the title carries (the segment after " — ") and matching it against the
+ * basename of known project directories: live claude-code relay processes
+ * (scanPortFiles), and any session the bot already tracks (getSessions).
+ *
+ * Returns the matching directory when exactly one is found, otherwise homedir()
+ * — same default the bridge had before. The single-match rule avoids guessing
+ * when two unrelated projects happen to share a basename.
+ */
+async function resolveCursorSessionDir(title: string): Promise<string> {
+  const candidates = new Set<string>();
+  try {
+    const portFiles = await scanPortFiles();
+    for (const pf of portFiles) if (pf.cwd) candidates.add(pf.cwd);
+  } catch {
+    // scanPortFiles is best-effort here — fall through to getSessions.
+  }
+  try {
+    for (const s of getSessions()) if (s.dir) candidates.add(s.dir);
+  } catch {
+    // Same.
+  }
+  return matchWorkspaceDir(title, candidates) ?? homedir();
+}
+
+/**
+ * Pure helper: pick the directory whose basename matches the workspace name
+ * carried in a Cursor window title. Returns the dir on a unique match, or
+ * null when there's no match or it's ambiguous (the caller falls back to
+ * homedir — better than guessing).
+ *
+ * Exported for testability.
+ */
+export function matchWorkspaceDir(
+  title: string,
+  knownDirs: Iterable<string>,
+): string | null {
+  const target = extractWorkspaceName(title);
+  if (!target) return null;
+  const matches = [...knownDirs].filter(
+    (dir) => normaliseName(basename(dir)) === target,
+  );
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+/**
+ * Extract the workspace-name portion of a Cursor window title.
+ * "2.1.141 — claude-mobile-bridge" → "claude-mobile-bridge"
+ * "build_newpod.sh — Monkey_OCR [SSH: …]" → "monkey_ocr"  (drops the [SSH] tag)
+ */
+export function extractWorkspaceName(title: string): string {
+  const dashSplit = title.split(/\s[—–-]\s/);
+  const last = dashSplit[dashSplit.length - 1] ?? title;
+  // Strip a trailing " [SSH: …]" / " [WSL: …]" suffix Cursor appends to remotes.
+  const stripped = last.replace(/\s*\[[^\]]+\]\s*$/, "");
+  return normaliseName(stripped.trim());
+}
+
+/** Lowercase + collapse whitespace so title basenames and dir basenames match. */
+function normaliseName(s: string): string {
+  return s.replace(/\s+/g, "-").toLowerCase();
 }
