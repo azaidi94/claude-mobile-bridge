@@ -5,47 +5,52 @@ async function load() {
   return import(`${import.meta.dir}/../../hooks/claude-remote-auq-worker.ts`);
 }
 
-describe("worker: generateTmuxKeys", () => {
-  test("labelled option → digit + Enter", async () => {
-    const { generateTmuxKeys } = await load();
-    const keys = generateTmuxKeys({
-      pane: "%12",
-      question: { options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
-      answer: "B",
-    });
-    expect(keys).toEqual([
-      ["send-keys", "-t", "%12", "Escape"],
-      ["send-keys", "-t", "%12", "2", "Enter"],
-    ]);
+describe("worker: paneContains (send-and-verify guard)", () => {
+  test("matches the question head within a rendered pane", async () => {
+    const { paneContains } = await load();
+    const pane = [
+      "  Some earlier output",
+      "  ╭─ Claude needs your input ─────────────╮",
+      "  │ Which database should we use for this │",
+      "  │ migration?                            │",
+      "  │  1. Postgres                          │",
+      "  │  2. MySQL                             │",
+      "  ╰───────────────────────────────────────╯",
+    ].join("\n");
+    expect(
+      paneContains(pane, "Which database should we use for this migration?"),
+    ).toBe(true);
   });
 
-  test("custom text → 'Type something' option + text + Enter", async () => {
-    const { generateTmuxKeys } = await load();
-    const keys = generateTmuxKeys({
-      pane: "%12",
-      question: { options: [{ label: "A" }, { label: "B" }] },
-      answer: "some custom thing",
-    });
-    expect(keys).toEqual([
-      ["send-keys", "-t", "%12", "Escape"],
-      ["send-keys", "-t", "%12", "3", "Enter"],
-      ["send-keys", "-t", "%12", "some custom thing", "Enter"],
-    ]);
+  test("returns false when the question is no longer on screen", async () => {
+    const { paneContains } = await load();
+    const pane = [
+      "  ╭─ Bash command ────────────────────────╮",
+      "  │ rm -rf ./build                        │",
+      "  │  1. Yes   2. No                       │",
+      "  ╰───────────────────────────────────────╯",
+    ].join("\n");
+    expect(
+      paneContains(pane, "Which database should we use for this migration?"),
+    ).toBe(false);
   });
 
-  test("custom text with special chars passes through (tmux send-keys handles its own escaping)", async () => {
-    const { generateTmuxKeys } = await load();
-    const keys = generateTmuxKeys({
-      pane: "%12",
-      question: { options: [{ label: "A" }, { label: "B" }] },
-      answer: "weird ' \" ; `chars`",
-    });
-    expect(keys[2]).toEqual([
-      "send-keys",
-      "-t",
-      "%12",
-      "weird ' \" ; `chars`",
-      "Enter",
-    ]);
+  test("tolerates collapsed whitespace from TUI line-wrapping", async () => {
+    const { paneContains } = await load();
+    // The needle head spans a wrapped line break in the pane.
+    const pane = "│ Pick an approach for the\n│ refactor please │";
+    expect(paneContains(pane, "Pick an approach for the refactor")).toBe(true);
+  });
+
+  test("short strings fall back to an exact substring check", async () => {
+    const { paneContains } = await load();
+    expect(paneContains("the answer is yes here", "yes", 6)).toBe(true);
+    expect(paneContains("no match in here", "yes", 6)).toBe(false);
+  });
+
+  test("empty needle never matches", async () => {
+    const { paneContains } = await load();
+    expect(paneContains("anything at all", "")).toBe(false);
+    expect(paneContains("anything at all", "   ")).toBe(false);
   });
 });
