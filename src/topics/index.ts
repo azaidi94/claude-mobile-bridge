@@ -27,5 +27,6 @@ export {
   recordTopicDeleted,
   readLedger,
   readActiveLedger,
+  backfillLedgerFromStore,
 } from "./topic-ledger";
 export type { LedgerEntry } from "./topic-ledger";

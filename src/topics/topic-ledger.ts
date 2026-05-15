@@ -125,3 +125,36 @@ export async function readActiveLedger(): Promise<LedgerEntry[]> {
     (e) => !e.deletedAt && Boolean(e.createdAt),
   );
 }
+
+/**
+ * Append a `created` event for every topic mapping whose topic id is missing
+ * from the ledger. Idempotent — re-runs do nothing once a mapping is recorded.
+ * Returns the number of entries backfilled.
+ *
+ * Use case: topics that existed before the ledger module shipped have no
+ * ledger entry, so /cleanzombie's liveness pass never sees them. Running this
+ * on bot startup (after loadTopicStore) brings the ledger in sync with the
+ * store, so going forward every tracked topic is visible to cleanzombie.
+ */
+export async function backfillLedgerFromStore(
+  mappings: ReadonlyArray<{
+    topicId: number;
+    sessionName: string;
+    sessionDir: string;
+    sessionId?: string;
+  }>,
+): Promise<number> {
+  const seen = new Set((await readLedger()).map((e) => e.topicId));
+  let added = 0;
+  for (const m of mappings) {
+    if (seen.has(m.topicId)) continue;
+    await recordTopicCreated({
+      topicId: m.topicId,
+      sessionName: m.sessionName,
+      sessionDir: m.sessionDir,
+      sessionId: m.sessionId,
+    });
+    added++;
+  }
+  return added;
+}
