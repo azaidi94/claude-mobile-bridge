@@ -498,6 +498,21 @@ export function formatToolResultSummary(
   return `✅ <b>${escapeHtml(safeName)}</b>: ${escapeHtml(truncate(resultContent, 80))}`;
 }
 
+const LOCAL_COMMAND_CAVEAT_RE =
+  /<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g;
+
+/**
+ * Strip Claude Code's `<local-command-caveat>` injection — a disclaimer CC
+ * prepends to user content captured during local-command (`!`-prefix) runs.
+ * Pure system noise; nothing to render in TG or the Web UI. Returns the
+ * caller's text with caveat tags removed and trimmed; empty string means
+ * the entry was entirely caveat.
+ */
+export function stripLocalCommandCaveat(text: string): string {
+  if (!text.includes("<local-command-caveat>")) return text.trim();
+  return text.replace(LOCAL_COMMAND_CAVEAT_RE, "").trim();
+}
+
 /**
  * Pretty-print Claude Code's `<task-notification>` injection (background-task
  * status that Claude reinjects as user-prompt content). Returns formatted HTML,
@@ -505,8 +520,7 @@ export function formatToolResultSummary(
  * its normal markdown path.
  */
 export function formatTaskNotification(text: string): string | null {
-  const re = /<task-notification>([\s\S]*?)<\/task-notification>/g;
-  if (!re.test(text)) return null;
+  if (!text.includes("<task-notification>")) return null;
 
   const statusIcon: Record<string, string> = {
     completed: "✅",
@@ -527,12 +541,13 @@ export function formatTaskNotification(text: string): string | null {
       };
       const status = get("status").toLowerCase();
       const summary = get("summary");
+      const eventDetail = get("event");
       const icon = statusIcon[status] ?? "🔔";
       const label = status ? `Task ${status}` : "Task update";
-      const headline = `${icon} <b>${escapeHtml(label)}</b>`;
-      return summary
-        ? `${headline}\n<i>${escapeHtml(truncate(summary, 280))}</i>`
-        : headline;
+      const lines = [`${icon} <b>${escapeHtml(label)}</b>`];
+      if (summary) lines.push(`<i>${escapeHtml(truncate(summary, 280))}</i>`);
+      if (eventDetail) lines.push(escapeHtml(truncate(eventDetail, 800)));
+      return lines.join("\n");
     },
   );
 

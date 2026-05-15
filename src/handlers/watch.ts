@@ -25,6 +25,7 @@ import {
   convertMarkdownToHtml,
   formatAskUserQuestion,
   formatTaskNotification,
+  stripLocalCommandCaveat,
   formatToolResultSummary,
   truncate,
 } from "../formatting";
@@ -1666,6 +1667,29 @@ export function handleTailEvent(
       // entries per message (text.ts's emit + this handler's emit).
       if (event.originChat === ownChat) break;
 
+      // <task-notification> is a Claude Stop-hook injection, not real user
+      // input. Render the card to TG and skip the bus emit — otherwise the
+      // cross-post subscriber forwards the raw XML as "🖥 Terminal: ..."
+      // and SSE/cursor consumers see it as a user message too.
+      const taskCard = formatTaskNotification(event.content);
+      if (taskCard) {
+        resetDisplaySegment(botApi, state);
+        botApi
+          .sendMessage(chatId, taskCard, {
+            parse_mode: "HTML",
+            ...threadOpts,
+            ...silent,
+          })
+          .catch(() => {});
+        break;
+      }
+
+      // Strip CC's <local-command-caveat> disclaimer (injected when the user
+      // runs a `!`-prefix local command). Empty after strip ⇒ pure noise, skip
+      // entirely. Otherwise propagate the cleaned text downstream.
+      const content = stripLocalCommandCaveat(event.content);
+      if (!content) break;
+
       // Always emit a user_message to the bus so SSE consumers (Web UI)
       // see the user input in a single, source-labelled remote pane.
       // Source labels:
@@ -1677,24 +1701,10 @@ export function handleTailEvent(
       globalEventBus.emit(busKey, {
         type: "user_message",
         source: event.originChat !== undefined ? "telegram" : "terminal",
-        content: event.content,
+        content,
       });
 
       resetDisplaySegment(botApi, state);
-
-      // <task-notification> XML is injected by Claude's Stop hook
-      // (originChat undefined). Render as a card to TG.
-      const taskCard = formatTaskNotification(event.content);
-      if (taskCard) {
-        botApi
-          .sendMessage(chatId, taskCard, {
-            parse_mode: "HTML",
-            ...threadOpts,
-            ...silent,
-          })
-          .catch(() => {});
-        break;
-      }
 
       // Native terminal input — setupCrossPostSubscription forwards the
       // bus emit above as "🖥 Terminal: ..." to TG.
@@ -1702,9 +1712,7 @@ export function handleTailEvent(
 
       // Foreign Telegram chat — direct send with cross-chat label.
       const preview =
-        event.content.length > 300
-          ? event.content.slice(0, 300) + "…"
-          : event.content;
+        content.length > 300 ? content.slice(0, 300) + "…" : content;
       const formatted = convertMarkdownToHtml(preview);
       const labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
       const labelPlain = `💬 Chat ${event.originChat}:`;
