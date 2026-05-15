@@ -3,11 +3,12 @@
  * In-memory cache with sync reads, async writes.
  */
 
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { homedir, tmpdir } from "os";
 import { dirname, join } from "path";
 import type { TopicMapping, TopicStore } from "../types";
 import { debug, info, warn } from "../logger";
+import { withFileLock } from "./file-lock";
 
 function storePath(): string {
   return (
@@ -91,7 +92,13 @@ export async function saveTopicStore(): Promise<void> {
   const path = storePath();
   try {
     await ensureStoreDir(path);
-    await writeFile(path, JSON.stringify(store, null, 2));
+    // Serialise writes across bot processes sharing this file, and write
+    // atomically (temp + rename) so a concurrent reader never sees torn JSON.
+    await withFileLock(path, async () => {
+      const tmp = `${path}.${process.pid}.tmp`;
+      await writeFile(tmp, JSON.stringify(store, null, 2));
+      await rename(tmp, path);
+    });
     debug(`topic-store: saved ${store.topics.length} mapping(s)`);
   } catch (err) {
     warn(`topic-store: save failed: ${err}`);
@@ -126,6 +133,12 @@ export function getTopicBySession(
 
 export function getSessionByTopic(topicId: number): TopicMapping | undefined {
   return store.topics.find((t) => t.topicId === topicId);
+}
+
+export function getTopicBySessionDir(
+  sessionDir: string,
+): TopicMapping | undefined {
+  return store.topics.find((t) => t.sessionDir === sessionDir);
 }
 
 export function updateTopicMapping(

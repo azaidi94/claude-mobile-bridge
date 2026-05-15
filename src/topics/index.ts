@@ -6,6 +6,7 @@ export {
   addTopicMapping,
   removeTopicMapping,
   getTopicBySession,
+  getTopicBySessionDir,
   getSessionByTopic,
   updateTopicMapping,
   clearTopicStore,
@@ -21,3 +22,12 @@ export {
 } from "./topic-router";
 
 export { TopicManager } from "./topic-manager";
+
+export {
+  recordTopicCreated,
+  recordTopicDeleted,
+  readLedger,
+  readActiveLedger,
+  backfillLedgerFromStore,
+} from "./topic-ledger";
+export type { LedgerEntry } from "./topic-ledger";
