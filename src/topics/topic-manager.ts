@@ -15,6 +15,7 @@ import {
 import { info, warn, debug } from "../logger";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 import { scanPortFiles, updatePortFile } from "../relay/discovery";
+import { recordTopicCreated, recordTopicDeleted } from "./topic-ledger";
 
 interface ReconcileSession {
   name: string;
@@ -115,6 +116,10 @@ export class TopicManager {
 
       info(`topic-manager: created topic ${topicId} for ${sessionName}`);
 
+      // Durable record so /cleanzombie can find this topic later even after
+      // bot.log rotates or the store mapping is dropped.
+      await recordTopicCreated({ topicId, sessionName, sessionDir, sessionId });
+
       const newPid = await this.findRelayPid(
         sessionName,
         sessionDir,
@@ -159,6 +164,9 @@ export class TopicManager {
     }
 
     removeTopicMapping(sessionName);
+    // Record in the ledger regardless of the Telegram call's outcome — either
+    // the topic is gone, or it was already gone; both mean "no longer ours".
+    await recordTopicDeleted(mapping.topicId);
   }
 
   async updateTopicStatus(sessionName: string, online: boolean): Promise<void> {

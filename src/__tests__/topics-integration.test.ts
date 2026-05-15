@@ -106,12 +106,15 @@ let tmpDir: string;
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "topics-integ-"));
   process.env.CLAUDE_TELEGRAM_TOPICS_FILE = join(tmpDir, "topics.json");
+  // createTopic/deleteTopic append to the ledger — isolate it from the real one.
+  process.env.CLAUDE_TELEGRAM_LEDGER_FILE = join(tmpDir, "topic-ledger.jsonl");
   clearTopicStore();
 });
 
 afterEach(async () => {
   clearTopicStore();
   delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
+  delete process.env.CLAUDE_TELEGRAM_LEDGER_FILE;
   await rm(tmpDir, { recursive: true, force: true });
 });
 

@@ -34,6 +34,12 @@ beforeAll(async () => {
     _topicStoreTmpDir,
     "topics.json",
   );
+  // createTopic/deleteTopic also append to the topic ledger — isolate it too,
+  // or tests would pollute the real ~/.claude-mobile-bridge/topic-ledger.jsonl.
+  process.env.CLAUDE_TELEGRAM_LEDGER_FILE = join(
+    _topicStoreTmpDir,
+    "topic-ledger.jsonl",
+  );
 });
 afterAll(async () => {
   // Cancel any pending 100ms debounced save and reset in-memory state so
@@ -42,6 +48,7 @@ afterAll(async () => {
   const { clearTopicStore } = await import("../topics/topic-store");
   clearTopicStore();
   delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
+  delete process.env.CLAUDE_TELEGRAM_LEDGER_FILE;
   await rm(_topicStoreTmpDir, { recursive: true, force: true });
 });
 

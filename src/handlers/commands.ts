@@ -32,7 +32,7 @@ import {
 } from "../settings";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isGeneralTopic, isSessionTopic, getTopicStore } from "../topics";
-import type { TopicManager } from "../topics";
+import type { TopicManager, LedgerEntry } from "../topics";
 import { isAuthorized, rateLimiter, isPathAllowed } from "../security";
 import {
   getSessions,
@@ -1568,6 +1568,42 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
 
   const live = new Set(store.topics.map((t) => t.topicId));
 
+  // Ledger pass — the durable record of every topic the bot created. A ledger
+  // entry is a zombie when its session is no longer live, judged by the only
+  // signals that actually track a process: an alive relay port file, or a
+  // connected Cursor bridge. (Transcript-file existence — what reconcile and
+  // getSessions rely on — outlives the process, so it can't catch these.)
+  // ledgerSessionByTopic also drives store-mapping cleanup after deletion.
+  const ledgerSessionByTopic = new Map<number, string>();
+  if (mode !== "sweep") {
+    try {
+      // Dynamic imports: keep the static module graph of commands.ts free of
+      // the cursor bridge and ledger modules, which test harnesses mock.
+      const { getActiveCursorSessionNames } = await import("../cursor");
+      const { readActiveLedger } = await import("../topics");
+      const [ledgerEntries, portFiles] = await Promise.all([
+        readActiveLedger(),
+        scanPortFiles(true),
+      ]);
+      const cursorLive = getActiveCursorSessionNames();
+      const isLedgerSessionLive = (e: LedgerEntry): boolean => {
+        if (cursorLive.has(e.sessionName)) return true;
+        if (e.sessionId && portFiles.some((p) => p.sessionId === e.sessionId))
+          return true;
+        if (portFiles.some((p) => p.sessionName === e.sessionName)) return true;
+        if (e.sessionDir && portFiles.some((p) => p.cwd === e.sessionDir))
+          return true;
+        return false;
+      };
+      for (const e of ledgerEntries) {
+        if (!isLedgerSessionLive(e))
+          ledgerSessionByTopic.set(e.topicId, e.sessionName);
+      }
+    } catch (err) {
+      warn(`cleanzombie: ledger pass failed: ${err}`);
+    }
+  }
+
   let candidates: number[];
   if (mode === "sweep") {
     const maxKnown = Math.max(0, ...created, ...live);
@@ -1585,13 +1621,18 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
         `This may take a moment…`,
     );
   } else {
-    candidates = [...created]
-      .filter((id) => !deleted.has(id) && !live.has(id))
-      .sort((a, b) => a - b);
+    // Union of log-scan zombies (orphans unknown to the store) and ledger
+    // zombies (topics whose session is dead, even if still in the store).
+    const logZombies = [...created].filter(
+      (id) => !deleted.has(id) && !live.has(id),
+    );
+    candidates = [
+      ...new Set([...logZombies, ...ledgerSessionByTopic.keys()]),
+    ].sort((a, b) => a - b);
     if (candidates.length === 0) {
       const prefix = pruneNote ? `🧹 ${pruneNote}\n` : "";
       await ctx.reply(
-        `${prefix}✅ No zombies found via log scan. ${store.topics.length} live topic(s).\n` +
+        `${prefix}✅ No zombies found. ${store.topics.length} live topic(s).\n` +
           `Try <code>/cleanzombie sweep</code> to probe by id range.`,
         { parse_mode: "HTML" },
       );
@@ -1603,6 +1644,10 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
     );
   }
 
+  // Dynamic import — see the ledger-pass note above; keeps the topics module
+  // (mocked by some test harnesses) out of this file's static graph.
+  const { recordTopicDeleted, removeTopicMapping } = await import("../topics");
+
   let removed = 0;
   const failures: number[] = [];
   for (let i = 0; i < candidates.length; i++) {
@@ -1611,6 +1656,11 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
       await ctx.api.deleteForumTopic(store.chatId, id);
       info(`cleanzombie: deleted topic ${id}`);
       removed++;
+      // Tombstone in the ledger so a future run never re-probes this id, and
+      // drop any lingering store mapping for a ledger-sourced zombie.
+      await recordTopicDeleted(id);
+      const sessionName = ledgerSessionByTopic.get(id);
+      if (sessionName) removeTopicMapping(sessionName);
     } catch (err) {
       if (err instanceof GrammyError) {
         if (err.error_code === 429) {
