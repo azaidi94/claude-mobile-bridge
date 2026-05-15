@@ -97,7 +97,10 @@ export function paneContains(
   if (!trimmed) return false;
   // Drop box-drawing glyphs and pipes (TUI modal borders wrap text inside
   // them), then collapse whitespace, so a needle that spans a wrapped line
-  // still matches.
+  // still matches. The range `[─-╿|]` covers U+2500–U+257F (the full Box
+  // Drawing block) plus a literal `|` — the trailing `-` before `╿` is part
+  // of the range syntax. Don't rewrite this as multiple alternations without
+  // re-verifying border coverage.
   const norm = (s: string) =>
     s
       .replace(/[─-╿|]/g, " ")
@@ -145,9 +148,10 @@ async function injectKeys(
     return "injected";
   }
 
-  // Custom free-text answer: select the "N+1. Type something" option, type the
-  // answer literally (-l, so it can't trigger tmux keybindings), verify the
-  // text actually landed in the input bar, then confirm.
+  // Custom free-text answer: select the "N+1. Type something" option, open the
+  // text field, type the answer literally (-l, so it can't trigger tmux
+  // keybindings), verify the AUQ question is still on screen AND the typed
+  // text landed in the input bar, then confirm.
   const typeOptionNumber = String(question.options.length + 1);
   tmux(["send-keys", "-t", pane, "Escape"]);
   await tick();
@@ -155,11 +159,31 @@ async function injectKeys(
   await tick();
   tmux(["send-keys", "-t", pane, "Enter"]); // opens the text field
   await tick();
+  // Re-verify the question is still the on-screen modal — a foreign modal
+  // could have swallowed the Enter and replaced the view; without this check
+  // we'd then type the answer into something else.
+  if (!paneContains(capturePane(pane), question.question)) {
+    console.error(
+      `auq-bridge-worker: pane ${pane} no longer shows the AUQ after opening text field — skipping`,
+    );
+    return "skipped-not-visible";
+  }
   tmux(["send-keys", "-t", pane, "-l", answer]);
   await tick();
-  if (!paneContains(capturePane(pane), answer, 2)) {
+  // Use the default minLen (6) — short answers like "y"/"ok" appear in
+  // terminal output everywhere and would yield false-positive matches. If the
+  // answer is too short to verify safely, skip rather than risk confirming
+  // something we can't prove landed.
+  const pane2 = capturePane(pane);
+  if (!paneContains(pane2, question.question)) {
     console.error(
-      `auq-bridge-worker: typed answer not visible in pane ${pane} — a modal likely swallowed it, skipping confirming Enter`,
+      `auq-bridge-worker: pane ${pane} no longer shows the AUQ after typing — skipping confirming Enter`,
+    );
+    return "skipped-not-visible";
+  }
+  if (!paneContains(pane2, answer)) {
+    console.error(
+      `auq-bridge-worker: typed answer not visible in pane ${pane} (likely shorter than minLen=6, or input swallowed) — skipping confirming Enter`,
     );
     return "skipped-not-visible";
   }

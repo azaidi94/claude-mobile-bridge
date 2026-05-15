@@ -5,7 +5,7 @@ import {
   deleteEntry,
 } from "../../handlers/auq-bridge-registry";
 import { findWatchByDir } from "../../handlers/watch";
-import { getTopicBySessionDir, getTopicStore } from "../../topics/topic-store";
+import { getTopicBySessionDir, getTopicStore } from "../../topics";
 
 interface PostBody {
   request_id: string;

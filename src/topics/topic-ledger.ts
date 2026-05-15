@@ -8,8 +8,15 @@
  * entries are never dropped. `/cleanzombie` walks it to find topics whose
  * session is no longer live.
  *
- * Stored as JSONL — one event per line — so appends are atomic (a single
- * sub-PIPE_BUF write), needing no read-modify-write and no lock.
+ * Stored as JSONL — one event per line — so appends need no read-modify-write
+ * and no lock. Bun/Node's `appendFile` isn't guaranteed to be a single
+ * `write(2)` syscall (it's promise-backed and may split), but `readLedger`
+ * tolerates torn lines via the JSON.parse catch, so a partial append worst-
+ * case loses one event rather than corrupting the file.
+ *
+ * `readLedger` re-reads the whole file on every call. Fine while the ledger
+ * is small (one entry per topic ever created); if it grows large enough to
+ * matter, fold to a snapshot or periodically compact deleted entries.
  */
 
 import { appendFile, readFile } from "fs/promises";

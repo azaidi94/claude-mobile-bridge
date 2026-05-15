@@ -31,6 +31,9 @@ export async function withFileLock<T>(
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
       // Lock is held. Steal it if the holder appears to have crashed.
+      // Note: two concurrent stealers can both unlink and both retry "wx" —
+      // exactly one will win EEXIST, the loser falls back into the spin loop.
+      // The double-unlink is harmless (the second hits ENOENT, swallowed).
       try {
         const s = await stat(lockPath);
         if (Date.now() - s.mtimeMs > LOCK_STALE_MS) {
