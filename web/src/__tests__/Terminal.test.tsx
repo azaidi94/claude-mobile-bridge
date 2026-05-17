@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { render } from "@testing-library/react";
-import { Terminal } from "../components/Terminal";
+import { Terminal, collectOpenAsks } from "../components/Terminal";
 import type { SseEvent } from "../api";
 
 describe("Terminal", () => {
@@ -318,5 +318,84 @@ describe("Terminal", () => {
     const { container } = render(<Terminal events={events} streaming={false} />);
     expect(container.textContent).toContain("hi from web");
     expect(container.textContent).toContain("Web");
+  });
+});
+
+describe("collectOpenAsks", () => {
+  test("ask_remote adds, ask_remote_cleared removes", () => {
+    const events: SseEvent[] = [
+      {
+        type: "ask_remote",
+        content: "Q",
+        askId: "bridge:r1:0",
+        askQuestion: "Q",
+        askOptions: [{ label: "A" }],
+        askAllowCustom: true,
+      },
+      { type: "ask_remote_cleared", content: "", askId: "bridge:r1:0" },
+    ];
+    expect(collectOpenAsks(events)).toEqual([]);
+  });
+
+  test("ask_remote_state resets stale open asks when cleared event was missed", () => {
+    // Simulates: client received `ask_remote`, then SSE blipped, server emitted
+    // `ask_remote_cleared` into the void; EventSource reconnects and server
+    // sends an authoritative snapshot showing no open asks. The stale card
+    // must disappear even though we never observed the cleared event.
+    const events: SseEvent[] = [
+      {
+        type: "ask_remote",
+        content: "stale Q",
+        askId: "bridge:gone:0",
+        askQuestion: "stale Q",
+        askOptions: [{ label: "X" }],
+        askAllowCustom: true,
+      },
+      { type: "ask_remote_state", content: "", askOpen: [] },
+    ];
+    expect(collectOpenAsks(events)).toEqual([]);
+  });
+
+  test("ask_remote_state seeds open asks that the client never received via ask_remote", () => {
+    // Simulates: ask opened during a disconnect; on reconnect the snapshot is
+    // the only way the client learns about it.
+    const events: SseEvent[] = [
+      {
+        type: "ask_remote_state",
+        content: "",
+        askOpen: [
+          {
+            askId: "bridge:fresh:0",
+            question: "Pick one",
+            options: [{ label: "A" }, { label: "B" }],
+            allowCustom: false,
+          },
+        ],
+      },
+    ];
+    const open = collectOpenAsks(events);
+    expect(open).toHaveLength(1);
+    expect(open[0]!.askId).toBe("bridge:fresh:0");
+    expect(open[0]!.question).toBe("Pick one");
+    expect(open[0]!.allowCustom).toBe(false);
+  });
+
+  test("ask_remote_cleared after a snapshot still removes the entry", () => {
+    const events: SseEvent[] = [
+      {
+        type: "ask_remote_state",
+        content: "",
+        askOpen: [
+          {
+            askId: "bridge:x:0",
+            question: "Q",
+            options: [],
+            allowCustom: true,
+          },
+        ],
+      },
+      { type: "ask_remote_cleared", content: "", askId: "bridge:x:0" },
+    ];
+    expect(collectOpenAsks(events)).toEqual([]);
   });
 });

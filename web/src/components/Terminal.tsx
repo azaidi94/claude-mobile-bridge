@@ -635,11 +635,27 @@ interface AskOpenRecord {
  * Walk the event log and return only the asks that are still open — every
  * ask_remote adds, every matching ask_remote_cleared (or duplicate ask_id)
  * removes. Renders bottom-up so newest open question is at the bottom.
+ *
+ * `ask_remote_state` is an authoritative server-side snapshot emitted on
+ * every SSE subscribe (including EventSource auto-reconnects). It resets the
+ * open map to exactly the asks currently registered server-side, healing the
+ * "missed ask_remote_cleared during a connection blip" case that would
+ * otherwise leave a stale card on the page.
  */
-function collectOpenAsks(events: SseEvent[]): AskOpenRecord[] {
+export function collectOpenAsks(events: SseEvent[]): AskOpenRecord[] {
   const open = new Map<string, AskOpenRecord>();
   for (const e of events) {
-    if (e.type === "ask_remote" && e.askId) {
+    if (e.type === "ask_remote_state") {
+      open.clear();
+      for (const o of e.askOpen ?? []) {
+        open.set(o.askId, {
+          askId: o.askId,
+          question: o.question,
+          options: o.options,
+          allowCustom: o.allowCustom,
+        });
+      }
+    } else if (e.type === "ask_remote" && e.askId) {
       open.set(e.askId, {
         askId: e.askId,
         question: e.askQuestion ?? e.content,
@@ -801,6 +817,7 @@ function groupIntoTurns(events: SseEvent[]): Turn[] {
     if (evt.type === "hook_summary") return; // inline card (Task 10)
     if (evt.type === "ask_remote") return; // dedicated card below
     if (evt.type === "ask_remote_cleared") return; // bookkeeping only
+    if (evt.type === "ask_remote_state") return; // snapshot, consumed by collectOpenAsks
     if (evt.type === "tool" && SUPPRESSED_TOOLS.has(evt.toolName ?? "")) return;
     if (evt.type === "user_message") {
       turns.push({ role: "remote", source: evt.source, items: [{ evt, idx }] });

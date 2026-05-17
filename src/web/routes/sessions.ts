@@ -19,6 +19,7 @@ import {
   submitAnswerFromWeb,
   cancelAnswerFromWeb,
 } from "../../handlers/relay-ask";
+import { getOpenAsksForSession } from "../../handlers/auq-bridge";
 
 export interface ApiSession {
   id: string;
@@ -154,6 +155,22 @@ export function createSessionsRouter(): Hono {
       start(ctrl) {
         controller = ctrl;
         ctrl.enqueue(encoder.encode(": connected\n\n"));
+        // Authoritative snapshot of currently-open bridge asks. EventSource
+        // auto-reconnects don't replay missed events, so a client that
+        // disconnected between an `ask_remote` and its `ask_remote_cleared`
+        // would otherwise carry the stale card forever. The snapshot is the
+        // single source of truth — the client reconciles by replacing any
+        // open asks not present here as cleared.
+        const askOpen = getOpenAsksForSession(sessionName);
+        ctrl.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "ask_remote_state",
+              content: "",
+              askOpen,
+            } satisfies SseEvent)}\n\n`,
+          ),
+        );
       },
     });
 

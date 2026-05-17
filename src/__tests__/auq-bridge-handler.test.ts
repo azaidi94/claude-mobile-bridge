@@ -165,6 +165,49 @@ describe("auq-bridge orchestrator: single-question", () => {
     expect(clearedCalls.some((c) => c.resolution === "cancelled")).toBe(true);
   });
 
+  test("getOpenAsksForSession reflects open asks and clears them on resolution", async () => {
+    const { register, _resetForTests } =
+      await import("../handlers/auq-bridge-registry");
+    const {
+      runBridge,
+      _injectTgAnswer,
+      getOpenAsksForSession,
+      _resetOpenAsksForTests,
+    } = await import("../handlers/auq-bridge");
+    _resetForTests();
+    _resetOpenAsksForTests();
+
+    const state = register({
+      requestId: "auq_snap",
+      toolUseId: "toolu_snap",
+      sessionName: "s-snap",
+      chatId: 100,
+      threadId: 42,
+      questions: [
+        { question: "Pick", options: [{ label: "A" }, { label: "B" }] },
+      ],
+    });
+
+    let observedDuring: ReturnType<typeof getOpenAsksForSession> = [];
+    const promise = runBridge(state, {
+      postTg: async () => ({ messageId: 1 }),
+      emitSse: () => {
+        // While the ask is in flight, server should report it as open.
+        observedDuring = getOpenAsksForSession("s-snap");
+      },
+      clearedSse: () => {},
+    });
+
+    _injectTgAnswer("auq_snap", 0, "A");
+    await promise;
+
+    expect(observedDuring).toHaveLength(1);
+    expect(observedDuring[0]!.askId).toBe("bridge:auq_snap:0");
+    expect(observedDuring[0]!.question).toBe("Pick");
+    // After resolution the snapshot should be empty.
+    expect(getOpenAsksForSession("s-snap")).toEqual([]);
+  });
+
   test("attachBusCancellation returns an unsub that detaches the listener", async () => {
     const { register } = await import("../handlers/auq-bridge-registry");
     const { attachBusCancellation } = await import("../handlers/auq-bridge");

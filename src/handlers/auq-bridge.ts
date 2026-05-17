@@ -40,6 +40,47 @@ const questionWaiters = new Map<
   Map<number, (answer: string) => void>
 >();
 
+/**
+ * Per-session map of currently-open bridge asks. Updated by the orchestrator
+ * via `recordOpenAsk` / `recordClearedAsk`; read by the SSE route to emit an
+ * authoritative `ask_remote_state` snapshot on every new subscription so a
+ * client that missed an `ask_remote_cleared` over a flaky EventSource link
+ * self-heals on the next reconnect.
+ */
+export interface OpenAskRecord {
+  askId: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  allowCustom: boolean;
+}
+const openAsksBySession = new Map<string, Map<string, OpenAskRecord>>();
+
+function recordOpenAsk(sessionName: string, ask: OpenAskRecord): void {
+  let m = openAsksBySession.get(sessionName);
+  if (!m) {
+    m = new Map();
+    openAsksBySession.set(sessionName, m);
+  }
+  m.set(ask.askId, ask);
+}
+
+function recordClearedAsk(sessionName: string, askId: string): void {
+  const m = openAsksBySession.get(sessionName);
+  if (!m) return;
+  m.delete(askId);
+  if (m.size === 0) openAsksBySession.delete(sessionName);
+}
+
+export function getOpenAsksForSession(sessionName: string): OpenAskRecord[] {
+  const m = openAsksBySession.get(sessionName);
+  return m ? [...m.values()] : [];
+}
+
+/** Test seam. */
+export function _resetOpenAsksForTests(): void {
+  openAsksBySession.clear();
+}
+
 function askIdFor(requestId: string, questionIndex: number): string {
   return `bridge:${requestId}:${questionIndex}`;
 }
@@ -84,6 +125,7 @@ export function _injectWebAnswer(
 export async function runBridge(
   state: {
     requestId: string;
+    sessionName: string;
     chatId: number;
     threadId: number;
     questions: any[];
@@ -121,15 +163,22 @@ export async function runBridge(
       const bridge = get(state.requestId);
       if (bridge) bridge.tgMessageIds.set(i, sent.messageId);
 
+      const askOptions = q.options.map((o: any) => ({
+        label: o.label,
+        description: o.description,
+      }));
+      recordOpenAsk(state.sessionName, {
+        askId,
+        question: q.question,
+        options: askOptions,
+        allowCustom,
+      });
       deps.emitSse({
         type: "ask_remote",
         content: q.question,
         askId,
         askQuestion: q.question,
-        askOptions: q.options.map((o: any) => ({
-          label: o.label,
-          description: o.description,
-        })),
+        askOptions,
         askAllowCustom: allowCustom,
       });
 
@@ -140,6 +189,7 @@ export async function runBridge(
           reason: "unknown",
         };
         // Emit cleared for the surface card so it doesn't sit stale.
+        recordClearedAsk(state.sessionName, askId);
         deps.clearedSse(
           askId,
           final.status === "answered" ? "answered" : "cancelled",
@@ -147,6 +197,7 @@ export async function runBridge(
         return final;
       }
       answers.push({ question: q.question, answer });
+      recordClearedAsk(state.sessionName, askId);
       deps.clearedSse(askId, "answered");
     }
     const resolution: BridgeResolution = { status: "answered", answers };

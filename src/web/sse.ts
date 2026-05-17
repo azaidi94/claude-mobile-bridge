@@ -13,7 +13,8 @@ export interface SseEvent {
     | "hook_summary"
     | "user_message"
     | "ask_remote"
-    | "ask_remote_cleared";
+    | "ask_remote_cleared"
+    | "ask_remote_state";
   content: string;
   source?: "telegram" | "web" | "terminal" | "cursor";
   clientId?: string;
@@ -39,6 +40,18 @@ export interface SseEvent {
   /** ask_remote_cleared: how the question was resolved, for UX hint. */
   askResolution?: "answered" | "cancelled" | "timeout" | "expired";
   askAnswer?: string;
+  /**
+   * `ask_remote_state`: authoritative snapshot of currently-open bridge asks
+   * for this session. Emitted on every new SSE subscription so clients that
+   * missed an `ask_remote_cleared` over a reconnect self-heal by reconciling
+   * against this list (anything not present is treated as cleared).
+   */
+  askOpen?: Array<{
+    askId: string;
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+    allowCustom: boolean;
+  }>;
 }
 
 type SseHandler = (event: SseEvent) => void;
