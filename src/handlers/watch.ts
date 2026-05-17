@@ -845,13 +845,24 @@ export async function startAutoWatch(
   if (relayClient) {
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
-      watchState.suppressRelayReplyText = true;
       const tid = watchState.threadId;
 
+      // Gate suppress on confirmed Telegram delivery so the JSONL-tailer
+      // fallback can rescue us when the TCP fast-path silently fails (network
+      // blip, TG rate-limit, etc). Previously suppress was set before the
+      // send resolved, locking out the fallback in the exact failure case it
+      // exists for.
+      const markDelivered = (ok: boolean) => {
+        if (ok) watchState.suppressRelayReplyText = true;
+      };
       if (msg.send_as_pdf && msg.text) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid)
+          .then(markDelivered)
+          .catch(() => {});
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text, tid);
+        sendTextReply(botApi, chatId, msg.text, tid)
+          .then(markDelivered)
+          .catch(() => {});
       }
 
       if (msg.files?.length) {
@@ -1072,13 +1083,18 @@ export async function startWatchingSession(
   if (relayClient) {
     const scopeChatId = String(chatId);
     const onReply = (msg: RelayReply) => {
-      watchState.suppressRelayReplyText = true;
       const tid = watchState.threadId;
-
+      const markDelivered = (ok: boolean) => {
+        if (ok) watchState.suppressRelayReplyText = true;
+      };
       if (msg.send_as_pdf && msg.text) {
-        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
+        sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid)
+          .then(markDelivered)
+          .catch(() => {});
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text, tid);
+        sendTextReply(botApi, chatId, msg.text, tid)
+          .then(markDelivered)
+          .catch(() => {});
       }
 
       if (msg.files?.length) {
