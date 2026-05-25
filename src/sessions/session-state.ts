@@ -18,7 +18,9 @@ import { debug, info } from "../logger";
 
 export class SessionState {
   sessionId: string | null = null;
-  sessionName: string;
+  // Nullable so the legacy singleton (ClaudeSession extends SessionState) can
+  // start unnamed; resolver-created instances always have a concrete name.
+  sessionName: string | null;
   workingDir: string;
   lastActivity: Date | null = null;
   lastMessage: string | null = null;
@@ -43,7 +45,7 @@ export class SessionState {
   // Mode change callback (same shape as singleton; wired per-state in 7c/7e).
   onModeChange?: (isPlanMode: boolean) => void;
 
-  constructor(name: string) {
+  constructor(name: string | null = null) {
     this.sessionName = name;
     this.workingDir = getWorkingDir();
   }
