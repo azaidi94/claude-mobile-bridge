@@ -151,6 +151,19 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
+  // Reject early in Cursor topics: the CC relay path can't reach Cursor's
+  // Composer (no port file, no relay process), and sendViaRelay would
+  // otherwise fall back to dir-match and silently route to an unrelated CC
+  // session that happens to share the dir. Cursor doesn't currently accept
+  // image attachments through the CDP bridge either.
+  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+    await ctx.reply(
+      "❌ Photos aren't supported in Cursor topics yet — only text.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
   info("request: started", {
     opId,
@@ -160,12 +173,18 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     username,
   });
 
-  // 2. Relay preflight — avoid download if no session exists
+  // 2. Relay preflight — avoid download if no session exists.
+  // Prefer the topic-resolved sessionOverride: getActiveSession() returns
+  // whichever session was most recently touched globally, which is often a
+  // Cursor session (its lastActivity gets bumped on every CDP nudge). That
+  // mismatched the topic's real session and the preflight kept rejecting
+  // photos with "No desktop session found".
   const active = getActiveSession();
   const relayUp = await isRelayAvailable({
-    sessionId: active?.info.id,
-    sessionDir: session.workingDir || active?.info.dir,
-    claudePid: active?.info.pid,
+    sessionId: sessionOverride?.sessionId ?? active?.info.id,
+    sessionDir:
+      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
+    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
   });
   if (!relayUp) {
     await ctx.reply(

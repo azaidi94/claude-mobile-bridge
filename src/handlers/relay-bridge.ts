@@ -47,6 +47,14 @@ export async function sendViaRelay(
     if (relayed) return "delivered";
   }
 
+  // Cursor sessions use a synthetic id (`cursor-<slug>`); there is no CC
+  // relay port file matching it. Without this guard, getRelayClient would
+  // strip the unknown sessionId and fall back to dir-only lookup, which can
+  // route the message to an unrelated CC session that shares the dir.
+  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+    return "unavailable";
+  }
+
   const active = getActiveSession();
   const sessionId =
     sessionOverride?.sessionId || active?.info.id || session.sessionId;

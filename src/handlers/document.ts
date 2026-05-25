@@ -529,6 +529,17 @@ export async function handleDocument(ctx: Context): Promise<void> {
 
   const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
+  // Cursor topics: no CC relay, no CDP file channel — reject before paying
+  // for the download. Falling through would silently mis-route to whichever
+  // CC session shares the dir.
+  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+    await ctx.reply(
+      "❌ Documents aren't supported in Cursor topics yet — only text.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
     await ctx.reply("❌ File too large. Maximum size is 10MB.", {
@@ -571,12 +582,16 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Relay preflight — avoid download/extraction if no session exists
+  // 4. Relay preflight — avoid download/extraction if no session exists.
+  // Prefer the topic-resolved sessionOverride: getActiveSession() can return a
+  // Cursor session (lastActivity bumped on every CDP nudge), which won't match
+  // the topic's CC relay and incorrectly rejects the upload.
   const active = getActiveSession();
   const relayUp = await isRelayAvailable({
-    sessionId: active?.info.id,
-    sessionDir: session.workingDir || active?.info.dir,
-    claudePid: active?.info.pid,
+    sessionId: sessionOverride?.sessionId ?? active?.info.id,
+    sessionDir:
+      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
+    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
   });
   if (!relayUp) {
     await ctx.reply(

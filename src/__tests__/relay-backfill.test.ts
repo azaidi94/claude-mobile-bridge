@@ -1,0 +1,134 @@
+// Set STATE_DIR before any module-load happens — paths.ts evaluates the env
+// var at import time.
+import { join } from "path";
+import { tmpdir, homedir } from "os";
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  readdirSync,
+} from "fs";
+
+const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "bf-state-"));
+process.env.CLAUDE_TELEGRAM_STATE_DIR = TEST_STATE_DIR;
+
+import { describe, expect, test, beforeEach, afterAll } from "bun:test";
+// Use dynamic import so it happens *after* the env-var assignment above —
+// static imports are hoisted and would otherwise load paths.ts before
+// CLAUDE_TELEGRAM_STATE_DIR is set.
+const { backfillPortFileSessionIds } = await import("../relay/backfill");
+
+const PROJECT_CWD = "/tmp/__backfill_test_proj__";
+const PROJECT_ENCODED = PROJECT_CWD.replace(/\//g, "-");
+const PROJECT_DIR = join(homedir(), ".claude", "projects", PROJECT_ENCODED);
+
+function clearDir(dir: string) {
+  try {
+    for (const f of readdirSync(dir)) rmSync(join(dir, f), { force: true });
+  } catch {}
+}
+
+beforeEach(() => {
+  clearDir(TEST_STATE_DIR);
+  try {
+    rmSync(PROJECT_DIR, { recursive: true, force: true });
+  } catch {}
+  mkdirSync(PROJECT_DIR, { recursive: true });
+});
+
+afterAll(() => {
+  try {
+    rmSync(TEST_STATE_DIR, { recursive: true, force: true });
+  } catch {}
+  try {
+    rmSync(PROJECT_DIR, { recursive: true, force: true });
+  } catch {}
+});
+
+function writePortFile(name: string, data: Record<string, unknown>) {
+  writeFileSync(join(TEST_STATE_DIR, name), JSON.stringify(data, null, 2));
+}
+
+function readPortFile(name: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(TEST_STATE_DIR, name), "utf-8"));
+}
+
+const NOW = Date.now();
+
+describe("backfillPortFileSessionIds", () => {
+  test("backfills sessionId when a single matching JSONL exists", async () => {
+    writePortFile(`channel-relay-aaaa-${process.pid}.json`, {
+      port: 1234,
+      pid: process.pid,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    const sid = "11111111-2222-3333-4444-555555555555";
+    writeFileSync(join(PROJECT_DIR, `${sid}.jsonl`), "x\n");
+
+    await backfillPortFileSessionIds();
+    const after = readPortFile(`channel-relay-aaaa-${process.pid}.json`);
+    expect(after.sessionId).toBe(sid);
+  });
+
+  test("does not overwrite an existing sessionId", async () => {
+    const existing = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    writePortFile(`channel-relay-bbbb-${process.pid}.json`, {
+      port: 1234,
+      pid: process.pid,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+      sessionId: existing,
+    });
+    const other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    writeFileSync(join(PROJECT_DIR, `${other}.jsonl`), "x\n");
+
+    await backfillPortFileSessionIds();
+    const after = readPortFile(`channel-relay-bbbb-${process.pid}.json`);
+    expect(after.sessionId).toBe(existing);
+  });
+
+  test("skips port files for dead processes", async () => {
+    writePortFile("channel-relay-cccc-999999.json", {
+      port: 1234,
+      pid: 999999, // very unlikely to be alive
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    const sid = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    writeFileSync(join(PROJECT_DIR, `${sid}.jsonl`), "x\n");
+
+    await backfillPortFileSessionIds();
+    const after = readPortFile("channel-relay-cccc-999999.json");
+    expect(after.sessionId).toBeUndefined();
+  });
+
+  test("does not double-claim a JSONL already taken by another port file", async () => {
+    // updatePortFile finds a port file by matching the pid in its filename.
+    // For the second file we need a real but unique-in-filename pid; use
+    // process.pid for the to-be-checked one, and a sibling pid for the
+    // already-claimed one (its sessionId is pre-populated so no update is
+    // attempted on it).
+    const sid = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    writePortFile(`channel-relay-dddd-${process.pid + 1}.json`, {
+      port: 1234,
+      pid: process.pid + 1,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+      sessionId: sid,
+    });
+    writePortFile(`channel-relay-eeee-${process.pid}.json`, {
+      port: 1235,
+      pid: process.pid,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    writeFileSync(join(PROJECT_DIR, `${sid}.jsonl`), "x\n");
+
+    await backfillPortFileSessionIds();
+    const after = readPortFile(`channel-relay-eeee-${process.pid}.json`);
+    expect(after.sessionId).toBeUndefined();
+  });
+});

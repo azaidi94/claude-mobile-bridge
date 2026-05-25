@@ -54,6 +54,7 @@ import {
 import { createBot } from "./bot";
 import { session } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
+import { backfillPortFileSessionIds } from "./relay/backfill";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -273,6 +274,11 @@ const notifyHandler = createNotificationHandler(
   },
 );
 await startWatcher(notifyHandler);
+
+// Backfill sessionId on any existing relay port files that lack it (relay
+// processes started before the discovery-loop race fix, or any with a still-
+// undiscovered JSONL at startup). Runs once, idempotent.
+await backfillPortFileSessionIds();
 
 // Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
 // 0/no/off) to skip CDP target polling — useful when Cursor isn't

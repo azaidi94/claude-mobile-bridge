@@ -40,6 +40,17 @@ export async function handleVoice(ctx: Context): Promise<void> {
 
   const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
 
+  // Cursor topics: no CC relay, no CDP voice channel — reject before paying
+  // for transcription. Falling through would silently mis-route to whichever
+  // CC session shares the dir.
+  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+    await ctx.reply(
+      "❌ Voice messages aren't supported in Cursor topics yet — only text.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+
   const opId = createOpId("voice");
   const requestStartedAt = Date.now();
   info("request: started", {
@@ -70,12 +81,16 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  // 4. Quick relay preflight — avoid transcription cost if no session exists
+  // 4. Quick relay preflight — avoid transcription cost if no session exists.
+  // Prefer the topic-resolved sessionOverride: getActiveSession() returns the
+  // globally most-recent session, which is often a Cursor session and won't
+  // match the topic's CC relay.
   const active = getActiveSession();
   const relayUp = await isRelayAvailable({
-    sessionId: active?.info.id,
-    sessionDir: session.workingDir || active?.info.dir,
-    claudePid: active?.info.pid,
+    sessionId: sessionOverride?.sessionId ?? active?.info.id,
+    sessionDir:
+      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
+    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
   });
   if (!relayUp) {
     await ctx.reply(
