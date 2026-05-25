@@ -55,3 +55,10 @@ export {
   formatHistoryMessage,
   sendSwitchHistory,
 } from "./history";
+
+export {
+  SessionState,
+  getSessionState,
+  dropSessionState,
+  listSessionStates,
+} from "./session-state";
