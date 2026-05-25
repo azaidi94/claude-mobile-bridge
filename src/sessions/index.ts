@@ -5,6 +5,12 @@
 export type { SessionInfo, SessionOverride } from "./types";
 
 export {
+  resolveSessionContext,
+  sessionContextFromInfo,
+  type SessionContext,
+} from "./context";
+
+export {
   startWatcher,
   stopWatcher,
   forceRefresh,
