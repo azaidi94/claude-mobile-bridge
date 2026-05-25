@@ -23,8 +23,6 @@ import {
 } from "../config";
 import { isPathAllowed } from "../security";
 import { debug, warn, error, info } from "../logger";
-import { globalEventBus, type SseEvent } from "../web/sse";
-import { getActiveSession } from "../sessions";
 
 /**
  * Image extensions that Telegram Bot API accepts via sendPhoto.
@@ -335,14 +333,11 @@ export function createStatusCallback(
 ): StatusCallback {
   return async (statusType: string, content: string, segmentId?: number) => {
     try {
-      const activeSess = getActiveSession();
-      if (activeSess?.info.id) {
-        globalEventBus.emit(activeSess.info.id, {
-          type: statusType as SseEvent["type"],
-          content,
-          segmentId,
-        });
-      }
+      // SSE fan-out for web clients used to fire here keyed by the global
+      // active session's id. After task 7g there is no global active pointer;
+      // web SSE for runQueryStreaming is wired explicitly via
+      // globalEventBus.makeStatusCallback in web/routes/sessions.ts. The
+      // Telegram SDK path no longer cross-emits to SSE.
       if (statusType === "thinking") {
         // Show thinking inline, compact (first 500 chars)
         const preview =

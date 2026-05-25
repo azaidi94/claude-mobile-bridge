@@ -11,7 +11,6 @@ import { join } from "path";
 import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
-import { getActiveSession } from "./watcher";
 import type { TopicManager } from "../topics";
 import { STATE_DIR } from "../paths";
 
@@ -243,8 +242,6 @@ export function createNotificationHandler(
         info(`notify: suppressed flap for ${session.name}`);
         continue;
       }
-      const active = getActiveSession();
-      const wasActive = active?.info.dir === session.dir;
       const timer = setTimeout(() => {
         pending.delete(session.dir);
 
@@ -259,8 +256,7 @@ export function createNotificationHandler(
             );
         }
 
-        let msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
-        if (wasActive) msg += "\n⚠️ was active session";
+        const msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
         broadcast(botApi, msg);
       }, FLAP_BUFFER_MS);
       pending.set(session.dir, {

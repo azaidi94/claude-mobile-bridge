@@ -11,7 +11,7 @@
 import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
 import type { SessionContext } from "../sessions/context";
-import { session } from "../session";
+import { getCurrentModelDisplayName } from "../session";
 import { getSessionState } from "../sessions";
 import {
   ALLOWED_USERS,
@@ -38,7 +38,6 @@ import {
   type TailEvent,
 } from "../sessions/tailer";
 import {
-  getActiveSession,
   getSession,
   getSessions,
   setActiveSession,
@@ -977,16 +976,11 @@ export async function handleWatch(
 
   if (!targetName && !requestedName) {
     // Fallback when sctx is unavailable (private DM) or its session isn't
-    // a desktop session — pick the most-recent active one or any desktop.
-    const active = getActiveSession();
-    if (active && active.info.source === "desktop") {
-      targetName = active.name;
-    } else {
-      const allSessions = getSessions();
-      const desktop = allSessions.find((s) => s.source === "desktop");
-      if (desktop) {
-        targetName = desktop.name;
-      }
+    // a desktop session — pick the first desktop session in the registry.
+    const allSessions = getSessions();
+    const desktop = allSessions.find((s) => s.source === "desktop");
+    if (desktop) {
+      targetName = desktop.name;
     }
   }
 
@@ -1134,7 +1128,7 @@ export async function startWatchingSession(
   updatePinnedStatus(botApi, chatId, {
     sessionName: null,
     isPlanMode: false,
-    model: session.modelDisplayName,
+    model: getCurrentModelDisplayName(),
     branch,
     isWatching: targetName,
   }).catch(() => {});
@@ -1241,13 +1235,11 @@ export async function handleUnwatch(
       },
     );
 
-    // Restore normal pinned status. Prefer the topic-resolved sctx; fall
-    // back to the global active pointer only when sctx is unavailable.
-    // Plan-mode comes from the per-session SessionState (when known); model
-    // is global (R3).
-    const active = sctx ? null : getActiveSession();
-    const sessionName = sctx?.sessionName || active?.info.name || null;
-    const dir = sctx?.sessionDir || active?.info.dir || process.cwd();
+    // Restore normal pinned status. Without sctx we have no session to
+    // attribute to — leave name null and use cwd. Plan-mode comes from the
+    // per-session SessionState; model is global (R3).
+    const sessionName = sctx?.sessionName || null;
+    const dir = sctx?.sessionDir || process.cwd();
     const isPlanMode = sessionName
       ? getSessionState(sessionName).isPlanMode
       : false;
@@ -1255,7 +1247,7 @@ export async function handleUnwatch(
     updatePinnedStatus(ctx.api, chatId, {
       sessionName,
       isPlanMode,
-      model: session.modelDisplayName,
+      model: getCurrentModelDisplayName(),
       branch,
     }).catch(() => {});
   } else {

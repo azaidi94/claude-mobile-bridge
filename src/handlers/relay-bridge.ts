@@ -5,7 +5,7 @@
 
 import type { Context } from "grammy";
 import type { SessionContext } from "../sessions/context";
-import { session } from "../session";
+import { getWorkingDir } from "../settings";
 import type { RelayClient, RelayDisplayState } from "../relay";
 import {
   getRelayClient,
@@ -54,12 +54,12 @@ export async function sendViaRelay(
   }
 
   // sctx is the authoritative source when topic-resolved. Without it (e.g.
-  // private-DM compatibility path), fall back to the streaming-SDK singleton's
-  // workingDir. Notably we do NOT consult getActiveSession() here — that
-  // global pointer chases the most-recently-touched session and frequently
-  // mis-targets when a Cursor session was recently active.
-  const sessionId = sctx?.sessionId || session.sessionId;
-  const sessionDir = sctx?.sessionDir || session.workingDir;
+  // private-DM compatibility path), fall back to the bot's default working
+  // dir so dir-only relay match can still succeed. Notably we do NOT consult
+  // any global "active session" pointer — those mis-targeted whenever a
+  // Cursor session was most-recently active.
+  const sessionId = sctx?.sessionId;
+  const sessionDir = sctx?.sessionDir || getWorkingDir();
   if (!sessionDir) return "unavailable";
   const startedAt = Date.now();
 

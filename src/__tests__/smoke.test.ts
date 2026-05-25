@@ -57,7 +57,7 @@ mock.module("@grammyjs/auto-retry", () => ({
 mock.module("../sessions", () => ({
   registerChatId: mock(() => {}),
   getChatIds: mock(() => new Set()),
-  getActiveSession: mock(() => null),
+  getActiveSessionName: mock(() => null),
   updatePinnedStatus: mock(() => Promise.resolve()),
   getGitBranch: mock(() => Promise.resolve("main")),
   getSessions: mock(() => []),
@@ -81,13 +81,15 @@ mock.module("../security", () => ({
   checkCommandSafety: mock(() => [true, ""]),
 }));
 
-// Mock session singleton
+// Mock session module
 mock.module("../session", () => ({
-  session: {
-    workingDir: "/tmp",
-    isPlanMode: false,
-    modelDisplayName: "Opus 4.6",
-  },
+  getCurrentModel: () => "opus",
+  getCurrentModelDisplayName: () => "Opus 4.6",
+  setCurrentModel: mock(() => {}),
+  MODEL_DISPLAY_NAMES: { opus: "Opus 4.6" },
+  getModelDisplayName: (m: string) => m,
+  runQueryStreaming: mock(async () => ""),
+  runPlanApproval: mock(async () => ""),
 }));
 
 // Mock config

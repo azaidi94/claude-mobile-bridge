@@ -27,7 +27,6 @@ import {
   createNotificationHandler,
   setSessionOfflineCallback,
   setSessionCleanupCallback,
-  getActiveSession,
   getGitBranch,
   getSessions,
   setOnSessionStateCreated,
@@ -55,7 +54,7 @@ import {
   TopicManager,
 } from "./topics";
 import { createBot } from "./bot";
-import { session } from "./session";
+import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
 import { backfillPortFileSessionIds } from "./relay/backfill";
 import { info, warn, error as logError } from "./logger";
@@ -129,7 +128,7 @@ setOnSessionStateCreated((state) => {
         const status = {
           sessionName,
           isPlanMode: !!evt.isPlanMode,
-          model: session.modelDisplayName,
+          model: getCurrentModelDisplayName(),
           branch,
         };
         for (const chatId of getChatIds()) {

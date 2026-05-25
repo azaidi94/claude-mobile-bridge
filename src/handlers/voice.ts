@@ -4,8 +4,8 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import {
   auditLog,
@@ -102,7 +102,7 @@ export async function handleVoice(
   // whose lastActivity bumps on every CDP nudge.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
@@ -115,9 +115,7 @@ export async function handleVoice(
   }
 
   // 5. Mark processing started (allows /stop to work during transcription/classification)
-  const stopProcessing = state
-    ? state.startProcessing()
-    : session.startProcessing();
+  const stopProcessing = state ? state.startProcessing() : () => {};
 
   // 5. Start typing indicator for transcription
   const typing = startTypingIndicator(ctx);

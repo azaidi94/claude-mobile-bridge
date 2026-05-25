@@ -18,25 +18,19 @@ import {
   ALLOWED_PATHS,
   MCP_SERVERS,
   SAFETY_PROMPT,
-  SESSION_FILE,
   STREAMING_THROTTLE_MS,
   TEMP_PATHS,
   THINKING_DEEP_KEYWORDS,
   THINKING_KEYWORDS,
 } from "./config";
-import { getWorkingDir, getDefaultModelSetting, saveSetting } from "./settings";
+import { getDefaultModelSetting, saveSetting } from "./settings";
 import { formatToolStatus } from "./formatting";
 import {
   checkPendingAskUserRequests,
   checkPendingAskUserQuestionRequests,
 } from "./handlers/streaming";
 import { checkCommandSafety, isPathAllowed } from "./security";
-import type {
-  SessionData,
-  StatusCallback,
-  TokenUsage,
-  AskUserQuestionInput,
-} from "./types";
+import type { StatusCallback, TokenUsage, AskUserQuestionInput } from "./types";
 import { updateSessionId } from "./sessions";
 import { SessionState } from "./sessions/session-state";
 import { globalEventBus } from "./web/sse";
@@ -178,132 +172,34 @@ const DEFAULT_MODEL: ModelId =
   readClaudeSettingsModel() ??
   "opus";
 
+// ============== Global model state ==============
+//
+// Per phase 1 R3(a): the model selection is process-global in v1. The
+// per-session containers (SessionState) carry per-session fields; the model
+// lives here as a tiny free-function API.
+let _currentModel: ModelId = DEFAULT_MODEL;
+
+export function getCurrentModel(): ModelId {
+  return _currentModel;
+}
+
+export function getCurrentModelDisplayName(): string {
+  return getModelDisplayName(_currentModel);
+}
+
 /**
- * Streaming SDK wrapper. The class is now a thin extension of SessionState
- * that carries the v1-global model setting and delegates query/plan-approval
- * to the free functions defined below (`runQueryStreaming`, `runPlanApproval`).
- *
- * Per-session per-query state lives on the inherited SessionState fields, so
- * the same free functions also work against any other SessionState instance.
+ * Update the process-global model. `persist` defaults to true — writes the
+ * choice to settings.json so it survives restarts.
  */
-class ClaudeSession extends SessionState {
-  // Model selection — kept global in v1 (see plan R3 (a)).
-  private _model: ModelId = DEFAULT_MODEL;
-
-  constructor() {
-    super(null);
-  }
-
-  get model(): ModelId {
-    return this._model;
-  }
-
-  get modelDisplayName(): string {
-    return getModelDisplayName(this._model);
-  }
-
-  setModel(model: ModelId): void {
-    this._model = model;
-    info(`model: ${model}`);
+export function setCurrentModel(model: ModelId, persist = true): void {
+  _currentModel = model;
+  info(`model: ${model}`);
+  if (persist) {
     saveSetting({ defaultModel: model }).catch(() => {
       // non-fatal; runtime already updated
     });
   }
-
-  /**
-   * Send a message to Claude with streaming updates via callback.
-   *
-   * Thin delegate over `runQueryStreaming` — exists so existing handler/test
-   * call sites that use the singleton continue to work unchanged.
-   */
-  async sendMessageStreaming(
-    message: string,
-    username: string,
-    userId: number,
-    statusCallback: StatusCallback,
-    chatId?: number,
-    ctx?: Context,
-    permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
-    telemetry: RequestTelemetry = {},
-  ): Promise<string> {
-    const result = await runQueryStreaming(this, {
-      message,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx,
-      permissionMode,
-      telemetry,
-      model: this._model,
-    });
-    // saveSession() is a singleton-only restart-resume hint (single SESSION_FILE).
-    // Run it after the streaming completes so the file reflects the latest sessionId.
-    this.saveSession();
-    return result;
-  }
-
-  /**
-   * Respond to a pending plan approval. Thin delegate over `runPlanApproval`.
-   */
-  async respondToPlanApproval(
-    action: "accept" | "reject" | "edit",
-    feedback: string,
-    username: string,
-    userId: number,
-    statusCallback: StatusCallback,
-    chatId?: number,
-    ctx?: Context,
-    telemetry: RequestTelemetry = {},
-  ): Promise<string> {
-    return runPlanApproval(this, {
-      action,
-      feedback,
-      username,
-      userId,
-      statusCallback,
-      chatId,
-      ctx,
-      telemetry,
-      model: this._model,
-    });
-  }
-
-  /**
-   * Save session to disk for resume after restart. Singleton-only — writes to
-   * a single SESSION_FILE that is a process-wide startup hint. Phase 2/5 will
-   * revisit whether per-session resume hints are needed.
-   */
-  private saveSession(): void {
-    if (!this.sessionId) return;
-    try {
-      const data: SessionData = {
-        session_id: this.sessionId,
-        saved_at: new Date().toISOString(),
-        working_dir: this.workingDir,
-      };
-      Bun.write(SESSION_FILE, JSON.stringify(data));
-      debug(`saved: ${SESSION_FILE}`);
-    } catch (err) {
-      warn(`save failed: ${err}`);
-    }
-  }
-
-  /**
-   * Singleton-specific kill: also clears sessionName/workingDir back to
-   * defaults (resolver-created SessionStates retain their map key).
-   */
-  override async kill(): Promise<void> {
-    this.sessionId = null;
-    this.lastActivity = null;
-    this.sessionName = null;
-    this.workingDir = getWorkingDir();
-    info("session cleared");
-  }
 }
-
-// Global session instance
-export const session = new ClaudeSession();
 
 // ============== Stateless streaming wrappers ==============
 

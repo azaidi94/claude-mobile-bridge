@@ -12,7 +12,7 @@
 import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized } from "../security";
-import { session } from "../session";
+import { getCurrentModelDisplayName } from "../session";
 import {
   getTerminal,
   getWorkingDir,
@@ -53,7 +53,7 @@ export function renderSettingsBody(): string {
   const workdir = getWorkingDir();
   const autowatch = getAutoWatchOnSpawn();
   const pinnedStatus = getEnablePinnedStatus();
-  const modelDisplay = session.modelDisplayName;
+  const modelDisplay = getCurrentModelDisplayName();
   const overrides = getOverrides();
 
   const marker = (k: keyof typeof overrides): string =>

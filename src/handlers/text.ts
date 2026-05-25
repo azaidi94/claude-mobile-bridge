@@ -3,7 +3,11 @@
  */
 
 import type { Context } from "grammy";
-import { session, runQueryStreaming, runPlanApproval } from "../session";
+import {
+  runQueryStreaming,
+  runPlanApproval,
+  getCurrentModel,
+} from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
@@ -173,12 +177,10 @@ export async function handleText(
     const requestId = pendingPlanFeedback.get(chatId)!;
     pendingPlanFeedback.delete(chatId);
 
-    // Check if there's still a pending plan approval — prefer per-session
-    // state when sctx provided one; otherwise fall back to the singleton
-    // (e.g. private DM / General topic still goes through the singleton).
-    const pendingApproval = state
-      ? state.pendingPlanApproval
-      : session.pendingPlanApproval;
+    // Plan-edit replies only make sense against a resolved per-session
+    // SessionState. Without sctx (private DM / General topic) there's no
+    // session to apply the edit to.
+    const pendingApproval = state?.pendingPlanApproval;
     if (!pendingApproval) {
       await ctx.reply("❌ Plan approval expired.", {
         message_thread_id: threadId,
@@ -192,36 +194,20 @@ export async function handleText(
     const statusCallback = createStatusCallback(ctx, streamState, threadId);
 
     try {
-      const response = state
-        ? await runPlanApproval(state, {
-            action: "edit",
-            feedback: message,
-            username: ctx.from?.username || "unknown",
-            userId,
-            statusCallback,
-            chatId,
-            ctx,
-            telemetry: { opId, requestKind: "plan_edit" },
-            model: session.model,
-          })
-        : await session.respondToPlanApproval(
-            "edit",
-            message,
-            ctx.from?.username || "unknown",
-            userId,
-            statusCallback,
-            chatId,
-            ctx,
-            {
-              opId,
-              requestKind: "plan_edit",
-            },
-          );
+      const response = await runPlanApproval(state, {
+        action: "edit",
+        feedback: message,
+        username: ctx.from?.username || "unknown",
+        userId,
+        statusCallback,
+        chatId,
+        ctx,
+        telemetry: { opId, requestKind: "plan_edit" },
+        model: getCurrentModel(),
+      });
 
       // Check if another plan approval is pending
-      const nextPending = state
-        ? state.pendingPlanApproval
-        : session.pendingPlanApproval;
+      const nextPending = state.pendingPlanApproval;
       if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
@@ -312,44 +298,32 @@ export async function handleText(
 
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
-        const response = state
-          ? await runQueryStreaming(state, {
-              message: answersText,
-              username,
-              userId,
-              statusCallback,
-              chatId,
-              ctx,
-              permissionMode,
-              telemetry: {
-                opId,
-                requestKind: wasPlanMode
-                  ? "ask_user_custom_plan"
-                  : "ask_user_custom",
-              },
-              model: session.model,
-            })
-          : await session.sendMessageStreaming(
-              answersText,
-              username,
-              userId,
-              statusCallback,
-              chatId,
-              ctx,
-              permissionMode,
-              {
-                opId,
-                requestKind: wasPlanMode
-                  ? "ask_user_custom_plan"
-                  : "ask_user_custom",
-              },
-            );
+        if (!state) {
+          await ctx.reply("❌ Question expired — no session.", {
+            message_thread_id: threadId,
+          });
+          return;
+        }
+        const response = await runQueryStreaming(state, {
+          message: answersText,
+          username,
+          userId,
+          statusCallback,
+          chatId,
+          ctx,
+          permissionMode,
+          telemetry: {
+            opId,
+            requestKind: wasPlanMode
+              ? "ask_user_custom_plan"
+              : "ask_user_custom",
+          },
+          model: getCurrentModel(),
+        });
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
 
         // Check if plan approval is pending (ExitPlanMode was called)
-        const pendingForKeyboard = state
-          ? state.pendingPlanApproval
-          : session.pendingPlanApproval;
+        const pendingForKeyboard = state.pendingPlanApproval;
         if (pendingForKeyboard) {
           const displayContent =
             pendingForKeyboard.planContent || pendingForKeyboard.planSummary;
@@ -499,8 +473,6 @@ export async function handleText(
     }
     if (state) {
       state.clearSession();
-    } else {
-      session.sessionId = null;
     }
     await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
@@ -515,12 +487,10 @@ export async function handleText(
     return;
   }
 
-  // 5. Store message for retry — per-session when sctx provided one,
-  // singleton as fallback for the no-sctx (DM / General) path.
+  // 5. Store message for retry on the per-session SessionState (when present).
+  // No-sctx paths have no session to record against — retry won't work there.
   if (state) {
     state.lastMessage = message;
-  } else {
-    session.lastMessage = message;
   }
 
   // Debug log incoming message
@@ -603,7 +573,7 @@ export async function handleText(
       ctx,
       permissionMode: "bypassPermissions",
       telemetry: { opId, requestKind: "slash_cmd" },
-      model: session.model,
+      model: getCurrentModel(),
     });
     await auditLog(
       userId,

@@ -14,13 +14,13 @@ import { getGroupModeSetting } from "./settings";
 import {
   registerChatId,
   getChatIds,
-  getActiveSession,
+  getSessions,
   updatePinnedStatus,
   getGitBranch,
   resolveSessionContext,
 } from "./sessions";
 import { isAuthorized } from "./security";
-import { session } from "./session";
+import { getCurrentModelDisplayName } from "./session";
 import { error as logError, info, warn } from "./logger";
 import {
   handleStart,
@@ -177,14 +177,17 @@ export function createBot(options: BotOptions): Bot {
       // warmed yet — the first query will fire a mode_change event that
       // refreshes the pin.
       if (isNew) {
-        const active = getActiveSession();
-        const dir = active?.info.dir ?? process.cwd();
+        // No global "active" pointer after task 7g. Seed the pinned status
+        // from the most-recently-active session in the registry; mode_change
+        // events on future SessionState creations will refresh the pin.
+        const first = getSessions()[0];
+        const dir = first?.dir ?? process.cwd();
         getGitBranch(dir)
           .then((branch) =>
             updatePinnedStatus(bot.api, ctx.chat!.id, {
-              sessionName: active?.info.name || null,
+              sessionName: first?.name || null,
               isPlanMode: false,
-              model: session.modelDisplayName,
+              model: getCurrentModelDisplayName(),
               branch,
             }),
           )

@@ -6,8 +6,8 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
@@ -235,9 +235,7 @@ async function processArchive(
     sctx && sctx.source === "cc"
       ? getSessionState(sctx.sessionName)
       : undefined;
-  const stopProcessing = state
-    ? state.startProcessing()
-    : session.startProcessing();
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
@@ -380,9 +378,7 @@ async function processDocuments(
     sctx && sctx.source === "cc"
       ? getSessionState(sctx.sessionName)
       : undefined;
-  const stopProcessing = state
-    ? state.startProcessing()
-    : session.startProcessing();
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   // Build prompt
@@ -615,7 +611,7 @@ export async function handleDocument(
   // every CDP nudge), which mis-routes the preflight.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {

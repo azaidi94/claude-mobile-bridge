@@ -5,8 +5,8 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
@@ -75,9 +75,7 @@ async function processPhotos(
     sctx && sctx.source === "cc"
       ? getSessionState(sctx.sessionName)
       : undefined;
-  const stopProcessing = state
-    ? state.startProcessing()
-    : session.startProcessing();
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   try {
@@ -201,7 +199,7 @@ export async function handlePhoto(
   // every CDP nudge) and mis-targeted the preflight.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {

@@ -15,7 +15,7 @@ export {
   stopWatcher,
   forceRefresh,
   getSessions,
-  getActiveSession,
+  getActiveSessionName,
   setActiveSession,
   getSession,
   addTelegramSession,

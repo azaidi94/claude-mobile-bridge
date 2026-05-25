@@ -231,9 +231,8 @@ export function startTypingIndicator(ctx: Context): TypingController {
 
 /**
  * Minimal shape we need from a session-like object for the interrupt path.
- * Both the legacy singleton (`session` in src/session.ts) and the per-session
- * `SessionState` container satisfy this — kept here so this module doesn't
- * depend on either type directly (avoids a circular import via ./session).
+ * Satisfied by `SessionState` — kept here so this module doesn't depend on
+ * the session module directly.
  */
 interface InterruptTarget {
   isRunning: boolean;
@@ -242,14 +241,10 @@ interface InterruptTarget {
   clearStopRequested: () => void;
 }
 
-// Import session lazily to avoid circular dependency
-let sessionModule: { session: InterruptTarget } | null = null;
-
 /**
  * Strip a leading `!` from `text`; if present and a query is running on the
- * supplied target (or the singleton when `state` is omitted), interrupt it.
- * `state` lets per-topic handlers target their own SessionState rather than
- * the global singleton (Phase 1 task 7e).
+ * supplied target, interrupt it. `state` is required for the interrupt path
+ * — without it the `!` is just stripped and the call is a no-op.
  */
 export async function checkInterrupt(
   text: string,
@@ -259,23 +254,15 @@ export async function checkInterrupt(
     return text;
   }
 
-  let target: InterruptTarget | undefined = state;
-  if (!target) {
-    if (!sessionModule) {
-      sessionModule = await import("./session");
-    }
-    target = sessionModule.session;
-  }
-
   const strippedText = text.slice(1).trimStart();
 
-  if (target.isRunning) {
+  if (state && state.isRunning) {
     info("interrupt: stopping active query");
-    target.markInterrupt();
-    await target.stop();
+    state.markInterrupt();
+    await state.stop();
     await Bun.sleep(100);
     // Clear stopRequested so the new message can proceed
-    target.clearStopRequested();
+    state.clearStopRequested();
   }
 
   return strippedText;

@@ -34,13 +34,8 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
-// Minimal session mock so renderSettingsBody() can read modelDisplayName.
+// Minimal session mock so renderSettingsBody() can read the model display name.
 mock.module("../session", () => ({
-  session: {
-    model: "opus",
-    modelDisplayName: "Opus 4.6",
-    setModel: mock(() => {}),
-  },
   MODEL_DISPLAY_NAMES: {
     opus: "Opus 4.6",
     sonnet: "Sonnet 4.6",
@@ -54,6 +49,9 @@ mock.module("../session", () => ({
     };
     return map[m] ?? m;
   },
+  getCurrentModel: () => "opus",
+  getCurrentModelDisplayName: () => "Opus 4.6",
+  setCurrentModel: mock(() => {}),
   runQueryStreaming: mock(async () => "Test response"),
   runPlanApproval: mock(async () => "Plan response"),
 }));

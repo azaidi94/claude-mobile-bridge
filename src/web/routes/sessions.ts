@@ -1,16 +1,11 @@
 import { Hono } from "hono";
-import {
-  getSessions,
-  getActiveSession,
-  setActiveSession,
-  getSessionState,
-} from "../../sessions";
+import { getSessions, setActiveSession, getSessionState } from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
 import type { SseEvent } from "../sse";
 import { authMiddleware } from "../auth";
 import type { SessionInfo } from "../../sessions/types";
-import { runQueryStreaming, session } from "../../session";
+import { runQueryStreaming, getCurrentModel } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
@@ -35,7 +30,8 @@ export interface ApiSession {
 export function serializeSessions(
   sessions: Map<string, SessionInfo>,
 ): ApiSession[] {
-  const active = getActiveSession();
+  // `active` is no longer surfaced — the global active pointer was retired
+  // in task 7g. Web clients should rely on per-session interaction state.
   return [...sessions.values()]
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .map((s) => ({
@@ -45,7 +41,7 @@ export function serializeSessions(
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: false,
     }));
 }
 
@@ -108,7 +104,6 @@ export function createSessionsRouter(): Hono {
 
   app.get("/", async (c) => {
     const sessions = getSessions();
-    const active = getActiveSession();
     const liveDirs = new Set(sessions.map((s) => s.dir));
     const live: ApiSession[] = sessions.map((s) => ({
       id: s.id,
@@ -117,7 +112,7 @@ export function createSessionsRouter(): Hono {
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: false,
     }));
     const offline = await listOfflineSessions();
     const offlineApi: ApiSession[] = offline
@@ -267,7 +262,7 @@ export function createSessionsRouter(): Hono {
         username: "web",
         userId: 0,
         statusCallback: cb,
-        model: session.model,
+        model: getCurrentModel(),
       }).catch(() => emit("done", ""));
     }
 

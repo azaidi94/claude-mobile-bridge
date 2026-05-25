@@ -796,13 +796,14 @@ export function getSessions(): SessionInfo[] {
 }
 
 /**
- * Get active session.
+ * Read the currently-pinned active session name, if any. Mirrors the
+ * `cache.active` slot persisted to ACTIVE_SESSION_FILE; the v1 offline
+ * picker and a couple of legacy tests still observe this. Production code
+ * should resolve sessions by name explicitly (via topic-router or sctx),
+ * not via this global pointer.
  */
-export function getActiveSession(): { name: string; info: SessionInfo } | null {
-  if (!cache.active) return null;
-  const info = cache.sessions.get(cache.active);
-  if (!info) return null;
-  return { name: cache.active, info };
+export function getActiveSessionName(): string | null {
+  return cache.active;
 }
 
 /**
