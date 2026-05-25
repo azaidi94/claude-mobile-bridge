@@ -44,7 +44,9 @@ import {
   updatePinnedStatus,
   getGitBranch,
   forceRefresh,
+  updateSessionId,
 } from "../sessions";
+import { stat } from "node:fs/promises";
 import { info, debug, warn, elapsedMs } from "../logger";
 import { isBridgeOnline } from "../bridge-health";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
@@ -220,6 +222,66 @@ export interface WatchState extends TailDisplayState {
    */
   watchdogFired?: boolean;
   unsubCrossPost?: () => void;
+  /**
+   * True when the tailer was started against a guessed/expected JSONL path
+   * (i.e. `findSessionJsonlPath` returned null at startup, so the path is
+   * `getExpectedJsonlPath(dir, id)` which may never get written if CC chose
+   * a different uuid than the relay port file's id). The drift-detection
+   * interval runs more aggressively while this flag is set, and clears it
+   * once a real on-disk JSONL is bound.
+   */
+  speculativeTailerPath?: boolean;
+}
+
+/**
+ * Resolve a live JSONL path for a session that may not have written its file
+ * yet. Tries the registry id first; if missing, polls `findNewestSessionInDir`
+ * briefly to catch the case where CC writes its real JSONL under a different
+ * uuid than the relay port file reported. Falls back to the expected (guessed)
+ * path and returns speculative=true so the drift loop can rescue it later.
+ *
+ * Exported as a test seam.
+ */
+export async function _resolveLiveJsonlPath(
+  sessionInfo: import("../sessions/types").SessionInfo,
+  opts?: {
+    /** Total polling budget in ms (default ~10s). */
+    timeoutMs?: number;
+    /** Per-attempt sleep (default 1s). */
+    intervalMs?: number;
+  },
+): Promise<{ path: string; sessionId: string; speculative: boolean }> {
+  const directHit = await findSessionJsonlPath(sessionInfo.id);
+  if (directHit) {
+    return { path: directHit, sessionId: sessionInfo.id, speculative: false };
+  }
+
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
+  const intervalMs = opts?.intervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await Bun.sleep(intervalMs);
+    // Re-check the canonical id first (cheap), in case CC just wrote it.
+    const direct = await findSessionJsonlPath(sessionInfo.id);
+    if (direct) {
+      return { path: direct, sessionId: sessionInfo.id, speculative: false };
+    }
+    // Then look for any JSONL the project dir gained.
+    const newestId = await findNewestSessionInDir(sessionInfo.dir);
+    if (newestId) {
+      const newestPath = await findSessionJsonlPath(newestId);
+      if (newestPath) {
+        return { path: newestPath, sessionId: newestId, speculative: false };
+      }
+    }
+  }
+
+  return {
+    path: getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id),
+    sessionId: sessionInfo.id,
+    speculative: true,
+  };
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -612,6 +674,10 @@ export function notifySessionOffline(botApi: Api, sessionName: string): void {
  */
 function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
   const { chatId, threadId, sessionName } = watchState;
+  // Speculative watches poll more aggressively so a misbehaving CC version
+  // that wrote its real JSONL under a different uuid than the port file
+  // reported gets adopted within a second or two instead of being stuck.
+  const intervalMs = watchState.speculativeTailerPath ? 1_000 : 5_000;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
     // Only drift when sole owner of the dir. With siblings, the newest
@@ -632,8 +698,31 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
     );
     const newId = newestJsonl ?? getSession(sessionName)?.id;
 
-    if (!newId || newId === watchState.sessionId) return;
+    if (!newId) return;
     if (killedSessionIds.has(newId)) return;
+
+    // Speculative-watch fallback: even if `newId === sessionId`, our current
+    // tailer may be pointed at a guessed path that doesn't exist on disk
+    // (CC chose a different uuid than the relay port file's id). In that
+    // case, if `findNewestSessionInDir` returns *anything* and the
+    // speculative path isn't on disk, re-resolve via the newest id.
+    if (newId === watchState.sessionId) {
+      if (!watchState.speculativeTailerPath) return;
+      const currentPathExists = await findSessionJsonlPath(
+        watchState.sessionId,
+      ).then((p) => p !== null);
+      if (currentPathExists) {
+        // Real JSONL appeared under the original id — bind to it and clear
+        // the speculative flag so the loop reverts to the slow interval.
+        const realPath = await findSessionJsonlPath(watchState.sessionId);
+        if (realPath) {
+          await rebindTailerPath(botApi, watchState, realPath, newId);
+        }
+        return;
+      }
+      // Same id still un-flushed; nothing else to do this tick.
+      return;
+    }
     // Defense in depth: don't steal an id another live watcher already holds.
     for (const other of watches.values()) {
       if (other === watchState) continue;
@@ -682,7 +771,59 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
         { parse_mode: "HTML", message_thread_id: watchState.threadId },
       )
       .catch(() => {});
-  }, 5_000);
+  }, intervalMs);
+}
+
+/**
+ * Restart the tailer against a different on-disk JSONL. Used both by the
+ * normal drift path (id changed) and by the speculative recovery path (id
+ * stayed the same but original tailer was pointed at a guessed path).
+ * Clears `speculativeTailerPath` once the new tailer is bound to a real file.
+ */
+async function rebindTailerPath(
+  botApi: Api,
+  watchState: WatchState,
+  newPath: string,
+  newId: string,
+): Promise<void> {
+  const previousId = watchState.sessionId;
+  const previousSpeculative = watchState.speculativeTailerPath === true;
+  watchState.tailer?.stop();
+  if (previousId !== newId) {
+    forgetUsage(previousId);
+    watchState.sessionId = newId;
+    // Optional belt: keep the watcher registry in sync if the new id isn't
+    // already tracked under some other name. updateSessionId is a no-op if
+    // the session isn't in cache, so it's safe.
+    try {
+      updateSessionId(watchState.sessionName, newId);
+    } catch {}
+  }
+  const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
+    }
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
+  });
+  watchState.tailer = newTailer;
+  watchState.speculativeTailerPath = false;
+  await newTailer.start();
+  // If the loop interval was tuned to "speculative" (1s) but we've now bound
+  // a real path, restart the interval at the slower cadence.
+  if (previousSpeculative && watchState.idCheckInterval) {
+    clearInterval(watchState.idCheckInterval);
+    setupIdDriftDetection(botApi, watchState);
+  }
+  info("watch: rebound tailer to live JSONL", {
+    chatId: watchState.chatId,
+    threadId: watchState.threadId,
+    sessionName: watchState.sessionName,
+    previousId,
+    newId,
+    newPath,
+    wasSpeculative: previousSpeculative,
+  });
 }
 
 export function setupCrossPostSubscription(
@@ -820,18 +961,27 @@ export async function startAutoWatch(
     return false;
   }
 
-  const jsonlPath =
-    (await findSessionJsonlPath(sessionInfo.id)) ??
-    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
+  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  const jsonlPath = resolved.path;
 
   const watchState: WatchState = buildWatchState({
     sessionName,
-    sessionId: sessionInfo.id,
+    sessionId: resolved.sessionId,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
     chatId,
     threadId,
   });
+  watchState.speculativeTailerPath = resolved.speculative;
+  // If the resolver picked up an id that differs from what the registry
+  // had (CC wrote its real JSONL under a different uuid than the relay
+  // port file reported), sync the registry so other lookups see the
+  // canonical id.
+  if (resolved.sessionId !== sessionInfo.id) {
+    try {
+      updateSessionId(sessionName, resolved.sessionId);
+    } catch {}
+  }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
@@ -1060,11 +1210,12 @@ export async function startWatchingSession(
   }
 
   // Resolve JSONL path. May not exist yet — claude doesn't write the file
-  // until the first prompt is submitted. Fall back to the expected path so
-  // the tailer can wait for the file to appear.
-  const jsonlPath =
-    (await findSessionJsonlPath(sessionInfo.id)) ??
-    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
+  // until the first prompt is submitted. The resolver polls briefly for the
+  // real path (catches the case where CC writes under a different uuid than
+  // the relay port file reported) and falls back to a guessed path that the
+  // drift loop will re-resolve.
+  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  const jsonlPath = resolved.path;
 
   // Spawn-initiated watches: the seeded sessionId is almost certainly
   // the watcher's stale-JSONL fallback for this dir. When the real id
@@ -1072,13 +1223,19 @@ export async function startWatchingSession(
   // skip the "reconnected" broadcast — there's no prior conversation.
   const watchState: WatchState = buildWatchState({
     sessionName: targetName,
-    sessionId: sessionInfo.id,
+    sessionId: resolved.sessionId,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
     chatId,
     threadId,
     suppressNextIdChangeNotice: reason === "spawn",
   });
+  watchState.speculativeTailerPath = resolved.speculative;
+  if (resolved.sessionId !== sessionInfo.id) {
+    try {
+      updateSessionId(targetName, resolved.sessionId);
+    } catch {}
+  }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);

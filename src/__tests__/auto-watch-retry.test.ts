@@ -11,6 +11,29 @@ import type { SessionInfo } from "../sessions/types";
 
 let getSessionImpl: (name: string) => SessionInfo | null = () => null;
 let forceRefreshCalls = 0;
+let findSessionJsonlPathImpl: (
+  id: string,
+) => Promise<string | null> = async () => null;
+let findNewestSessionInDirImpl: (
+  dir: string,
+  excludeIds?: ReadonlySet<string>,
+) => Promise<string | null> = async () => null;
+
+mock.module("../sessions/tailer", () => ({
+  findSessionJsonlPath: (id: string) => findSessionJsonlPathImpl(id),
+  findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) =>
+    findNewestSessionInDirImpl(dir, excludeIds),
+  getExpectedJsonlPath: (cwd: string, id: string) =>
+    `/expected/${cwd.replace(/[/.]/g, "-")}/${id}.jsonl`,
+  SessionTailer: class {
+    constructor(
+      public path: string,
+      public cb: (event: unknown) => void,
+    ) {}
+    async start() {}
+    stop() {}
+  },
+}));
 
 mock.module("../sessions", () => ({
   getSession: (name: string) => getSessionImpl(name),
@@ -159,6 +182,8 @@ describe("startAutoWatch intent-preservation guards", () => {
   });
 
   test("post-wait: stands down when different session gets bound during wait", async () => {
+    findSessionJsonlPathImpl = async () => null;
+    findNewestSessionInDirImpl = async () => null;
     const mod = await import("../handlers/watch");
     const racingWatch = makeWatchState("user-picked");
     getSessionImpl = () => {
@@ -178,5 +203,60 @@ describe("startAutoWatch intent-preservation guards", () => {
     expect(result).toBe(false);
     expect(forceRefreshCalls).toBe(1);
     expect(mod._getWatchForTests(CHAT_ID, THREAD_ID)).toBe(racingWatch);
+  });
+});
+
+describe("_resolveLiveJsonlPath (auto-watch path resolver)", () => {
+  beforeEach(() => {
+    findSessionJsonlPathImpl = async () => null;
+    findNewestSessionInDirImpl = async () => null;
+  });
+
+  test("direct hit: returns the canonical id's path, not speculative", async () => {
+    findSessionJsonlPathImpl = async (id) => `/proj/${id}.jsonl`;
+    const { _resolveLiveJsonlPath } = await import("../handlers/watch");
+    const result = await _resolveLiveJsonlPath(SESSION, {
+      timeoutMs: 50,
+      intervalMs: 5,
+    });
+    expect(result.speculative).toBe(false);
+    expect(result.sessionId).toBe(SESSION.id);
+    expect(result.path).toBe(`/proj/${SESSION.id}.jsonl`);
+  });
+
+  test("polls dir for real JSONL when canonical id never appears", async () => {
+    // Direct path lookup keeps returning null. After a tick, the newest-in-dir
+    // probe returns a *different* uuid — simulating CC writing under a fresh
+    // id rather than the port file's id.
+    let dirCalls = 0;
+    findNewestSessionInDirImpl = async () => {
+      dirCalls++;
+      if (dirCalls < 2) return null;
+      return "real-uuid";
+    };
+    findSessionJsonlPathImpl = async (id) =>
+      id === "real-uuid" ? "/proj/real-uuid.jsonl" : null;
+
+    const { _resolveLiveJsonlPath } = await import("../handlers/watch");
+    const result = await _resolveLiveJsonlPath(SESSION, {
+      timeoutMs: 1_000,
+      intervalMs: 20,
+    });
+    expect(result.speculative).toBe(false);
+    expect(result.sessionId).toBe("real-uuid");
+    expect(result.path).toBe("/proj/real-uuid.jsonl");
+  });
+
+  test("falls back to expected path with speculative=true when nothing appears", async () => {
+    findSessionJsonlPathImpl = async () => null;
+    findNewestSessionInDirImpl = async () => null;
+    const { _resolveLiveJsonlPath } = await import("../handlers/watch");
+    const result = await _resolveLiveJsonlPath(SESSION, {
+      timeoutMs: 60,
+      intervalMs: 20,
+    });
+    expect(result.speculative).toBe(true);
+    expect(result.sessionId).toBe(SESSION.id);
+    expect(result.path).toContain(SESSION.id);
   });
 });

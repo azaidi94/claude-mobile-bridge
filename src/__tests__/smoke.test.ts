@@ -65,6 +65,7 @@ mock.module("../sessions", () => ({
   addTelegramSession: mock(() => ({ name: "test", dir: "/tmp" })),
   forceRefresh: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
+  updateSessionId: mock(() => {}),
   getSession: mock(() => null),
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),

@@ -71,6 +71,7 @@ mock.module("../sessions", () => ({
   forceRefresh: mock(() => Promise.resolve()),
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
+  updateSessionId: mock(() => {}),
   getGitBranch: mock(() => Promise.resolve("main")),
   getSession: mock(() => null),
   getRecentHistory: mock(() => Promise.resolve([])),
