@@ -12,9 +12,28 @@
 
 What's **NOT** covered today: integrated multi-handler flows. The recent bug class (photo handler using `getActiveSession` instead of `sessionOverride`) had no test catching it because the unit tests mocked at too low a level.
 
+## Approach revision (post-prototyping)
+
+Initial design called for full handler → TCP-relay round-trip integration
+tests. In practice, fighting Bun's `mock.module` semantics + production's
+`isRelayProcess` ps-check + the relay client's 45s waitForReply timeout
+adds friction that buys little extra coverage.
+
+The bug class Phase 1 risks is in **session resolution** — `loadTopicSession`
+returning the right `sessionOverride`, handlers picking the right session.
+The delivery path itself (TCP relay client → channel-relay server → CC) is
+already well-covered by existing unit tests in `relay-discovery.test.ts`,
+`relay-selection.test.ts`, etc.
+
+So Phase 0 ships **resolution characterisation tests** rather than full
+delivery integration tests. Same regression-detection value for Phase 1;
+no test infrastructure churn.
+
 ## Scenarios to add
 
-Each scenario gets one test file under `src/__tests__/scenarios/`. Each is integration-shaped: real handler, mock TG API + mock relay, asserts the full message flow.
+Each scenario gets one test file under `src/__tests__/scenarios/`. Each
+exercises the session-resolution layer with realistic topic-store and
+session-registry state.
 
 ### S1 — `text-to-cc-via-topic.test.ts`
 
