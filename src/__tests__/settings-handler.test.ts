@@ -54,6 +54,8 @@ mock.module("../session", () => ({
     };
     return map[m] ?? m;
   },
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
 
 describe("renderSettingsBody", () => {

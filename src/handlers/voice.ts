@@ -16,6 +16,7 @@ import {
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
 import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
 
@@ -54,10 +55,14 @@ export async function handleVoice(
     return;
   }
 
-  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  if (sctx) {
+  // Sync per-session SessionState with the registry (task 7d).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
     const si = getSession(sctx.sessionName);
-    if (si) session.loadFromRegistry(si);
+    if (si) state.loadFromRegistry(si);
   }
 
   const opId = createOpId("voice");
@@ -97,7 +102,7 @@ export async function handleVoice(
   // whose lastActivity bumps on every CDP nudge.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
@@ -110,7 +115,9 @@ export async function handleVoice(
   }
 
   // 5. Mark processing started (allows /stop to work during transcription/classification)
-  const stopProcessing = session.startProcessing();
+  const stopProcessing = state
+    ? state.startProcessing()
+    : session.startProcessing();
 
   // 5. Start typing indicator for transcription
   const typing = startTypingIndicator(ctx);

@@ -13,6 +13,7 @@ import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
 import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
@@ -70,7 +71,13 @@ async function processPhotos(
   threadId?: number,
   sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state
+    ? state.startProcessing()
+    : session.startProcessing();
   const requestStartedAt = Date.now();
 
   try {
@@ -166,10 +173,15 @@ export async function handlePhoto(
     return;
   }
 
-  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  if (sctx) {
+  // Sync per-session SessionState with the registry (task 7d). The singleton
+  // is no longer warmed here.
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
     const si = getSession(sctx.sessionName);
-    if (si) session.loadFromRegistry(si);
+    if (si) state.loadFromRegistry(si);
   }
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
@@ -189,7 +201,7 @@ export async function handlePhoto(
   // every CDP nudge) and mis-targeted the preflight.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {

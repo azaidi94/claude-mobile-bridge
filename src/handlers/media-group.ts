@@ -224,6 +224,7 @@ export async function handleProcessingError(
   const errorStr = String(error);
   if (errorStr.includes("abort") || errorStr.includes("cancel")) {
     // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
+    // TODO(phase-1 7e): interrupt flag migrates to SessionState alongside commands.ts.
     const wasInterrupt = session.consumeInterruptFlag();
     if (!wasInterrupt) {
       await ctx.reply("🛑 Query stopped.");

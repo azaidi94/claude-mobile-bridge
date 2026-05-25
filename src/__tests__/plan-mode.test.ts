@@ -218,6 +218,8 @@ mock.module("../session", () => ({
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
   getModelDisplayName: (m: string) => m,
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
 
 // Mock security - must include all exports to avoid breaking other tests

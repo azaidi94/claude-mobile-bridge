@@ -14,6 +14,7 @@ import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
 import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
@@ -230,7 +231,13 @@ async function processArchive(
   threadId?: number,
   sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state
+    ? state.startProcessing()
+    : session.startProcessing();
   const requestStartedAt = Date.now();
 
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
@@ -369,7 +376,13 @@ async function processDocuments(
   threadId?: number,
   sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state
+    ? state.startProcessing()
+    : session.startProcessing();
   const requestStartedAt = Date.now();
 
   // Build prompt
@@ -542,10 +555,14 @@ export async function handleDocument(
     return;
   }
 
-  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  if (sctx) {
+  // Sync per-session SessionState with the registry (task 7d).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
     const si = getSession(sctx.sessionName);
-    if (si) session.loadFromRegistry(si);
+    if (si) state.loadFromRegistry(si);
   }
 
   // 2. Check file size
@@ -598,7 +615,7 @@ export async function handleDocument(
   // every CDP nudge), which mis-routes the preflight.
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId,
-    sessionDir: sctx?.sessionDir || session.workingDir,
+    sessionDir: sctx?.sessionDir || state?.workingDir || session.workingDir,
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {

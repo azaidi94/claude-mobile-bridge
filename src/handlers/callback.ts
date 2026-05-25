@@ -8,10 +8,13 @@ import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import {
   session,
+  runQueryStreaming,
+  runPlanApproval,
   MODEL_DISPLAY_NAMES,
   getModelDisplayName,
   type ModelId,
 } from "../session";
+import { getSessionState } from "../sessions/session-state";
 import { ALLOWED_USERS } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized } from "../security";
@@ -412,8 +415,18 @@ export async function handleCallback(ctx: Context): Promise<void> {
     const action = parts[1] as "accept" | "reject" | "edit";
     const requestId = parts[2]!;
 
+    // Resolve per-session state from sctx when present (task 7d). Falls back
+    // to the singleton for the no-sctx / DM path.
+    const state =
+      sctx && sctx.source === "cc"
+        ? getSessionState(sctx.sessionName)
+        : undefined;
+    const pendingApproval = state
+      ? state.pendingPlanApproval
+      : session.pendingPlanApproval;
+
     // Check if there's a pending plan approval
-    if (!session.pendingPlanApproval) {
+    if (!pendingApproval) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
     }
@@ -436,23 +449,37 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Start typing
     const typing = startTypingIndicator(ctx);
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
+    const streamState = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, streamState);
 
     try {
       const feedback = action === "reject" ? "User rejected the plan." : "";
-      const response = await session.respondToPlanApproval(
-        action,
-        feedback,
-        username,
-        userId,
-        statusCallback,
-        chatId,
-        ctx,
-      );
+      const response = state
+        ? await runPlanApproval(state, {
+            action,
+            feedback,
+            username,
+            userId,
+            statusCallback,
+            chatId,
+            ctx,
+            model: session.model,
+          })
+        : await session.respondToPlanApproval(
+            action,
+            feedback,
+            username,
+            userId,
+            statusCallback,
+            chatId,
+            ctx,
+          );
 
       // Check if another plan approval is pending (for reject flow)
-      if (session.pendingPlanApproval) {
+      const nextPending = state
+        ? state.pendingPlanApproval
+        : session.pendingPlanApproval;
+      if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
         await ctx.reply("📋 Revised plan ready. Review and approve?", {
@@ -500,6 +527,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
 
+    // Resolve per-session state from sctx when present (task 7d).
+    const auqState =
+      sctx && sctx.source === "cc"
+        ? getSessionState(sctx.sessionName)
+        : undefined;
+
     if (action === "skip") {
       // Skip all - send generic response to Claude
       pendingAskUserQuestions.delete(requestId);
@@ -508,18 +541,28 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
       // Send skip message to Claude
       const typing = startTypingIndicator(ctx);
-      const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state);
+      const streamState = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, streamState);
 
       try {
-        const response = await session.sendMessageStreaming(
-          "Skip questions, proceed with the plan",
-          username,
-          userId,
-          statusCallback,
-          chatId,
-          ctx,
-        );
+        const response = auqState
+          ? await runQueryStreaming(auqState, {
+              message: "Skip questions, proceed with the plan",
+              username,
+              userId,
+              statusCallback,
+              chatId,
+              ctx,
+              model: session.model,
+            })
+          : await session.sendMessageStreaming(
+              "Skip questions, proceed with the plan",
+              username,
+              userId,
+              statusCallback,
+              chatId,
+              ctx,
+            );
         await auditLog(userId, username, "AUQ_SKIP", "skip", response);
       } catch (error) {
         logError("callback: ask-user skip failed", error, {
@@ -589,27 +632,40 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         // Send answers to Claude (preserve plan mode)
         const typing = startTypingIndicator(ctx);
-        const state = new StreamingState();
-        const statusCallback = createStatusCallback(ctx, state);
+        const streamState = new StreamingState();
+        const statusCallback = createStatusCallback(ctx, streamState);
 
         try {
           const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
-          const response = await session.sendMessageStreaming(
-            answersText,
-            username,
-            userId,
-            statusCallback,
-            chatId,
-            ctx,
-            permissionMode,
-          );
+          const response = auqState
+            ? await runQueryStreaming(auqState, {
+                message: answersText,
+                username,
+                userId,
+                statusCallback,
+                chatId,
+                ctx,
+                permissionMode,
+                model: session.model,
+              })
+            : await session.sendMessageStreaming(
+                answersText,
+                username,
+                userId,
+                statusCallback,
+                chatId,
+                ctx,
+                permissionMode,
+              );
           await auditLog(userId, username, "AUQ_ANSWER", answersText, response);
 
           // Check if plan approval is pending (ExitPlanMode was called)
-          if (session.pendingPlanApproval) {
+          const pendingForKeyboard = auqState
+            ? auqState.pendingPlanApproval
+            : session.pendingPlanApproval;
+          if (pendingForKeyboard) {
             const displayContent =
-              session.pendingPlanApproval.planContent ||
-              session.pendingPlanApproval.planSummary;
+              pendingForKeyboard.planContent || pendingForKeyboard.planSummary;
             if (displayContent && displayContent.length > 50) {
               await sendPlanContent(ctx, displayContent);
             }
