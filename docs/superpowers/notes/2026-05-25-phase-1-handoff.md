@@ -1,6 +1,6 @@
 # Phase 1 — Handoff state (2026-05-25, updated)
 
-Resumes Phase 1 after task 5 landed in two batches. Next session picks up at task 6.
+Resumes Phase 1 after **task 6 landed**. Next session picks up at task 7.
 
 ## Branches
 
@@ -13,7 +13,9 @@ main
             ├── efcd745 — text.ts migrated  (task 3)
             ├── 4975619 — photo/voice/document migrated (task 4)
             ├── cf27783 — commands.ts migrated (task 5, batch 1)
-            └── 8c1d7e3 — callback dispatch migrated (task 5, batch 2)
+            ├── 8c1d7e3 — callback dispatch migrated (task 5, batch 2)
+            ├── 25b63d6 — relay-bridge + watch migrated (task 6)
+            └── 4b919f2 — task 6 review feedback (deprecation notes)
 ```
 
 Currently checked out: `refactor/phase-1-session-context`.
@@ -89,7 +91,45 @@ Tasks 6-9 remain. Plus a few items left out of task 5 by design:
    Cursor sessions.
 9. **Full test sweep + manual smoke**.
 
-## How to resume — Task 6 (relay-bridge + watch dispatch)
+## ⚠ Task 7 needs design discussion before execution
+
+Task 7 ("Delete singleton `session.ts` + `getActiveSession()`") is
+estimated as 2 hours in the plan, but `src/session.ts` is 943 lines of
+deeply coupled state:
+
+- Per-session state mixed with global state: `sessionId`, `lastMessage`,
+  `pendingPlanApproval`, `lastError`, `lastUsage`, `model`, `workingDir`,
+  plus the streaming SDK wrapper (`sendMessageStreaming`,
+  `respondToPlanApproval`, plan-approval reply queue, interrupt/stop
+  state machine).
+- Handlers currently call `session.sendMessageStreaming(...)` etc as if
+  it were a free function — those calls assume the singleton has been
+  warmed to the right session.
+- `loadFromRegistry(si)` is the warm-up. Many entry paths warm it. The
+  `warmSingletonFromSctx(sctx)` helper introduced in task 5 keeps these
+  reads correct in topic-routed flows.
+
+A safe path:
+
+1. **Per-session container.** Introduce a `SessionState` class that
+   holds the per-session fields (sessionId/lastMessage/pendingPlan/
+   lastError/lastUsage). Keep one instance keyed by `sessionName` in a
+   `Map<string, SessionState>`. Resolve at handler entry from `sctx`.
+2. **Per-session streaming wrapper.** Refactor the streaming SDK
+   wrapper into a function (or class) that takes a `SessionState` +
+   `SessionContext` and runs the query — drop the implicit "current
+   session" assumption.
+3. **Migrate handlers** to use the per-session state instead of
+   `session.xxx`. The `warmSingletonFromSctx` helper goes away.
+4. **Delete the singleton.** `src/session.ts` → `src/streaming/
+claude-sdk.ts` or similar (just the wrapper, no state).
+5. **Delete `getActiveSession()`** from the watcher.
+
+This is best done as its own multi-commit branch with explicit
+sub-plan. Drop a `docs/superpowers/plans/2026-05-25-phase-1-task-7-
+singleton-retirement.md` before starting.
+
+## How to resume — Task 6 (relay-bridge + watch dispatch) — DONE
 
 ```bash
 grep -rn "getActiveSession\|loadTopicSession" \
