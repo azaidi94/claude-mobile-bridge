@@ -47,6 +47,7 @@ import {
   suppressDirNotifications,
 } from "../sessions";
 import type { SessionInfo } from "../sessions/types";
+import type { SessionContext } from "../sessions/context";
 import { getLastUsage, formatContextLine } from "../sessions/context-usage";
 import { auditLog } from "../utils";
 import {
@@ -148,6 +149,17 @@ async function resolveTopicSession(
     return showSessionPicker(ctx, pickerAction);
   }
   return false;
+}
+
+/**
+ * Warm the streaming-SDK singleton so its session/dir match `sctx`. Keeps the
+ * existing `session.xxx` reads inside the handlers correct until task 7
+ * retires the singleton. No-op for Cursor sctx (no SDK relay).
+ */
+function warmSingletonFromSctx(sctx: SessionContext | undefined): void {
+  if (!sctx || sctx.source !== "cc") return;
+  const si = getSession(sctx.sessionName);
+  if (si) session.loadFromRegistry(si);
 }
 
 function bashSingleQuotedPath(p: string): string {
@@ -332,7 +344,10 @@ function tryRealpathSync(p: string): string {
 /**
  * /start - Show welcome message and status.
  */
-export async function handleStart(ctx: Context): Promise<void> {
+export async function handleStart(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -340,8 +355,7 @@ export async function handleStart(ctx: Context): Promise<void> {
     return;
   }
 
-  const activeSession = getActiveSession();
-  const sessionName = activeSession?.name || "none";
+  const sessionName = sctx?.sessionName ?? getActiveSession()?.name ?? "none";
 
   await ctx.reply(
     `🤖 <b>Claude Coding Bot</b>\n\n` +
@@ -745,7 +759,10 @@ export async function handleNew(ctx: Context): Promise<void> {
 /**
  * /stop - Interrupt current generation or cancel queue.
  */
-export async function handleStop(ctx: Context): Promise<void> {
+export async function handleStop(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -753,7 +770,8 @@ export async function handleStop(ctx: Context): Promise<void> {
     return;
   }
 
-  if (await resolveTopicSession(ctx, "stop_pick")) return;
+  warmSingletonFromSctx(sctx);
+  if (!sctx && (await resolveTopicSession(ctx, "stop_pick"))) return;
 
   const result = await session.stop();
 
@@ -880,7 +898,10 @@ export async function sendPostKillSessionList(
 /**
  * /kill [name] - Terminate a Claude session.
  */
-export async function handleKill(ctx: Context): Promise<void> {
+export async function handleKill(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
@@ -892,19 +913,16 @@ export async function handleKill(ctx: Context): Promise<void> {
   if (!chatId) return;
 
   // Topic context: kill the topic's session directly, show picker in General
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-    if (topicCtx) {
-      const sessionInfo = getSession(topicCtx.sessionName);
-      if (sessionInfo) {
-        const { pid } = await killSession(sessionInfo, chatId, ctx.api);
-        const pidStr = pid ? ` (PID ${pid})` : "";
-        await ctx.reply(
-          `💀 Killed <b>${escapeHtml(sessionInfo.name)}</b>${pidStr}`,
-          { parse_mode: "HTML" },
-        );
-        return;
-      }
+  if (sctx) {
+    const sessionInfo = getSession(sctx.sessionName);
+    if (sessionInfo) {
+      const { pid } = await killSession(sessionInfo, chatId, ctx.api);
+      const pidStr = pid ? ` (PID ${pid})` : "";
+      await ctx.reply(
+        `💀 Killed <b>${escapeHtml(sessionInfo.name)}</b>${pidStr}`,
+        { parse_mode: "HTML" },
+      );
+      return;
     }
   }
 
@@ -957,7 +975,10 @@ export async function respawnSession(
 /**
  * /respawn - Kill and re-spawn the current session in the same cwd.
  */
-export async function handleRespawn(ctx: Context): Promise<void> {
+export async function handleRespawn(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
@@ -968,17 +989,14 @@ export async function handleRespawn(ctx: Context): Promise<void> {
   if (!chatId || userId === undefined) return;
 
   let target: SessionInfo | null = null;
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-    if (topicCtx) {
-      target = getSession(topicCtx.sessionName);
-      if (!target) {
-        await ctx.reply("Session not found for this topic.");
-        return;
-      }
-    } else if (await showSessionPicker(ctx, "respawn")) {
+  if (sctx) {
+    target = getSession(sctx.sessionName);
+    if (!target) {
+      await ctx.reply("Session not found for this topic.");
       return;
     }
+  } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
+    if (await showSessionPicker(ctx, "respawn")) return;
   }
   if (!target) {
     const active = getActiveSession();
@@ -999,7 +1017,10 @@ export async function handleRespawn(ctx: Context): Promise<void> {
 /**
  * /status - Show detailed status.
  */
-export async function handleStatus(ctx: Context): Promise<void> {
+export async function handleStatus(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1007,10 +1028,12 @@ export async function handleStatus(ctx: Context): Promise<void> {
     return;
   }
 
-  if (await resolveTopicSession(ctx, "status_pick")) return;
+  warmSingletonFromSctx(sctx);
+  if (!sctx && (await resolveTopicSession(ctx, "status_pick"))) return;
 
-  const activeSession = getActiveSession();
-  const sessionName = session.sessionName || activeSession?.name;
+  const activeSession = sctx ? null : getActiveSession();
+  const sessionName =
+    sctx?.sessionName ?? session.sessionName ?? activeSession?.name;
 
   if (!sessionName) {
     await ctx.reply("No session. Use /list or /new.");
@@ -1056,7 +1079,11 @@ export async function handleStatus(ctx: Context): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
   const watch =
     chatId && threadId !== undefined ? getWatch(chatId, threadId) : undefined;
-  const sid = watch?.sessionId || activeSession?.info.id || session.sessionId;
+  const sid =
+    watch?.sessionId ||
+    sctx?.sessionId ||
+    activeSession?.info.id ||
+    session.sessionId;
   if (sid) {
     const usage = getLastUsage(sid);
     if (usage) {
@@ -1071,6 +1098,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
 
   // Working directory
   const dir = (
+    sctx?.sessionDir ||
     session.workingDir ||
     activeSession?.info.dir ||
     getWorkingDir()
@@ -1078,7 +1106,8 @@ export async function handleStatus(ctx: Context): Promise<void> {
   lines.push(`📁 <code>${dir}</code>`);
 
   // Git branch
-  const branchDir = session.workingDir || activeSession?.info.dir;
+  const branchDir =
+    sctx?.sessionDir || session.workingDir || activeSession?.info.dir;
   const branch = branchDir ? await getGitBranch(branchDir) : null;
   if (branch) {
     lines.push(`🌿 <code>${branch}</code>`);
@@ -1086,9 +1115,14 @@ export async function handleStatus(ctx: Context): Promise<void> {
 
   // Relay status
   const relayUp = await isRelayAvailable({
-    sessionId: activeSession?.info.id || session.sessionId || undefined,
-    sessionDir: session.workingDir || activeSession?.info.dir,
-    claudePid: activeSession?.info.pid,
+    sessionId:
+      sctx?.sessionId ||
+      activeSession?.info.id ||
+      session.sessionId ||
+      undefined,
+    sessionDir:
+      sctx?.sessionDir || session.workingDir || activeSession?.info.dir,
+    claudePid: sctx?.sessionPid ?? activeSession?.info.pid,
   });
   lines.push(relayUp ? "📡 Relay: connected" : "📡 Relay: unavailable");
 
@@ -1103,7 +1137,10 @@ export async function handleStatus(ctx: Context): Promise<void> {
 /**
  * /model - Show/switch model with inline buttons.
  */
-export async function handleModel(ctx: Context): Promise<void> {
+export async function handleModel(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1111,7 +1148,8 @@ export async function handleModel(ctx: Context): Promise<void> {
     return;
   }
 
-  if (await resolveTopicSession(ctx, "model_pick")) return;
+  warmSingletonFromSctx(sctx);
+  if (!sctx && (await resolveTopicSession(ctx, "model_pick"))) return;
 
   const currentModel = session.model;
   const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
@@ -1396,7 +1434,10 @@ export async function handleSessions(ctx: Context): Promise<void> {
 /**
  * /pin - Update/create pinned status message.
  */
-export async function handlePin(ctx: Context): Promise<void> {
+export async function handlePin(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
@@ -1407,10 +1448,12 @@ export async function handlePin(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
-  const active = getActiveSession();
-  const branch = await getGitBranch(session.workingDir);
+  warmSingletonFromSctx(sctx);
+  const active = sctx ? null : getActiveSession();
+  const branch = await getGitBranch(sctx?.sessionDir || session.workingDir);
   const status = {
-    sessionName: active?.name || session.sessionName || null,
+    sessionName:
+      sctx?.sessionName || active?.name || session.sessionName || null,
     isPlanMode: session.isPlanMode,
     model: session.modelDisplayName,
     branch,
@@ -1728,7 +1771,10 @@ export async function handleGroupModeCallback(
 /**
  * /pwd - Show current working directory.
  */
-export async function handlePwd(ctx: Context): Promise<void> {
+export async function handlePwd(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1742,7 +1788,8 @@ export async function handlePwd(ctx: Context): Promise<void> {
     return;
   }
 
-  const dir = session.workingDir || getWorkingDir();
+  warmSingletonFromSctx(sctx);
+  const dir = sctx?.sessionDir || session.workingDir || getWorkingDir();
   await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
     parse_mode: "HTML",
   });
@@ -1753,7 +1800,10 @@ export async function handlePwd(ctx: Context): Promise<void> {
  *
  * Validates the path exists, is a directory, and is within allowed paths.
  */
-export async function handleCd(ctx: Context): Promise<void> {
+export async function handleCd(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1767,6 +1817,7 @@ export async function handleCd(ctx: Context): Promise<void> {
     return;
   }
 
+  warmSingletonFromSctx(sctx);
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   if (!rawPath) {
@@ -1775,7 +1826,10 @@ export async function handleCd(ctx: Context): Promise<void> {
   }
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
-  const targetPath = resolve(session.workingDir || getWorkingDir(), rawPath);
+  const targetPath = resolve(
+    sctx?.sessionDir || session.workingDir || getWorkingDir(),
+    rawPath,
+  );
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {
@@ -1806,7 +1860,10 @@ export async function handleCd(ctx: Context): Promise<void> {
  *
  * Defaults to current working directory. Shows folders and files with indicators.
  */
-export async function handleLs(ctx: Context): Promise<void> {
+export async function handleLs(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1820,12 +1877,12 @@ export async function handleLs(ctx: Context): Promise<void> {
     return;
   }
 
+  warmSingletonFromSctx(sctx);
+  const baseDir = sctx?.sessionDir || session.workingDir || getWorkingDir();
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
-  const targetPath = rawPath
-    ? resolve(session.workingDir || getWorkingDir(), rawPath)
-    : session.workingDir || getWorkingDir();
+  const targetPath = rawPath ? resolve(baseDir, rawPath) : baseDir;
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {

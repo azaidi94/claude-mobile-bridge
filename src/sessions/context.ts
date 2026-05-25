@@ -22,9 +22,23 @@
  */
 
 import type { Context } from "grammy";
-import { isSessionTopic } from "../topics/topic-router";
+import { getSessionByTopic } from "../topics/topic-store";
 import { getSession } from "./watcher";
 import type { SessionInfo } from "./types";
+
+/**
+ * Thread id from either a message or callback-query context. Callbacks
+ * fired from inline keyboards carry `message_thread_id` on the embedded
+ * message, not on the synthetic `ctx.message`.
+ */
+function resolveThreadId(ctx: Context): number | undefined {
+  const fromMessage = ctx.message?.message_thread_id;
+  if (fromMessage !== undefined) return fromMessage;
+  const cbMsg = ctx.callbackQuery?.message as
+    | { message_thread_id?: number }
+    | undefined;
+  return cbMsg?.message_thread_id ?? undefined;
+}
 
 export interface SessionContext {
   /** Claude session UUID, or the synthetic `cursor-<slug>` id for Cursor. */
@@ -61,10 +75,13 @@ export function resolveSessionContext(
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return undefined;
 
-  const topicCtx = isSessionTopic(ctx);
-  if (!topicCtx) return undefined;
+  const threadId = resolveThreadId(ctx);
+  if (!threadId || threadId === 1) return undefined;
 
-  const si: SessionInfo | null = getSession(topicCtx.sessionName);
+  const mapping = getSessionByTopic(threadId);
+  if (!mapping) return undefined;
+
+  const si: SessionInfo | null = getSession(mapping.sessionName);
   if (!si) return undefined;
 
   // The synthetic Cursor sessionId convention: Cursor sessions use their
@@ -79,7 +96,7 @@ export function resolveSessionContext(
     sessionDir: si.dir,
     sessionPid: si.pid,
     source,
-    topicId: topicCtx.topicId,
+    topicId: mapping.topicId,
     chatId,
     sessionName: si.name,
   };

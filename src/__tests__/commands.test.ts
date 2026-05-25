@@ -2069,7 +2069,15 @@ describe("commands: /kill", () => {
       chatType: "supergroup",
     });
 
-    await handleKill(ctx as any);
+    await handleKill(ctx as any, {
+      sessionName: "topic-session",
+      sessionId: "",
+      sessionDir: "/tmp/topic-proj",
+      sessionPid: 99,
+      source: "cc",
+      topicId: 42,
+      chatId: 789,
+    });
 
     // Should kill directly — no picker
     expect(ctx._replies.length).toBe(1);

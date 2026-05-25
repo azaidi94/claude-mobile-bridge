@@ -5,7 +5,7 @@
  * index.ts uses this to create and start the bot.
  */
 
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { installBridgeHealthTransformer } from "./bridge-health";
@@ -216,15 +216,24 @@ export function createBot(options: BotOptions): Bot {
     await next();
   });
 
-  // Command handlers
-  bot.command("start", handleStart);
+  // Command handlers. Session-aware commands receive the SessionContext
+  // resolved at the bot edge (topic-first). Session-agnostic commands
+  // (/help, /new, /list, /switch, /refresh, /sessions, /restart, /usage,
+  // /execute, /settings, /app, /run, /watch, /unwatch, /retry, /groupmode,
+  // /cleanzombie) keep their original signatures.
+  const withSctx =
+    <T extends (ctx: Context, sctx?: any) => Promise<void>>(handler: T) =>
+    async (ctx: Parameters<T>[0]) =>
+      handler(ctx, resolveSessionContext(ctx));
+
+  bot.command("start", withSctx(handleStart));
   bot.command("help", handleHelp);
   bot.command("new", handleNew);
-  bot.command("respawn", handleRespawn);
-  bot.command("stop", handleStop);
-  bot.command("kill", handleKill);
-  bot.command("status", handleStatus);
-  bot.command("model", handleModel);
+  bot.command("respawn", withSctx(handleRespawn));
+  bot.command("stop", withSctx(handleStop));
+  bot.command("kill", withSctx(handleKill));
+  bot.command("status", withSctx(handleStatus));
+  bot.command("model", withSctx(handleModel));
   bot.command("restart", handleRestart);
   bot.command("retry", handleRetry);
   bot.command("list", handleList);
@@ -232,13 +241,13 @@ export function createBot(options: BotOptions): Bot {
   bot.command("refresh", handleRefresh);
   bot.command("watch", handleWatch);
   bot.command("unwatch", handleUnwatch);
-  bot.command("pin", handlePin);
+  bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("sessions", handleSessions);
-  bot.command("pwd", handlePwd);
-  bot.command("cd", handleCd);
-  bot.command("ls", handleLs);
+  bot.command("pwd", withSctx(handlePwd));
+  bot.command("cd", withSctx(handleCd));
+  bot.command("ls", withSctx(handleLs));
   bot.command("app", handleApp);
   bot.command("run", handleRun);
   bot.command("usage", handleUsage);
