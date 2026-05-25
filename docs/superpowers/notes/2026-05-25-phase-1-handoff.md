@@ -1,6 +1,6 @@
-# Phase 1 — Handoff state (2026-05-25, updated)
+# Phase 1 — Complete (2026-05-25)
 
-Resumes Phase 1 after **task 6 landed**. Next session picks up at task 7.
+**Phase 1 is done.** Singleton retired. Every per-session state lives in `SessionState`, resolved at handler entry from `SessionContext`.
 
 ## Branches
 
@@ -8,189 +8,65 @@ Resumes Phase 1 after **task 6 landed**. Next session picks up at task 7.
 main
 └── refactor/clean-architecture           (237febb — 9 phase plan docs)
     └── refactor/phase-0-characterisation (887f0e8 — 16 scenario tests)
-        └── refactor/phase-1-session-context
-            ├── 0e27854 — SessionContext type + resolver (additive)
-            ├── efcd745 — text.ts migrated  (task 3)
+        └── refactor/phase-1-session-context   ✅ ready to PR back into refactor/clean-architecture
+            ├── 0e27854 — SessionContext type + resolver (task 2)
+            ├── efcd745 — text.ts migrated (task 3)
             ├── 4975619 — photo/voice/document migrated (task 4)
-            ├── cf27783 — commands.ts migrated (task 5, batch 1)
-            ├── 8c1d7e3 — callback dispatch migrated (task 5, batch 2)
+            ├── cf27783 — commands.ts migrated (task 5a)
+            ├── 8c1d7e3 — callback dispatch migrated (task 5b)
             ├── 25b63d6 — relay-bridge + watch migrated (task 6)
-            └── 4b919f2 — task 6 review feedback (deprecation notes)
+            ├── 4b919f2 — task 6 review feedback
+            ├── c797d35 — task 7 sub-plan
+            ├── 0757603 — SessionState container (task 7a)
+            ├── 8e9d459 — stateless streaming wrappers (task 7b)
+            ├── 07146f3 — text.ts → SessionState (task 7c)
+            ├── 21834a3 — photo/voice/document/callback → SessionState (task 7d)
+            ├── a292128 — commands/relay-bridge/topic-router → SessionState (task 7e)
+            ├── 1e042e5 — infra wireup → SessionState (task 7f)
+            └── f8053e5 — singleton + getActiveSession deleted (task 7g)
 ```
 
-Currently checked out: `refactor/phase-1-session-context`.
+## Acceptance — all met
 
-## What's shipped
+- `grep -rn "getActiveSession\b" src --include="*.ts" | grep -v __tests__` — only doc comments referencing the retired API.
+- `grep -rn 'import { session' src --include="*.ts" | grep -v __tests__` — empty.
+- `src/session.ts` reduced to free functions: `runQueryStreaming`, `runPlanApproval`, `autoApproveWebTools` + model API (`getCurrentModel`, `setCurrentModel`, `getCurrentModelDisplayName`) + helpers.
+- `src/sessions/session-state.ts` is the single source of truth for per-session fields. Resolved via `getSessionState(name)`.
+- `bun run typecheck` clean. `bun run test` clean modulo known flakes (`web-tasks-route` SSE, `backfill-end-to-end` ordering).
+- Phase 0 scenario tests — all pass except the known `backfill-end-to-end` flake.
 
-- `src/sessions/context.ts` — `SessionContext` + `resolveSessionContext`
-  (now callback-aware: reads thread_id from `ctx.message` OR
-  `ctx.callbackQuery?.message`) + `sessionContextFromInfo`
-- `src/bot.ts` — all four `message:*` handlers AND every session-aware
-  `bot.command(...)` go through a `withSctx` wrapper that resolves once
-  and passes the result as the second arg
-- Migrated handlers (signature now `(ctx, sctx?)`):
-  - text, photo, voice, document
-  - `/start` `/respawn` `/stop` `/kill` `/status` `/model` `/pin`
-    `/pwd` `/cd` `/ls`
-- `src/handlers/commands.ts` introduces `warmSingletonFromSctx(sctx)` —
-  one place keeps the streaming SDK singleton aligned with sctx so the
-  existing `session.xxx` reads (model, isRunning, lastError…) continue
-  to point at the right session until task 7 retires the singleton
-- `src/handlers/callback.ts` — picker dispatch (`status_pick:` /
-  `model_pick:` / `stop_pick:`) builds sctx via
-  `sessionContextFromInfo` from the picked SessionInfo and passes it to
-  the handler. `model:` callback resolves sctx at entry and uses it for
-  pinned-status sessionName/dir so a model switch fired from topic A
-  no longer mis-pins to whichever session the singleton last loaded.
-- Test mocks: 4 test files updated to expose `resolveSessionContext` from
-  the `../sessions` mock (commands, plan-mode, ask-user-question,
-  auto-watch-retry). Phase-0 scenarios still pass.
+## What changed structurally
 
-Behaviour delta vs main: still none — singleton remains warmed inline.
-Routing is now explicit; the singleton retires in task 7.
+1. Routing is explicit through `SessionContext` (resolved topic-first from `ctx.message.message_thread_id` or callback-query message). No global "current session" pointer.
+2. Per-session state lives in `SessionState`, keyed by `sessionName` in a `Map`. `runQueryStreaming(state, opts)` and `runPlanApproval(state, opts)` are free functions that operate on the passed-in state — two queries can run in parallel against different SessionStates without interfering.
+3. Mode-change events now flow over `globalEventBus` (channel `sessionName`, type `mode_change`) instead of a singleton callback. `index.ts` installs a lazy per-state subscriber via `setOnSessionStateCreated`.
+4. Model state stays global (per R3): `_currentModel` module-level in `src/session.ts`. `/model` writes via `setCurrentModel`. Reasoning: per-session model is a feature change, parked for phase 5 if requested.
 
-## Test state
+## Remaining phase 1 tasks 8–9
 
-- `bun run typecheck` — clean
-- `bun run test` — 0 fail (one known flake: `web-tasks-route` event-
-  stream test, pre-existing on main, timing-dependent; passes when run
-  in isolation)
-- Phase 0 S2 (photo-to-cc-via-topic) — still green
+Tasks 8 and 9 are still open:
 
-## What's NOT done
+8. **Stop `addCursorSession` bumping shared `lastActivity`** — dir-match in `sendViaRelay` can still mis-route to recently-touched Cursor sessions. Small, self-contained.
+9. **Full test sweep + manual smoke** — exercise topic routing across CC + Cursor sessions in parallel; verify the known flakes are still flakes (not regressions).
 
-Tasks 6-9 remain. Plus a few items left out of task 5 by design:
+Both can land in one branch (or two small commits) and close out phase 1.
 
-### Left in task 5 on purpose
+## Open follow-ups for later phases
 
-- `handleRetry` — still reads `session.lastMessage` (singleton-bound).
-  Migrate alongside per-session `lastMessage` storage in task 7.
-- `handleSwitch` — `getActiveSession()` use is about the v1 global
-  pointer, not topic routing. Stays until phase 2 removes the v1 picker.
-- Inside `killSession`/`respawnSession` helpers — the
-  `getActiveSession()` checks decide whether to also tear down the
-  streaming SDK singleton. Move to task 7 with the rest of the
-  singleton retirement.
-- Callback branches other than the pickers/model — singleton-bound
-  state (plan approval, auq, switch:, sess_pick:, sess_resume:) or
-  operate on a SessionInfo directly. No useful sctx role yet.
+- The `loadTopicSession`/`TopicSessionResult` deprecation (deferred from task 6) should be cleaned up alongside Phase 0 test re-pointing.
+- The `web-tasks-route` SSE timing flake and `backfill-end-to-end` ordering flake are pre-existing on main; they should be tracked but aren't phase-1 work.
+- `process.env.TELEGRAM_CHAT_ID` inside `runQueryStreaming` is a process-global side-effect for the ask_user MCP server. Flagged for cleanup in phase 4 or 5.
+- Some Phase 0 characterisation tests still exercise `loadTopicSession` — they capture pre-refactor behavior as a baseline. Update or delete in a future tidy pass.
 
-### Remaining phase-1 tasks
+## Pitfalls to watch in phase 2+
 
-6. **Migrate relay-bridge + watch dispatch** (notifications too).
-   `sendViaRelay(ctx, message, ..., sctx)` per the plan — drop the
-   `getActiveSession()` fallback. Watch dispatch into the right topic
-   already uses an explicit session name; just thread sctx through for
-   the relay preflight.
-7. **Delete singleton `session.ts` + `getActiveSession()`** — needs
-   per-session storage for `lastMessage`, `pendingPlanApproval`, and
-   the streaming SDK wrapper refactored off the singleton first. This
-   is the load-bearing change; budget the most time here.
-8. **Stop `addCursorSession` bumping shared `lastActivity`** so
-   dir-match in `sendViaRelay` stops mis-routing to recently-touched
-   Cursor sessions.
-9. **Full test sweep + manual smoke**.
-
-## ⚠ Task 7 needs design discussion before execution
-
-Task 7 ("Delete singleton `session.ts` + `getActiveSession()`") is
-estimated as 2 hours in the plan, but `src/session.ts` is 943 lines of
-deeply coupled state:
-
-- Per-session state mixed with global state: `sessionId`, `lastMessage`,
-  `pendingPlanApproval`, `lastError`, `lastUsage`, `model`, `workingDir`,
-  plus the streaming SDK wrapper (`sendMessageStreaming`,
-  `respondToPlanApproval`, plan-approval reply queue, interrupt/stop
-  state machine).
-- Handlers currently call `session.sendMessageStreaming(...)` etc as if
-  it were a free function — those calls assume the singleton has been
-  warmed to the right session.
-- `loadFromRegistry(si)` is the warm-up. Many entry paths warm it. The
-  `warmSingletonFromSctx(sctx)` helper introduced in task 5 keeps these
-  reads correct in topic-routed flows.
-
-A safe path:
-
-1. **Per-session container.** Introduce a `SessionState` class that
-   holds the per-session fields (sessionId/lastMessage/pendingPlan/
-   lastError/lastUsage). Keep one instance keyed by `sessionName` in a
-   `Map<string, SessionState>`. Resolve at handler entry from `sctx`.
-2. **Per-session streaming wrapper.** Refactor the streaming SDK
-   wrapper into a function (or class) that takes a `SessionState` +
-   `SessionContext` and runs the query — drop the implicit "current
-   session" assumption.
-3. **Migrate handlers** to use the per-session state instead of
-   `session.xxx`. The `warmSingletonFromSctx` helper goes away.
-4. **Delete the singleton.** `src/session.ts` → `src/streaming/
-claude-sdk.ts` or similar (just the wrapper, no state).
-5. **Delete `getActiveSession()`** from the watcher.
-
-This is best done as its own multi-commit branch with explicit
-sub-plan. Drop a `docs/superpowers/plans/2026-05-25-phase-1-task-7-
-singleton-retirement.md` before starting.
-
-## How to resume — Task 6 (relay-bridge + watch dispatch) — DONE
-
-```bash
-grep -rn "getActiveSession\|loadTopicSession" \
-  src/handlers/relay-bridge.ts src/handlers/watch.ts \
-  src/sessions/watcher.ts src/sessions/index.ts
-```
-
-### Strategy
-
-`sendViaRelay` is the highest-priority site — it's the source of "no
-desktop session found" false positives because it falls back to
-`getActiveSession()` when the caller doesn't pass an override. After
-task 6 it should:
-
-- Take `sctx?: SessionContext` (already passed `sessionOverride` from
-  text.ts; consolidate the two).
-- When sctx provided, use sctx.{sessionId, sessionDir, sessionPid}
-  directly for `isRelayAvailable` and `client.connect`.
-- When sctx undefined (General topic dispatch from a notification),
-  keep the existing dir-match logic but no `getActiveSession()`
-  fallback — explicit lookup only.
-
-### Don't touch yet
-
-- `session.workingDir` writes inside handlers (defer to task 7).
-- The singleton's `lastActivity` bumping (task 8).
-
-## Pitfalls (still relevant)
-
-- **`session.loadFromRegistry(si)` warms the streaming SDK** — don't
-  drop the warm-up until task 7. `warmSingletonFromSctx` is the one
-  place that does it for the migrated handlers.
-- **`session.lastMessage = message;`** in text.ts line ~476 — keep
-  until task 7.
-- **`session.sessionId = null;`** in `/clear` — same. Ticket cleanup
-  for task 7.
-- **Phase 0's S2 test** still the strongest guard against photo-routing
-  regression. Re-run after every handler migration.
-- **`web-tasks-route` SSE test flakes** in the full suite — ignore as
-  long as it passes in isolation. Pre-existing.
-
-## Useful command snippets
-
-```bash
-# Find remaining getActiveSession callers (excluding sessions/ + tests)
-grep -rn "getActiveSession" src --include="*.ts" \
-  | grep -v __tests__ | grep -v __mocks__ | grep -v src/sessions/
-
-# Find singleton imports
-grep -rln 'from "../session"\|from "./session"' src --include="*.ts" \
-  | grep -v __tests__ | grep -v __mocks__
-
-# Re-run scenario tests
-bun test src/__tests__/scenarios/
-
-# Full isolated suite (used by `bun run test`)
-bun run test
-```
+- The streaming-callback closure pattern: callbacks write `state.currentTool`, `state.lastTool`, etc. via the _passed-in_ state reference. If any future refactor reintroduces `this`-bound callbacks, the multi-session invariant breaks.
+- `setActiveSession()` and the ACTIVE_SESSION_FILE persistence are still there to support the v1 picker (`handleSwitch`, the /list checkmark, etc.). Phase 2 should decide whether to keep that concept or drop it entirely.
+- Test mocks that referenced the old singleton (`import { session }` shape) were converted to mock `getSessionState`. New tests should follow the same pattern: stub `getSessionState` returning a SessionState-shaped object.
 
 ## Plan docs
 
 - Overview: `docs/superpowers/plans/2026-05-25-clean-architecture-overview.md`
 - Phase 1 detail: `docs/superpowers/plans/2026-05-25-phase-1-session-context.md`
+- Phase 1 task 7 sub-plan: `docs/superpowers/plans/2026-05-25-phase-1-task-7-singleton-retirement.md`
 - Phase 0 review: `docs/superpowers/plans/2026-05-25-phase-0-characterisation-tests.md`
