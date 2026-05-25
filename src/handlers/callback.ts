@@ -7,11 +7,16 @@
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import {
-  session,
+  runQueryStreaming,
+  runPlanApproval,
   MODEL_DISPLAY_NAMES,
   getModelDisplayName,
+  getCurrentModel,
+  getCurrentModelDisplayName,
+  setCurrentModel,
   type ModelId,
 } from "../session";
+import { getSessionState } from "../sessions/session-state";
 import { ALLOWED_USERS } from "../config";
 import { formatTimeAgo, escapeHtml } from "../formatting";
 import { isAuthorized } from "../security";
@@ -27,13 +32,15 @@ import {
 } from "./streaming";
 import {
   setActiveSession,
-  getActiveSession,
   getSessions,
   getSession,
   updatePinnedStatus,
   getGitBranch,
   sendSwitchHistory,
+  resolveSessionContext,
 } from "../sessions";
+import { sessionContextFromInfo } from "../sessions/context";
+import type { SessionContext } from "../sessions/context";
 import { isWatchingAny } from "./watch";
 import {
   killSession,
@@ -89,7 +96,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // Handle topic session-picker callbacks
+  // Handle topic session-picker callbacks. The user picked a session from
+  // the General-topic picker; build an sctx from it and dispatch to the
+  // handler exactly as if they'd invoked it from that session's topic.
   for (const [prefix, handler] of [
     ["status_pick:", "handleStatus"],
     ["model_pick:", "handleModel"],
@@ -99,9 +108,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
       const sessionName = callbackData.slice(prefix.length);
       const sessionInfo = getSession(sessionName);
       if (sessionInfo) {
-        session.loadFromRegistry(sessionInfo);
+        const sctx = sessionContextFromInfo(sessionInfo, chatId);
         const commands = await import("./commands");
-        await (commands[handler] as (ctx: Context) => Promise<void>)(ctx);
+        await (
+          commands[handler] as (
+            ctx: Context,
+            sctx?: SessionContext,
+          ) => Promise<void>
+        )(ctx, sctx);
       } else {
         await ctx.reply("Session not found.");
       }
@@ -109,6 +123,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
   }
+
+  // SessionContext for the originating topic (if any). Some callback
+  // branches use this to render correct pinned-status names and avoid
+  // mis-routing to whichever session the singleton last touched.
+  const sctx = resolveSessionContext(ctx);
 
   // 2. Handle model switch callbacks: model:{model_id}
   if (callbackData.startsWith("model:")) {
@@ -120,14 +139,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
     }
 
     // Already on this model
-    if (session.model === modelId) {
+    if (getCurrentModel() === modelId) {
       await ctx.answerCallbackQuery({
         text: `Already using ${getModelDisplayName(modelId)}`,
       });
       return;
     }
 
-    session.setModel(modelId);
+    setCurrentModel(modelId);
 
     // Update message with new selection
     const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
@@ -149,14 +168,20 @@ export async function handleCallback(ctx: Context): Promise<void> {
       text: `Switched to ${getModelDisplayName(modelId)}`,
     });
 
-    // Update pinned status with new model
-    const active = getActiveSession();
-    getGitBranch(session.workingDir)
+    // Update pinned status with new model. Prefer the originating topic's
+    // session name and dir; in the no-sctx (DM) path we can only show the
+    // model — the session name/dir are unknown.
+    const targetDir = sctx?.sessionDir;
+    const sessionName = sctx?.sessionName ?? null;
+    const isPlanMode = sctx
+      ? getSessionState(sctx.sessionName).isPlanMode
+      : false;
+    Promise.resolve(targetDir ? getGitBranch(targetDir) : null)
       .then((branch) =>
         updatePinnedStatus(ctx.api, chatId, {
-          sessionName: active?.name || null,
-          isPlanMode: session.isPlanMode,
-          model: session.modelDisplayName,
+          sessionName,
+          isPlanMode,
+          model: getCurrentModelDisplayName(),
           branch,
         }),
       )
@@ -167,26 +192,19 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // 3. Handle switch callbacks: switch:{session_name}
   if (callbackData.startsWith("switch:")) {
     const name = callbackData.slice(7); // Remove "switch:" prefix
-    const currentActive = getActiveSession();
+    const targetInfo = getSession(name);
 
-    // Already on this session — start watching if not already
-    if (currentActive?.name === name) {
-      if (currentActive.info.source === "desktop" && !isWatchingAny(chatId)) {
-        await ctx.answerCallbackQuery({
-          text: `${name} is active — watching is per-topic, use /spawn`,
-        });
-        return;
-      }
-      await ctx.answerCallbackQuery({ text: `Already on ${name}` });
+    if (!targetInfo) {
+      await ctx.answerCallbackQuery({ text: "Session not found" });
       return;
     }
 
     const success = setActiveSession(name);
 
     if (success) {
-      const active = getActiveSession();
-      if (active) {
-        session.loadFromRegistry(active.info);
+      const active = targetInfo;
+      {
+        getSessionState(active.name).loadFromRegistry(active);
 
         // Rebuild session list with updated active marker
         const sessions = getSessions();
@@ -223,13 +241,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
         });
         await ctx.answerCallbackQuery({ text: `Switched to ${name}` });
 
-        await sendSwitchHistory(ctx, active.info);
-        getGitBranch(active.info.dir)
+        await sendSwitchHistory(ctx, active);
+        getGitBranch(active.dir)
           .then((branch) =>
             updatePinnedStatus(ctx.api, chatId, {
               sessionName: active.name,
-              isPlanMode: session.isPlanMode,
-              model: session.modelDisplayName,
+              isPlanMode: getSessionState(active.name).isPlanMode,
+              model: getCurrentModelDisplayName(),
               branch,
             }),
           )
@@ -396,8 +414,16 @@ export async function handleCallback(ctx: Context): Promise<void> {
     const action = parts[1] as "accept" | "reject" | "edit";
     const requestId = parts[2]!;
 
-    // Check if there's a pending plan approval
-    if (!session.pendingPlanApproval) {
+    // Plan approvals require a resolved per-session SessionState. The
+    // no-sctx (DM) path has no session to attribute the approval to —
+    // surfacing "No pending plan" is correct.
+    const state =
+      sctx && sctx.source === "cc"
+        ? getSessionState(sctx.sessionName)
+        : undefined;
+    const pendingApproval = state?.pendingPlanApproval;
+
+    if (!pendingApproval) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
     }
@@ -420,12 +446,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     // Start typing
     const typing = startTypingIndicator(ctx);
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state);
+    const streamState = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, streamState);
 
     try {
       const feedback = action === "reject" ? "User rejected the plan." : "";
-      const response = await session.respondToPlanApproval(
+      const response = await runPlanApproval(state!, {
         action,
         feedback,
         username,
@@ -433,10 +459,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
         statusCallback,
         chatId,
         ctx,
-      );
+        model: getCurrentModel(),
+      });
 
       // Check if another plan approval is pending (for reject flow)
-      if (session.pendingPlanApproval) {
+      const nextPending = state!.pendingPlanApproval;
+      if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
         await ctx.reply("📋 Revised plan ready. Review and approve?", {
@@ -484,6 +512,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
 
+    // Resolve per-session state from sctx when present (task 7d).
+    const auqState =
+      sctx && sctx.source === "cc"
+        ? getSessionState(sctx.sessionName)
+        : undefined;
+
     if (action === "skip") {
       // Skip all - send generic response to Claude
       pendingAskUserQuestions.delete(requestId);
@@ -492,18 +526,23 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
       // Send skip message to Claude
       const typing = startTypingIndicator(ctx);
-      const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state);
+      const streamState = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, streamState);
 
       try {
-        const response = await session.sendMessageStreaming(
-          "Skip questions, proceed with the plan",
+        if (!auqState) {
+          await ctx.reply("❌ Question expired — no session.");
+          return;
+        }
+        const response = await runQueryStreaming(auqState, {
+          message: "Skip questions, proceed with the plan",
           username,
           userId,
           statusCallback,
           chatId,
           ctx,
-        );
+          model: getCurrentModel(),
+        });
         await auditLog(userId, username, "AUQ_SKIP", "skip", response);
       } catch (error) {
         logError("callback: ask-user skip failed", error, {
@@ -573,27 +612,32 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
         // Send answers to Claude (preserve plan mode)
         const typing = startTypingIndicator(ctx);
-        const state = new StreamingState();
-        const statusCallback = createStatusCallback(ctx, state);
+        const streamState = new StreamingState();
+        const statusCallback = createStatusCallback(ctx, streamState);
 
         try {
           const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
-          const response = await session.sendMessageStreaming(
-            answersText,
+          if (!auqState) {
+            await ctx.reply("❌ Question expired — no session.");
+            return;
+          }
+          const response = await runQueryStreaming(auqState, {
+            message: answersText,
             username,
             userId,
             statusCallback,
             chatId,
             ctx,
             permissionMode,
-          );
+            model: getCurrentModel(),
+          });
           await auditLog(userId, username, "AUQ_ANSWER", answersText, response);
 
           // Check if plan approval is pending (ExitPlanMode was called)
-          if (session.pendingPlanApproval) {
+          const pendingForKeyboard = auqState.pendingPlanApproval;
+          if (pendingForKeyboard) {
             const displayContent =
-              session.pendingPlanApproval.planContent ||
-              session.pendingPlanApproval.planSummary;
+              pendingForKeyboard.planContent || pendingForKeyboard.planSummary;
             if (displayContent && displayContent.length > 50) {
               await sendPlanContent(ctx, displayContent);
             }
@@ -737,17 +781,26 @@ export async function handleCallback(ctx: Context): Promise<void> {
     });
   }
 
-  // 12. Send the choice to Claude as a message
+  // 12. Send the choice to Claude as a message via the originating topic's
+  // SessionState. Legacy file-based ask_user callbacks land without
+  // SessionContext when invoked from General/DM — in that case there's no
+  // session to attribute the answer to.
   const message = selectedOption;
+  const legacyState =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
+  if (!legacyState) {
+    await ctx.reply("❌ Cannot route answer — no session for this topic.");
+    return;
+  }
 
   // Interrupt any running query - button responses are always immediate
-  if (session.isRunning) {
+  if (legacyState.isRunning) {
     info("callback: interrupting current query for response", {
       chatId,
       userId,
       requestId,
     });
-    await session.stop();
+    await legacyState.stop();
     // Small delay to ensure clean interruption
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -756,18 +809,19 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const typing = startTypingIndicator(ctx);
 
   // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state);
+  const streamState = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, streamState);
 
   try {
-    const response = await session.sendMessageStreaming(
+    const response = await runQueryStreaming(legacyState, {
       message,
       username,
       userId,
       statusCallback,
       chatId,
       ctx,
-    );
+      model: getCurrentModel(),
+    });
 
     await auditLog(userId, username, "CALLBACK", message, response);
   } catch (error) {
@@ -778,7 +832,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
       requestId,
     });
 
-    for (const toolMsg of state.toolMessages) {
+    for (const toolMsg of streamState.toolMessages) {
       try {
         await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
       } catch (error) {
@@ -792,7 +846,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     if (String(error).includes("abort") || String(error).includes("cancel")) {
       // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-      const wasInterrupt = session.consumeInterruptFlag();
+      const wasInterrupt = legacyState.consumeInterruptFlag();
       if (!wasInterrupt) {
         await ctx.reply("🛑 Query stopped.");
       }
@@ -903,7 +957,7 @@ export async function handleSettingsCallback(
     }
 
     if (field === "model") {
-      const current = session.model;
+      const current = getCurrentModel();
       const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
       const rows = models.map(([id, name]) => [
         {
@@ -916,7 +970,7 @@ export async function handleSettingsCallback(
         { text: "← Back", callback_data: "set:back" },
       ]);
       await ctx.editMessageText(
-        `🤖 <b>Model:</b> ${session.modelDisplayName}`,
+        `🤖 <b>Model:</b> ${getCurrentModelDisplayName()}`,
         {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: rows },
@@ -944,8 +998,8 @@ export async function handleSettingsCallback(
       return;
     }
     if (field === "model") {
-      // setModel() writes to settings AND updates the running session.
-      session.setModel(value as ModelId);
+      // setCurrentModel writes to settings AND updates the running default.
+      setCurrentModel(value as ModelId);
       await rerenderSettingsPanel(ctx);
       await ctx.answerCallbackQuery({ text: `Model: ${value}` });
       return;

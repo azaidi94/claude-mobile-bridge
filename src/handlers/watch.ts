@@ -10,8 +10,9 @@
 
 import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
-import type { SessionOverride } from "../sessions/types";
-import { session } from "../session";
+import type { SessionContext } from "../sessions/context";
+import { getCurrentModelDisplayName } from "../session";
+import { getSessionState } from "../sessions";
 import {
   ALLOWED_USERS,
   STREAMING_THROTTLE_MS,
@@ -37,14 +38,15 @@ import {
   type TailEvent,
 } from "../sessions/tailer";
 import {
-  getActiveSession,
   getSession,
   getSessions,
   setActiveSession,
   updatePinnedStatus,
   getGitBranch,
   forceRefresh,
+  updateSessionId,
 } from "../sessions";
+import { stat } from "node:fs/promises";
 import { info, debug, warn, elapsedMs } from "../logger";
 import { isBridgeOnline } from "../bridge-health";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
@@ -111,6 +113,13 @@ export function bridgeTailToSse(
       bus.emit(sessionId, { type: "text", content: event.content });
       return;
     case "turn_boundary":
+      return;
+    case "turn_end":
+      // The web client treats SSE `done` as "streaming finished → re-enable
+      // input." Without this, streaming stays true forever when the user
+      // drives CC from the terminal/TG and the web UI is watching the
+      // same session — the input stays disabled.
+      bus.emit(sessionId, { type: "done", content: "" });
       return;
     case "tool_result":
       bus.emit(sessionId, {
@@ -213,6 +222,66 @@ export interface WatchState extends TailDisplayState {
    */
   watchdogFired?: boolean;
   unsubCrossPost?: () => void;
+  /**
+   * True when the tailer was started against a guessed/expected JSONL path
+   * (i.e. `findSessionJsonlPath` returned null at startup, so the path is
+   * `getExpectedJsonlPath(dir, id)` which may never get written if CC chose
+   * a different uuid than the relay port file's id). The drift-detection
+   * interval runs more aggressively while this flag is set, and clears it
+   * once a real on-disk JSONL is bound.
+   */
+  speculativeTailerPath?: boolean;
+}
+
+/**
+ * Resolve a live JSONL path for a session that may not have written its file
+ * yet. Tries the registry id first; if missing, polls `findNewestSessionInDir`
+ * briefly to catch the case where CC writes its real JSONL under a different
+ * uuid than the relay port file reported. Falls back to the expected (guessed)
+ * path and returns speculative=true so the drift loop can rescue it later.
+ *
+ * Exported as a test seam.
+ */
+export async function _resolveLiveJsonlPath(
+  sessionInfo: import("../sessions/types").SessionInfo,
+  opts?: {
+    /** Total polling budget in ms (default ~10s). */
+    timeoutMs?: number;
+    /** Per-attempt sleep (default 1s). */
+    intervalMs?: number;
+  },
+): Promise<{ path: string; sessionId: string; speculative: boolean }> {
+  const directHit = await findSessionJsonlPath(sessionInfo.id);
+  if (directHit) {
+    return { path: directHit, sessionId: sessionInfo.id, speculative: false };
+  }
+
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
+  const intervalMs = opts?.intervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await Bun.sleep(intervalMs);
+    // Re-check the canonical id first (cheap), in case CC just wrote it.
+    const direct = await findSessionJsonlPath(sessionInfo.id);
+    if (direct) {
+      return { path: direct, sessionId: sessionInfo.id, speculative: false };
+    }
+    // Then look for any JSONL the project dir gained.
+    const newestId = await findNewestSessionInDir(sessionInfo.dir);
+    if (newestId) {
+      const newestPath = await findSessionJsonlPath(newestId);
+      if (newestPath) {
+        return { path: newestPath, sessionId: newestId, speculative: false };
+      }
+    }
+  }
+
+  return {
+    path: getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id),
+    sessionId: sessionInfo.id,
+    speculative: true,
+  };
 }
 
 // Active watches: "chatId:threadId" -> WatchState
@@ -445,13 +514,16 @@ export async function sendWatchRelay(
   opId?: string,
   imagePath?: string,
   /** Override session target (for topic mode where watch may point at a different session). */
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<boolean> {
   const state = watches.get(watchKey(chatId, threadId));
   if (!state) return false;
   const startedAt = Date.now();
 
-  const target = sessionOverride || state;
+  // Only sessionId, sessionDir, and sessionPid are read from `target`.
+  // SessionContext and WatchState are structurally compatible for exactly
+  // those three fields; no other properties should be accessed here.
+  const target = sctx ?? state;
   const client = await getRelayClient({
     sessionId: target.sessionId,
     sessionDir: target.sessionDir,
@@ -568,7 +640,7 @@ export function notifySessionOffline(botApi: Api, sessionName: string): void {
 
     const sessionInfo = getSession(state.sessionName);
     if (sessionInfo) {
-      session.loadFromRegistry(sessionInfo);
+      getSessionState(state.sessionName).loadFromRegistry(sessionInfo);
       setActiveSession(state.sessionName);
     }
 
@@ -602,6 +674,10 @@ export function notifySessionOffline(botApi: Api, sessionName: string): void {
  */
 function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
   const { chatId, threadId, sessionName } = watchState;
+  // Speculative watches poll more aggressively so a misbehaving CC version
+  // that wrote its real JSONL under a different uuid than the port file
+  // reported gets adopted within a second or two instead of being stuck.
+  const intervalMs = watchState.speculativeTailerPath ? 1_000 : 5_000;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
     // Only drift when sole owner of the dir. With siblings, the newest
@@ -622,8 +698,31 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
     );
     const newId = newestJsonl ?? getSession(sessionName)?.id;
 
-    if (!newId || newId === watchState.sessionId) return;
+    if (!newId) return;
     if (killedSessionIds.has(newId)) return;
+
+    // Speculative-watch fallback: even if `newId === sessionId`, our current
+    // tailer may be pointed at a guessed path that doesn't exist on disk
+    // (CC chose a different uuid than the relay port file's id). In that
+    // case, if `findNewestSessionInDir` returns *anything* and the
+    // speculative path isn't on disk, re-resolve via the newest id.
+    if (newId === watchState.sessionId) {
+      if (!watchState.speculativeTailerPath) return;
+      const currentPathExists = await findSessionJsonlPath(
+        watchState.sessionId,
+      ).then((p) => p !== null);
+      if (currentPathExists) {
+        // Real JSONL appeared under the original id — bind to it and clear
+        // the speculative flag so the loop reverts to the slow interval.
+        const realPath = await findSessionJsonlPath(watchState.sessionId);
+        if (realPath) {
+          await rebindTailerPath(botApi, watchState, realPath, newId);
+        }
+        return;
+      }
+      // Same id still un-flushed; nothing else to do this tick.
+      return;
+    }
     // Defense in depth: don't steal an id another live watcher already holds.
     for (const other of watches.values()) {
       if (other === watchState) continue;
@@ -672,7 +771,59 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
         { parse_mode: "HTML", message_thread_id: watchState.threadId },
       )
       .catch(() => {});
-  }, 5_000);
+  }, intervalMs);
+}
+
+/**
+ * Restart the tailer against a different on-disk JSONL. Used both by the
+ * normal drift path (id changed) and by the speculative recovery path (id
+ * stayed the same but original tailer was pointed at a guessed path).
+ * Clears `speculativeTailerPath` once the new tailer is bound to a real file.
+ */
+async function rebindTailerPath(
+  botApi: Api,
+  watchState: WatchState,
+  newPath: string,
+  newId: string,
+): Promise<void> {
+  const previousId = watchState.sessionId;
+  const previousSpeculative = watchState.speculativeTailerPath === true;
+  watchState.tailer?.stop();
+  if (previousId !== newId) {
+    forgetUsage(previousId);
+    watchState.sessionId = newId;
+    // Optional belt: keep the watcher registry in sync if the new id isn't
+    // already tracked under some other name. updateSessionId is a no-op if
+    // the session isn't in cache, so it's safe.
+    try {
+      updateSessionId(watchState.sessionName, newId);
+    } catch {}
+  }
+  const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
+    if (event.type === "usage" && event.usage) {
+      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
+    }
+    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
+  });
+  watchState.tailer = newTailer;
+  watchState.speculativeTailerPath = false;
+  await newTailer.start();
+  // If the loop interval was tuned to "speculative" (1s) but we've now bound
+  // a real path, restart the interval at the slower cadence.
+  if (previousSpeculative && watchState.idCheckInterval) {
+    clearInterval(watchState.idCheckInterval);
+    setupIdDriftDetection(botApi, watchState);
+  }
+  info("watch: rebound tailer to live JSONL", {
+    chatId: watchState.chatId,
+    threadId: watchState.threadId,
+    sessionName: watchState.sessionName,
+    previousId,
+    newId,
+    newPath,
+    wasSpeculative: previousSpeculative,
+  });
 }
 
 export function setupCrossPostSubscription(
@@ -810,18 +961,27 @@ export async function startAutoWatch(
     return false;
   }
 
-  const jsonlPath =
-    (await findSessionJsonlPath(sessionInfo.id)) ??
-    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
+  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  const jsonlPath = resolved.path;
 
   const watchState: WatchState = buildWatchState({
     sessionName,
-    sessionId: sessionInfo.id,
+    sessionId: resolved.sessionId,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
     chatId,
     threadId,
   });
+  watchState.speculativeTailerPath = resolved.speculative;
+  // If the resolver picked up an id that differs from what the registry
+  // had (CC wrote its real JSONL under a different uuid than the relay
+  // port file reported), sync the registry so other lookups see the
+  // canonical id.
+  if (resolved.sessionId !== sessionInfo.id) {
+    try {
+      updateSessionId(sessionName, resolved.sessionId);
+    } catch {}
+  }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
@@ -897,7 +1057,10 @@ export async function startAutoWatch(
 /**
  * /watch [session-name] - Start watching a desktop session.
  */
-export async function handleWatch(ctx: Context): Promise<void> {
+export async function handleWatch(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
@@ -916,10 +1079,15 @@ export async function handleWatch(ctx: Context): Promise<void> {
     return;
   }
 
-  // Don't start watching while a query is running
-  if (session.isRunning) {
-    await ctx.reply("A query is in progress. Use /stop first.");
-    return;
+  // Don't start watching while a query is running on this topic's session.
+  // (For General-topic /watch with no sctx, there's no specific session to
+  // check; the watch target is parsed below.)
+  if (sctx?.sessionName) {
+    const st = getSessionState(sctx.sessionName);
+    if (st.isRunning) {
+      await ctx.reply("A query is in progress. Use /stop first.");
+      return;
+    }
   }
 
   // Already watching?
@@ -955,17 +1123,21 @@ export async function handleWatch(ctx: Context): Promise<void> {
       return;
     }
     targetName = requestedName;
-  } else {
-    // Try active session, or find first desktop session
-    const active = getActiveSession();
-    if (active && active.info.source === "desktop") {
-      targetName = active.name;
-    } else {
-      const allSessions = getSessions();
-      const desktop = allSessions.find((s) => s.source === "desktop");
-      if (desktop) {
-        targetName = desktop.name;
-      }
+  } else if (sctx?.sessionName) {
+    // Topic-resolved session takes precedence over the global active pointer.
+    const sessionInfo = getSession(sctx.sessionName);
+    if (sessionInfo && sessionInfo.source === "desktop") {
+      targetName = sctx.sessionName;
+    }
+  }
+
+  if (!targetName && !requestedName) {
+    // Fallback when sctx is unavailable (private DM) or its session isn't
+    // a desktop session — pick the first desktop session in the registry.
+    const allSessions = getSessions();
+    const desktop = allSessions.find((s) => s.source === "desktop");
+    if (desktop) {
+      targetName = desktop.name;
     }
   }
 
@@ -1038,11 +1210,12 @@ export async function startWatchingSession(
   }
 
   // Resolve JSONL path. May not exist yet — claude doesn't write the file
-  // until the first prompt is submitted. Fall back to the expected path so
-  // the tailer can wait for the file to appear.
-  const jsonlPath =
-    (await findSessionJsonlPath(sessionInfo.id)) ??
-    getExpectedJsonlPath(sessionInfo.dir, sessionInfo.id);
+  // until the first prompt is submitted. The resolver polls briefly for the
+  // real path (catches the case where CC writes under a different uuid than
+  // the relay port file reported) and falls back to a guessed path that the
+  // drift loop will re-resolve.
+  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  const jsonlPath = resolved.path;
 
   // Spawn-initiated watches: the seeded sessionId is almost certainly
   // the watcher's stale-JSONL fallback for this dir. When the real id
@@ -1050,13 +1223,19 @@ export async function startWatchingSession(
   // skip the "reconnected" broadcast — there's no prior conversation.
   const watchState: WatchState = buildWatchState({
     sessionName: targetName,
-    sessionId: sessionInfo.id,
+    sessionId: resolved.sessionId,
     sessionDir: sessionInfo.dir,
     sessionPid: sessionInfo.pid,
     chatId,
     threadId,
     suppressNextIdChangeNotice: reason === "spawn",
   });
+  watchState.speculativeTailerPath = resolved.speculative;
+  if (resolved.sessionId !== sessionInfo.id) {
+    try {
+      updateSessionId(targetName, resolved.sessionId);
+    } catch {}
+  }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
@@ -1113,7 +1292,7 @@ export async function startWatchingSession(
   updatePinnedStatus(botApi, chatId, {
     sessionName: null,
     isPlanMode: false,
-    model: session.modelDisplayName,
+    model: getCurrentModelDisplayName(),
     branch,
     isWatching: targetName,
   }).catch(() => {});
@@ -1190,7 +1369,10 @@ export async function startWatchingAndNotify(
 /**
  * /unwatch - Stop watching.
  */
-export async function handleUnwatch(ctx: Context): Promise<void> {
+export async function handleUnwatch(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
@@ -1217,13 +1399,19 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
       },
     );
 
-    // Restore normal pinned status
-    const active = getActiveSession();
-    const branch = await getGitBranch(session.workingDir);
+    // Restore normal pinned status. Without sctx we have no session to
+    // attribute to — leave name null and use cwd. Plan-mode comes from the
+    // per-session SessionState; model is global (R3).
+    const sessionName = sctx?.sessionName || null;
+    const dir = sctx?.sessionDir || process.cwd();
+    const isPlanMode = sessionName
+      ? getSessionState(sessionName).isPlanMode
+      : false;
+    const branch = await getGitBranch(dir);
     updatePinnedStatus(ctx.api, chatId, {
-      sessionName: active?.name || null,
-      isPlanMode: session.isPlanMode,
-      model: session.modelDisplayName,
+      sessionName,
+      isPlanMode,
+      model: getCurrentModelDisplayName(),
       branch,
     }).catch(() => {});
   } else {

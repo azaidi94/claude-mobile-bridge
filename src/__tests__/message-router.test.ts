@@ -483,43 +483,18 @@ describe("message-router: error handling", () => {
 // ============== Session Routing Tests ==============
 
 describe("message-router: session routing", () => {
-  test("getActiveSession returns null when no sessions", async () => {
-    // Use a fresh import to test initial state
-    const { getActiveSession, getSessions } = await import("../sessions");
-
-    // If there happen to be no sessions, should return null
-    // (Can't guarantee this in tests with persistent state)
-    const active = getActiveSession();
-    if (getSessions().length === 0) {
-      expect(active).toBeNull();
-    } else {
-      // If sessions exist, active should be one of them
-      expect(active).not.toBeNull();
-    }
-  });
-
   test("setActiveSession returns false for non-existent session", async () => {
     const { setActiveSession } = await import("../sessions");
     const result = setActiveSession(`nonexistent-${Date.now()}`);
     expect(result).toBe(false);
   });
 
-  test("addTelegramSession and switch routes correctly", async () => {
-    const { addTelegramSession, setActiveSession, getActiveSession } =
-      await import("../sessions");
+  test("addTelegramSession registers session in registry", async () => {
+    const { addTelegramSession, getSession } = await import("../sessions");
 
     const name1 = `route-test-1-${Date.now()}`;
-    const name2 = `route-test-2-${Date.now()}`;
-
     addTelegramSession("/tmp/project1", name1);
-    addTelegramSession("/tmp/project2", name2);
-
-    // name2 should be active (most recent)
-    expect(getActiveSession()!.name).toBe(name2);
-
-    // Switch to name1
-    setActiveSession(name1);
-    expect(getActiveSession()!.name).toBe(name1);
+    expect(getSession(name1)?.name).toBe(name1);
   });
 });
 

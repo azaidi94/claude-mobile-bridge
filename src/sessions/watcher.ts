@@ -796,13 +796,14 @@ export function getSessions(): SessionInfo[] {
 }
 
 /**
- * Get active session.
+ * Read the currently-pinned active session name, if any. Mirrors the
+ * `cache.active` slot persisted to ACTIVE_SESSION_FILE; the v1 offline
+ * picker and a couple of legacy tests still observe this. Production code
+ * should resolve sessions by name explicitly (via topic-router or sctx),
+ * not via this global pointer.
  */
-export function getActiveSession(): { name: string; info: SessionInfo } | null {
-  if (!cache.active) return null;
-  const info = cache.sessions.get(cache.active);
-  if (!info) return null;
-  return { name: cache.active, info };
+export function getActiveSessionName(): string | null {
+  return cache.active;
 }
 
 /**
@@ -848,8 +849,14 @@ export function addTelegramSession(
 
 /**
  * Register a Cursor IDE workspace as a session.
- * If a session with the same name exists, refreshes its lastActivity.
- * Safe to call repeatedly — will not create duplicates.
+ * Safe to call repeatedly — will not create duplicates. Re-registration is
+ * idempotent and intentionally does NOT bump `lastActivity` (task 8): the
+ * field must reflect real user-driven activity (a message sent / received),
+ * not the cursor-bridge attach/reconnect cadence. Bumping it here made every
+ * CDP reconnect mark the session "most-recently active", which fed downstream
+ * heuristics that picked the wrong session (e.g. dir-match fallback in
+ * sendViaRelay). Real activity is bumped via `updateSessionActivity` from
+ * `cursor/bridge.ts` on actual binding events.
  *
  * Note: unlike addTelegramSession, this does NOT set cache.active —
  * Cursor sessions should not auto-steal the active session slot.
@@ -862,7 +869,7 @@ export function addCursorSession(opts: {
   if (!opts.name.trim() || !opts.dir.trim()) return;
   const existing = cache.sessions.get(opts.name);
   if (existing) {
-    existing.lastActivity = Date.now();
+    // Intentionally do NOT touch existing.lastActivity here. See docstring.
     if (opts.sessionId) existing.id = opts.sessionId;
     return;
   }

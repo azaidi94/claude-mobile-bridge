@@ -5,14 +5,16 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
+import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
   debug,
@@ -21,8 +23,6 @@ import {
   info,
   warn,
 } from "../logger";
-import { loadTopicSession } from "../topics";
-import type { SessionOverride } from "../sessions/types";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -69,9 +69,13 @@ async function processPhotos(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   try {
@@ -89,7 +93,7 @@ async function processPhotos(
       photoPaths[0],
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
@@ -133,7 +137,10 @@ async function processPhotos(
 /**
  * Handle incoming photo messages.
  */
-export async function handlePhoto(ctx: Context): Promise<void> {
+export async function handlePhoto(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -149,19 +156,30 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Reject early in Cursor topics: the CC relay path can't reach Cursor's
   // Composer (no port file, no relay process), and sendViaRelay would
   // otherwise fall back to dir-match and silently route to an unrelated CC
   // session that happens to share the dir. Cursor doesn't currently accept
   // image attachments through the CDP bridge either.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Photos aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Sync per-session SessionState with the registry (task 7d). The singleton
+  // is no longer warmed here.
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
+    const si = getSession(sctx.sessionName);
+    if (si) state.loadFromRegistry(si);
   }
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
@@ -174,17 +192,15 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   });
 
   // 2. Relay preflight — avoid download if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() returns
-  // whichever session was most recently touched globally, which is often a
-  // Cursor session (its lastActivity gets bumped on every CDP nudge). That
-  // mismatched the topic's real session and the preflight kept rejecting
-  // photos with "No desktop session found".
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back only to
+  // the streaming-SDK singleton's workingDir. We deliberately do NOT
+  // consult getActiveSession() — that chases the most-recent global
+  // session (often a Cursor session whose lastActivity gets bumped on
+  // every CDP nudge) and mis-targeted the preflight.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -266,7 +282,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       chatId,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
 
     // Clean up status message
@@ -301,7 +317,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
         groupChatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       ),
   );
 }

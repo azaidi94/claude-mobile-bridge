@@ -6,14 +6,16 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
+import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
   elapsedMs,
@@ -21,8 +23,6 @@ import {
   info,
   warn,
 } from "../logger";
-import { loadTopicSession } from "../topics";
-import type { SessionOverride } from "../sessions/types";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -229,9 +229,13 @@ async function processArchive(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
@@ -290,7 +294,7 @@ async function processArchive(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -368,9 +372,13 @@ async function processDocuments(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   // Build prompt
@@ -398,7 +406,7 @@ async function processDocuments(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -457,7 +465,7 @@ async function processDocumentPaths(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
@@ -503,14 +511,17 @@ async function processDocumentPaths(
     chatId,
     opId,
     threadId,
-    sessionOverride,
+    sctx,
   );
 }
 
 /**
  * Handle incoming document messages.
  */
-export async function handleDocument(ctx: Context): Promise<void> {
+export async function handleDocument(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -527,17 +538,27 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Cursor topics: no CC relay, no CDP file channel — reject before paying
   // for the download. Falling through would silently mis-route to whichever
   // CC session shares the dir.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Documents aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Sync per-session SessionState with the registry (task 7d).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
+    const si = getSession(sctx.sessionName);
+    if (si) state.loadFromRegistry(si);
   }
 
   // 2. Check file size
@@ -583,15 +604,15 @@ export async function handleDocument(ctx: Context): Promise<void> {
   }
 
   // 4. Relay preflight — avoid download/extraction if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() can return a
-  // Cursor session (lastActivity bumped on every CDP nudge), which won't match
-  // the topic's CC relay and incorrectly rejects the upload.
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back to the
+  // streaming-SDK singleton's workingDir. We deliberately avoid
+  // getActiveSession() — it returns whichever session was most-recently
+  // touched globally (often a Cursor session whose lastActivity bumps on
+  // every CDP nudge), which mis-routes the preflight.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -648,7 +669,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       chatId,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     return;
   }
@@ -683,7 +704,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
         chatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       );
     } catch (error) {
       logError("document: single-file processing failed", error, {
@@ -718,7 +739,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
         groupChatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       ),
   );
 }

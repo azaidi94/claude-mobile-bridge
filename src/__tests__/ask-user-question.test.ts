@@ -65,18 +65,22 @@ mock.module("../settings", () => ({
 // Mock sessions module
 mock.module("../sessions", () => ({
   getSessions: mock(() => []),
-  getActiveSession: mock(() => null),
+  getActiveSessionName: mock(() => null),
   setActiveSession: mock(() => false),
   addTelegramSession: mock(() => ({ name: "test", dir: "/tmp" })),
   forceRefresh: mock(() => Promise.resolve()),
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
+  updateSessionId: mock(() => {}),
   getGitBranch: mock(() => Promise.resolve("main")),
   getSession: mock(() => null),
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
+  resolveSessionContext: mock(() => undefined),
+  getSessionState: mock(() => ({ ...mockSessionState, ...mockSessionMethods })),
+  dropSessionState: mock(() => {}),
 }));
 
 // Mock session singleton
@@ -101,36 +105,6 @@ const mockSessionMethods = {
 };
 
 mock.module("../session", () => ({
-  session: {
-    get isRunning() {
-      return mockSessionState.isRunning;
-    },
-    get isActive() {
-      return mockSessionState.isActive;
-    },
-    get sessionId() {
-      return mockSessionState.sessionId;
-    },
-    get sessionName() {
-      return mockSessionState.sessionName;
-    },
-    get workingDir() {
-      return mockSessionState.workingDir;
-    },
-    get pendingPlanApproval() {
-      return mockSessionState.pendingPlanApproval;
-    },
-    get isPlanMode() {
-      return mockSessionState.isPlanMode;
-    },
-    get model() {
-      return "claude-opus-4-6";
-    },
-    get modelDisplayName() {
-      return "Opus 4.6";
-    },
-    ...mockSessionMethods,
-  },
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-5-20250514": "Opus 4.5",
@@ -138,6 +112,14 @@ mock.module("../session", () => ({
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
   getModelDisplayName: (m: string) => m,
+  getCurrentModel: () => "claude-opus-4-6",
+  getCurrentModelDisplayName: () => "Opus 4.6",
+  setCurrentModel: mock(() => {}),
+  // Phase 1 task 7c: text.ts imports the free functions directly. Tests
+  // exercise the no-sctx path (state undefined), so these aren't actually
+  // invoked, but the named exports must exist for the module mock.
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
 
 // Mock security
@@ -701,10 +683,9 @@ describe("AskUserQuestion: callback handling", () => {
       true,
     );
 
-    // Should send to Claude
-    expect(mockSessionMethods.sendMessageStreaming).toHaveBeenCalled();
-
-    // State should be cleared
+    // After task 7g, the no-sctx path replies "Question expired — no session"
+    // because there is no SessionState to route the answer to. The state
+    // cleanup still runs, so verify that instead of the singleton call.
     expect(pendingAskUserQuestions.has("req-last")).toBe(false);
 
     // Cleanup

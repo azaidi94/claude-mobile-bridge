@@ -5,11 +5,17 @@
 export type { SessionInfo, SessionOverride } from "./types";
 
 export {
+  resolveSessionContext,
+  sessionContextFromInfo,
+  type SessionContext,
+} from "./context";
+
+export {
   startWatcher,
   stopWatcher,
   forceRefresh,
   getSessions,
-  getActiveSession,
+  getActiveSessionName,
   setActiveSession,
   getSession,
   addTelegramSession,
@@ -49,3 +55,11 @@ export {
   formatHistoryMessage,
   sendSwitchHistory,
 } from "./history";
+
+export {
+  SessionState,
+  getSessionState,
+  dropSessionState,
+  listSessionStates,
+  setOnSessionStateCreated,
+} from "./session-state";

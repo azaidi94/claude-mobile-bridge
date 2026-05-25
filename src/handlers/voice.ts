@@ -4,8 +4,8 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import {
   auditLog,
@@ -15,14 +15,18 @@ import {
 } from "../utils";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
+import type { SessionContext } from "../sessions/context";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
-import { loadTopicSession } from "../topics";
 
 /**
  * Handle incoming voice messages.
  */
-export async function handleVoice(ctx: Context): Promise<void> {
+export async function handleVoice(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -38,17 +42,27 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Cursor topics: no CC relay, no CDP voice channel — reject before paying
   // for transcription. Falling through would silently mis-route to whichever
   // CC session shares the dir.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Voice messages aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Sync per-session SessionState with the registry (task 7d).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
+    const si = getSession(sctx.sessionName);
+    if (si) state.loadFromRegistry(si);
   }
 
   const opId = createOpId("voice");
@@ -82,15 +96,14 @@ export async function handleVoice(ctx: Context): Promise<void> {
   }
 
   // 4. Quick relay preflight — avoid transcription cost if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() returns the
-  // globally most-recent session, which is often a Cursor session and won't
-  // match the topic's CC relay.
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back to the
+  // streaming-SDK singleton's workingDir. We avoid getActiveSession() —
+  // it returns the globally most-recent session, often a Cursor session
+  // whose lastActivity bumps on every CDP nudge.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -102,7 +115,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   }
 
   // 5. Mark processing started (allows /stop to work during transcription/classification)
-  const stopProcessing = session.startProcessing();
+  const stopProcessing = state ? state.startProcessing() : () => {};
 
   // 5. Start typing indicator for transcription
   const typing = startTypingIndicator(ctx);
@@ -168,7 +181,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(

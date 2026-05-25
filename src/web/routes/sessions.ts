@@ -1,15 +1,16 @@
 import { Hono } from "hono";
 import {
   getSessions,
-  getActiveSession,
   setActiveSession,
+  getSessionState,
+  getActiveSessionName,
 } from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
 import type { SseEvent } from "../sse";
 import { authMiddleware } from "../auth";
 import type { SessionInfo } from "../../sessions/types";
-import { session as claudeSession } from "../../session";
+import { runQueryStreaming, getCurrentModel } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
@@ -34,7 +35,11 @@ export interface ApiSession {
 export function serializeSessions(
   sessions: Map<string, SessionInfo>,
 ): ApiSession[] {
-  const active = getActiveSession();
+  // `active` reflects the v1 picker pointer (the same one /switch + the
+  // web `/activate` route write). After task 7g the bot no longer routes
+  // by it, but the web UI's session picker still needs a "which one is
+  // currently selected" signal so the highlight and ChatPage default work.
+  const activeName = getActiveSessionName();
   return [...sessions.values()]
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .map((s) => ({
@@ -44,7 +49,7 @@ export function serializeSessions(
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: s.name === activeName,
     }));
 }
 
@@ -107,8 +112,8 @@ export function createSessionsRouter(): Hono {
 
   app.get("/", async (c) => {
     const sessions = getSessions();
-    const active = getActiveSession();
     const liveDirs = new Set(sessions.map((s) => s.dir));
+    const activeName = getActiveSessionName();
     const live: ApiSession[] = sessions.map((s) => ({
       id: s.id,
       name: s.name,
@@ -116,7 +121,7 @@ export function createSessionsRouter(): Hono {
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: s.name === activeName,
     }));
     const offline = await listOfflineSessions();
     const offlineApi: ApiSession[] = offline
@@ -258,11 +263,16 @@ export function createSessionsRouter(): Hono {
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
-      if (found) claudeSession.loadFromRegistry(found);
+      const state = getSessionState(busKey);
+      if (found) state.loadFromRegistry(found);
       const cb = globalEventBus.makeStatusCallback(busKey);
-      claudeSession
-        .sendMessageStreaming(body.text, "web", 0, cb)
-        .catch(() => emit("done", ""));
+      runQueryStreaming(state, {
+        message: body.text,
+        username: "web",
+        userId: 0,
+        statusCallback: cb,
+        model: getCurrentModel(),
+      }).catch(() => emit("done", ""));
     }
 
     return c.json({ ok: true });
@@ -274,7 +284,7 @@ export function createSessionsRouter(): Hono {
     const found = sessions.find((s) => s.name === name);
     if (!found) return c.json({ error: "session not found" }, 404);
     setActiveSession(name);
-    claudeSession.loadFromRegistry(found);
+    getSessionState(found.name).loadFromRegistry(found);
     return c.json({ ok: true });
   });
 

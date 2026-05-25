@@ -46,17 +46,17 @@ const SCAN_TTL_MS = 5_000;
 let lastScanResult: PortFileData[] = [];
 let lastScanTime = 0;
 
-/**
- * Check if a PID is alive AND is actually a channel-relay process.
- * Prevents false positives from PID reuse.
- */
-export function isRelayProcess(pid: number): boolean {
+// Test seam: integration tests can override the relay-process probe to
+// bypass the `ps` check (their fake port files reference arbitrary PIDs).
+// Production never calls setIsRelayProcessProbe — the default behaviour is
+// the unmocked function below.
+let _isRelayProcessProbe: (pid: number) => boolean = defaultIsRelayProcess;
+function defaultIsRelayProcess(pid: number): boolean {
   try {
     process.kill(pid, 0);
   } catch {
     return false;
   }
-  // Verify the process is actually channel-relay, not a reused PID
   try {
     const cmd = execSync(`ps -p ${pid} -o command=`, {
       encoding: "utf-8",
@@ -65,6 +65,21 @@ export function isRelayProcess(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Check if a PID is alive AND is actually a channel-relay process.
+ * Prevents false positives from PID reuse.
+ */
+export function isRelayProcess(pid: number): boolean {
+  return _isRelayProcessProbe(pid);
+}
+
+/** Test-only override. Pass `null` to restore the default. */
+export function setIsRelayProcessProbe(
+  probe: ((pid: number) => boolean) | null,
+): void {
+  _isRelayProcessProbe = probe ?? defaultIsRelayProcess;
 }
 
 /**

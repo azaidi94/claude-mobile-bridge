@@ -13,7 +13,7 @@ import {
   stopWatcher,
   forceRefresh,
   getSessions,
-  getActiveSession,
+  getActiveSessionName,
   setActiveSession,
   getSession,
   addTelegramSession,
@@ -21,6 +21,17 @@ import {
   updateSessionId,
   updateSessionActivity,
 } from "../sessions";
+
+// Local shim: tests pre-date the singleton retirement and still want to
+// observe "the active session" as a name+info pair. The watcher persists
+// cache.active for the offline picker; expose it via getActiveSessionName.
+function getActiveSession(): { name: string; info: any } | null {
+  const name = getActiveSessionName();
+  if (!name) return null;
+  const info = getSession(name);
+  if (!info) return null;
+  return { name, info };
+}
 import type { SessionInfo } from "../sessions";
 
 // Generate unique test names to avoid conflicts with persistent state

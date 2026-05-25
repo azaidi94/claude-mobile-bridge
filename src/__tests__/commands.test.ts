@@ -109,9 +109,108 @@ const mockGetSession = mock(
   (name: string) => mockSessions.find((s) => s.name === name) || null,
 );
 
+// Stub state object that the SessionState mock returns. Mirrors the legacy
+// mockSessionState the singleton-era tests already populate.
+const stubSessionState = {
+  get sessionId() {
+    return mockSessionState.sessionId;
+  },
+  get sessionName() {
+    return mockSessionState.sessionName;
+  },
+  get workingDir() {
+    return mockSessionState.workingDir;
+  },
+  get lastMessage() {
+    return mockSessionState.lastMessage;
+  },
+  get lastActivity() {
+    return mockSessionState.lastActivity;
+  },
+  get lastTool() {
+    return mockSessionState.lastTool;
+  },
+  get currentTool() {
+    return mockSessionState.currentTool;
+  },
+  get lastError() {
+    return mockSessionState.lastError;
+  },
+  get queryStarted() {
+    return mockSessionState.queryStarted;
+  },
+  get isRunning() {
+    return mockSessionState.isRunning;
+  },
+  get isActive() {
+    return mockSessionState.isActive;
+  },
+  get isPlanMode() {
+    return false;
+  },
+  get pendingPlanApproval() {
+    return null;
+  },
+  get stop() {
+    return mockSessionMethods.stop;
+  },
+  get clearStopRequested() {
+    return mockSessionMethods.clearStopRequested;
+  },
+  get kill() {
+    return mockSessionMethods.kill;
+  },
+  get setWorkingDir() {
+    return mockSessionMethods.setWorkingDir;
+  },
+  get loadFromRegistry() {
+    return mockSessionMethods.loadFromRegistry;
+  },
+};
+
+// Per-test SessionState instances for /retry-style tests that want real
+// state semantics. The /retry tests reset and create their own state via
+// the real module — bypass the mock by exporting a writable object.
+const realSessionStates = new Map<string, any>();
+function makeRealLikeState(name: string) {
+  const s: any = {
+    sessionName: name,
+    sessionId: null,
+    workingDir: "/tmp",
+    lastMessage: null,
+    isQueryRunning: false,
+    _isProcessing: false,
+    get isRunning() {
+      return this.isQueryRunning || this._isProcessing;
+    },
+  };
+  realSessionStates.set(name, s);
+  return s;
+}
+
+mock.module("../sessions/session-state", () => ({
+  getSessionState: mock((name?: string) => {
+    if (name && realSessionStates.has(name)) {
+      return realSessionStates.get(name);
+    }
+    return stubSessionState;
+  }),
+  dropSessionState: mock((name?: string) => {
+    if (name) realSessionStates.delete(name);
+  }),
+  setOnSessionStateCreated: mock(() => {}),
+  _resetSessionStatesForTests: mock(() => {
+    realSessionStates.clear();
+  }),
+  // Test seam used by the /retry tests; they call this after creating a
+  // state, then read fields they set on the returned instance.
+  makeRealLikeState,
+}));
+
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
-  getActiveSession: mock(() => mockActiveSession),
+  getActiveSessionName: mock(() => mockActiveSession?.name ?? null),
+  getSessionState: mock(() => stubSessionState),
   setActiveSession: mock((name: string) => {
     const found = mockSessions.find((s) => s.name === name);
     if (found) {
@@ -146,12 +245,25 @@ mock.module("../sessions", () => ({
   forceRefresh: mockForceRefresh,
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mockRemoveSession,
+  updateSessionId: mock(() => {}),
   getGitBranch: mock(() => Promise.resolve("main")),
   getSession: mockGetSession,
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
+  resolveSessionContext: mock(() => {
+    if (!mockActiveSession) return undefined;
+    return {
+      source: "cc" as const,
+      sessionName: mockActiveSession.name,
+      sessionId: mockActiveSession.info?.id,
+      sessionDir: mockActiveSession.info?.dir,
+      sessionPid: mockActiveSession.info?.pid,
+      topicId: undefined,
+      chatId: 789,
+    };
+  }),
 }));
 
 const mockScanPortFiles = mock(async (): Promise<MockPortFile[]> => []);
@@ -255,51 +367,6 @@ const mockSessionMethods = {
 };
 
 mock.module("../session", () => ({
-  session: {
-    get isRunning() {
-      return mockSessionState.isRunning;
-    },
-    get isActive() {
-      return mockSessionState.isActive;
-    },
-    get sessionId() {
-      return mockSessionState.sessionId;
-    },
-    get sessionName() {
-      return mockSessionState.sessionName;
-    },
-    get workingDir() {
-      return mockSessionState.workingDir;
-    },
-    get lastMessage() {
-      return mockSessionState.lastMessage;
-    },
-    get lastActivity() {
-      return mockSessionState.lastActivity;
-    },
-    get lastTool() {
-      return mockSessionState.lastTool;
-    },
-    get currentTool() {
-      return mockSessionState.currentTool;
-    },
-    get lastError() {
-      return mockSessionState.lastError;
-    },
-    get lastUsage() {
-      return mockSessionState.lastUsage;
-    },
-    get queryStarted() {
-      return mockSessionState.queryStarted;
-    },
-    get model() {
-      return "claude-opus-4-6";
-    },
-    get modelDisplayName() {
-      return "Opus 4.6";
-    },
-    ...mockSessionMethods,
-  },
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-5-20250514": "Opus 4.5",
@@ -307,7 +374,29 @@ mock.module("../session", () => ({
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
   getModelDisplayName: (m: string) => m,
+  getCurrentModel: () => "claude-opus-4-6",
+  getCurrentModelDisplayName: () => "Opus 4.6",
+  setCurrentModel: mock(() => {}),
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
+
+// SessionContext helper for tests. After task 7g, handleStatus / /pwd / /cd /
+// /ls / /stop / /pin require a SessionContext (the singleton fallback is
+// gone). When a test sets `mockActiveSession`, this returns a CC sctx
+// pointing at it; otherwise undefined so the no-sctx path is exercised.
+function mkSctx(): any {
+  if (!mockActiveSession) return undefined;
+  return {
+    source: "cc",
+    sessionName: mockActiveSession.name,
+    sessionId: mockActiveSession.info?.id ?? mockSessionState.sessionId,
+    sessionDir: mockActiveSession.info?.dir ?? mockSessionState.workingDir,
+    sessionPid: mockActiveSession.info?.pid,
+    topicId: undefined,
+    chatId: 789,
+  };
+}
 
 // Test helpers
 function createMockContext(
@@ -440,10 +529,11 @@ describe("commands: /start", () => {
 
   test("handleStart shows session name when active session exists", async () => {
     const { handleStart } = await import("../handlers/commands");
-    mockActiveSession = {
+    mockSessions.push({
       name: "my-project",
-      info: { dir: "/tmp/project", name: "my-project" },
-    };
+      dir: "/tmp/project",
+      lastActivity: Date.now(),
+    });
     const ctx = createMockContext({ userId: 123456 });
 
     await handleStart(ctx as any);
@@ -553,23 +643,19 @@ describe("commands: /list", () => {
     expect(text).toContain("project-2");
   });
 
-  test("handleList marks active session with checkmark", async () => {
+  test("handleList renders sessions (no active marker post-7g)", async () => {
     const { handleList } = await import("../handlers/commands");
     mockSessions.push({
       name: "active-project",
       dir: "/tmp/active",
       lastActivity: Date.now(),
     });
-    mockActiveSession = {
-      name: "active-project",
-      info: { dir: "/tmp/active", name: "active-project" },
-    };
     const ctx = createMockContext({ userId: 123456 });
 
     await handleList(ctx as any);
 
     const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("✅");
+    expect(text).toContain("active-project");
   });
 
   test("handleList includes inline keyboard buttons", async () => {
@@ -692,7 +778,7 @@ describe("commands: /status", () => {
     const { handleStatus } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 999999 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
@@ -701,7 +787,7 @@ describe("commands: /status", () => {
     const { handleStatus } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("No session");
   });
@@ -716,7 +802,7 @@ describe("commands: /status", () => {
     mockSessionState.queryStarted = new Date(Date.now() - 5000);
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("Running");
@@ -732,7 +818,7 @@ describe("commands: /status", () => {
     mockSessionState.sessionId = "test-session-id-123";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("Ready");
@@ -747,7 +833,7 @@ describe("commands: /status", () => {
     mockSessionState.sessionName = "new-session";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("Not started");
@@ -764,7 +850,7 @@ describe("commands: /status", () => {
     mockSessionState.queryStarted = new Date();
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("Reading file.ts");
@@ -781,7 +867,7 @@ describe("commands: /status", () => {
     mockSessionState.lastActivity = new Date(Date.now() - 30000);
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("ago");
@@ -807,7 +893,7 @@ describe("commands: /status", () => {
     });
 
     const ctx = createMockContext({ userId: 123456 });
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const reply = ctx._replies[0]?.text || "";
     expect(reply).toContain("🧠");
@@ -834,7 +920,7 @@ describe("commands: /status", () => {
     mockSessionState.sessionId = "empty-sid";
 
     const ctx = createMockContext({ userId: 123456 });
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const reply = ctx._replies[0]?.text || "";
     expect(reply).not.toContain("🧠");
@@ -852,7 +938,7 @@ describe("commands: /status", () => {
     mockSessionState.lastError = "Connection timeout";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("Connection timeout");
@@ -869,7 +955,7 @@ describe("commands: /status", () => {
     mockSessionState.workingDir = "/tmp/mydir";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("/tmp/mydir");
@@ -1217,17 +1303,21 @@ describe("commands: /stop", () => {
     const { handleStop } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 999999 });
 
-    await handleStop(ctx as any);
+    await handleStop(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
   test("handleStop stops running query", async () => {
     const { handleStop } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "stop-session",
+      info: { dir: "/tmp/stop", name: "stop-session" },
+    };
     mockSessionState.isRunning = true;
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStop(ctx as any);
+    await handleStop(ctx as any, mkSctx());
 
     expect(mockSessionMethods.stop).toHaveBeenCalled();
     expect(mockSessionMethods.clearStopRequested).toHaveBeenCalled();
@@ -1238,18 +1328,22 @@ describe("commands: /stop", () => {
     mockSessionState.isRunning = false;
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStop(ctx as any);
+    await handleStop(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Nothing running");
   });
 
   test("handleStop replies on success", async () => {
     const { handleStop } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "stop-session",
+      info: { dir: "/tmp/stop", name: "stop-session" },
+    };
     mockSessionState.isRunning = true;
     mockSessionMethods.stop.mockResolvedValue("stopped");
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStop(ctx as any);
+    await handleStop(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("stopped");
   });
@@ -1271,21 +1365,39 @@ describe("commands: /retry", () => {
 
   test("handleRetry shows error when no last message", async () => {
     const { handleRetry } = await import("../handlers/commands");
-    mockSessionState.lastMessage = null;
+    const sessionStateMod = (await import("../sessions/session-state")) as any;
+    sessionStateMod._resetSessionStatesForTests();
+    const state = sessionStateMod.makeRealLikeState("retry-test");
+    state.lastMessage = null;
     const ctx = createMockContext({ userId: 123456 });
+    const sctx = {
+      source: "cc" as const,
+      sessionName: "retry-test",
+      sessionDir: "/tmp",
+      sessionId: "",
+    };
 
-    await handleRetry(ctx as any);
+    await handleRetry(ctx as any, sctx as any);
 
     expect(ctx._replies[0]?.text).toContain("No message to retry");
   });
 
   test("handleRetry shows error when query running", async () => {
     const { handleRetry } = await import("../handlers/commands");
-    mockSessionState.lastMessage = "test message";
-    mockSessionState.isRunning = true;
+    const sessionStateMod = (await import("../sessions/session-state")) as any;
+    sessionStateMod._resetSessionStatesForTests();
+    const state = sessionStateMod.makeRealLikeState("retry-test");
+    state.lastMessage = "test message";
+    state.isQueryRunning = true;
     const ctx = createMockContext({ userId: 123456 });
+    const sctx = {
+      source: "cc" as const,
+      sessionName: "retry-test",
+      sessionDir: "/tmp",
+      sessionId: "",
+    };
 
-    await handleRetry(ctx as any);
+    await handleRetry(ctx as any, sctx as any);
 
     expect(ctx._replies[0]?.text).toContain("running");
     expect(ctx._replies[0]?.text).toContain("/stop");
@@ -1517,7 +1629,7 @@ describe("commands: edge cases", () => {
     mockSessionState.lastError = "a".repeat(200);
     const ctx = createMockContext({ userId: 123456 });
 
-    await handleStatus(ctx as any);
+    await handleStatus(ctx as any, mkSctx());
 
     // Error should be truncated (max 50 chars in display)
     const text = ctx._replies[0]?.text || "";
@@ -1551,17 +1663,21 @@ describe("commands: /pwd", () => {
     const { handlePwd } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 999999 });
 
-    await handlePwd(ctx as any);
+    await handlePwd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
   test("handlePwd shows current working directory", async () => {
     const { handlePwd } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "pwd-session",
+      info: { dir: "/tmp/my-project", name: "pwd-session" },
+    };
     mockSessionState.workingDir = "/tmp/my-project";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handlePwd(ctx as any);
+    await handlePwd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("/tmp/my-project");
     expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
@@ -1572,7 +1688,7 @@ describe("commands: /pwd", () => {
     mockSessionState.workingDir = "/tmp/test-working-dir";
     const ctx = createMockContext({ userId: 123456 });
 
-    await handlePwd(ctx as any);
+    await handlePwd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("/tmp/test-working-dir");
   });
@@ -1587,7 +1703,7 @@ describe("commands: /cd", () => {
     const { handleCd } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 999999, messageText: "/cd /tmp" });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
@@ -1596,16 +1712,20 @@ describe("commands: /cd", () => {
     const { handleCd } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 123456, messageText: "/cd" });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Usage");
   });
 
   test("handleCd changes to valid directory", async () => {
     const { handleCd } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "cd-session",
+      info: { dir: "/tmp", name: "cd-session" },
+    };
     const ctx = createMockContext({ userId: 123456, messageText: "/cd /tmp" });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Now in:");
     expect(ctx._replies[0]?.text).toContain("/tmp");
@@ -1619,7 +1739,7 @@ describe("commands: /cd", () => {
       messageText: "/cd /etc/passwd",
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("not in allowed");
     expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
@@ -1632,7 +1752,7 @@ describe("commands: /cd", () => {
       messageText: "/cd /tmp/nonexistent-dir-xyz-12345",
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("does not exist");
     expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
@@ -1649,7 +1769,7 @@ describe("commands: /cd", () => {
       messageText: `/cd ${tmpFile}`,
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Not a directory");
     expect(mockSessionMethods.setWorkingDir).not.toHaveBeenCalled();
@@ -1667,7 +1787,7 @@ describe("commands: /cd", () => {
       messageText: "/cd nonexistent-subdir-xyz-98765",
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
@@ -1680,13 +1800,17 @@ describe("commands: /cd", () => {
     const { mkdtemp } = await import("fs/promises");
     const tmpDir = await mkdtemp("/tmp/cd-norm-test-");
 
+    mockActiveSession = {
+      name: "cd-norm",
+      info: { dir: tmpDir, name: "cd-norm" },
+    };
     const { handleCd } = await import("../handlers/commands");
     const ctx = createMockContext({
       userId: 123456,
       messageText: `/cd ${tmpDir}/../${tmpDir.split("/").pop()}`,
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     // Should normalize to the canonical path without ..
     expect(ctx._replies[0]?.text).toContain("Now in:");
@@ -1709,7 +1833,7 @@ describe("commands: /cd", () => {
       messageText: `/cd ${tmpDir}`,
     });
 
-    await handleCd(ctx as any);
+    await handleCd(ctx as any, mkSctx());
 
     // Should use <code> tags properly (HTML parse mode)
     expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
@@ -1728,17 +1852,21 @@ describe("commands: /ls", () => {
     const { handleLs } = await import("../handlers/commands");
     const ctx = createMockContext({ userId: 999999, messageText: "/ls" });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
   test("handleLs lists current directory when no path given", async () => {
     const { handleLs } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "ls-session",
+      info: { dir: "/tmp", name: "ls-session" },
+    };
     mockSessionState.workingDir = "/tmp";
     const ctx = createMockContext({ userId: 123456, messageText: "/ls" });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("/tmp");
     expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
@@ -1751,7 +1879,7 @@ describe("commands: /ls", () => {
       messageText: "/ls /tmp",
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("/tmp");
   });
@@ -1773,7 +1901,7 @@ describe("commands: /ls", () => {
       messageText: `/ls ${tmpDir}`,
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("📂"); // directory icon
@@ -1803,7 +1931,7 @@ describe("commands: /ls", () => {
       messageText: `/ls ${tmpDir}`,
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     const dirIdx = text.indexOf("alpha-dir");
@@ -1825,7 +1953,7 @@ describe("commands: /ls", () => {
       messageText: `/ls ${tmpDir}`,
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("empty");
@@ -1842,7 +1970,7 @@ describe("commands: /ls", () => {
       messageText: "/ls /etc",
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("not in allowed");
   });
@@ -1854,7 +1982,7 @@ describe("commands: /ls", () => {
       messageText: "/ls /tmp/nonexistent-dir-xyz-99999",
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("Cannot read");
   });
@@ -1867,7 +1995,7 @@ describe("commands: /ls", () => {
       messageText: "/ls nonexistent-subdir-xyz-98765",
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     // Should resolve relative to /tmp, not reject as disallowed
     const text = ctx._replies[0]?.text || "";
@@ -1888,7 +2016,7 @@ describe("commands: /ls", () => {
       messageText: `/ls ${tmpDir}`,
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     expect(text).toContain("🔗"); // symlink icon
@@ -1909,7 +2037,7 @@ describe("commands: /ls", () => {
       messageText: `/ls ${tmpDir}`,
     });
 
-    await handleLs(ctx as any);
+    await handleLs(ctx as any, mkSctx());
 
     const text = ctx._replies[0]?.text || "";
     // & should be escaped to &amp; for valid HTML
@@ -2069,7 +2197,15 @@ describe("commands: /kill", () => {
       chatType: "supergroup",
     });
 
-    await handleKill(ctx as any);
+    await handleKill(ctx as any, {
+      sessionName: "topic-session",
+      sessionId: "",
+      sessionDir: "/tmp/topic-proj",
+      sessionPid: 99,
+      source: "cc",
+      topicId: 42,
+      chatId: 789,
+    });
 
     // Should kill directly — no picker
     expect(ctx._replies.length).toBe(1);

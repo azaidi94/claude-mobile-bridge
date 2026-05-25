@@ -4,8 +4,8 @@
  */
 
 import type { Context } from "grammy";
-import type { SessionOverride } from "../sessions/types";
-import { session } from "../session";
+import type { SessionContext } from "../sessions/context";
+import { getWorkingDir } from "../settings";
 import type { RelayClient, RelayDisplayState } from "../relay";
 import {
   getRelayClient,
@@ -15,7 +15,6 @@ import {
 } from "../relay";
 import { handleTailEvent, isWatching, sendWatchRelay } from "./watch";
 import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
-import { getActiveSession } from "../sessions";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
 import { debug, elapsedMs, info, warn } from "../logger";
@@ -30,7 +29,7 @@ export async function sendViaRelay(
   imagePath?: string,
   opId?: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<RelayResult> {
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
@@ -42,31 +41,32 @@ export async function sendViaRelay(
       message,
       opId,
       imagePath,
-      sessionOverride,
+      sctx,
     );
     if (relayed) return "delivered";
   }
 
-  // Cursor sessions use a synthetic id (`cursor-<slug>`); there is no CC
-  // relay port file matching it. Without this guard, getRelayClient would
-  // strip the unknown sessionId and fall back to dir-only lookup, which can
-  // route the message to an unrelated CC session that shares the dir.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  // Cursor sessions have no CC relay port file; sending via the CC relay
+  // would fall back to dir-only matching and could route to an unrelated CC
+  // session that shares the dir. Guard explicitly on the source.
+  if (sctx?.source === "cursor") {
     return "unavailable";
   }
 
-  const active = getActiveSession();
-  const sessionId =
-    sessionOverride?.sessionId || active?.info.id || session.sessionId;
-  const sessionDir =
-    sessionOverride?.sessionDir || session.workingDir || active?.info.dir;
+  // sctx is the authoritative source when topic-resolved. Without it (e.g.
+  // private-DM compatibility path), fall back to the bot's default working
+  // dir so dir-only relay match can still succeed. Notably we do NOT consult
+  // any global "active session" pointer — those mis-targeted whenever a
+  // Cursor session was most-recently active.
+  const sessionId = sctx?.sessionId;
+  const sessionDir = sctx?.sessionDir || getWorkingDir();
   if (!sessionDir) return "unavailable";
   const startedAt = Date.now();
 
   const client = await getRelayClient({
     sessionId: sessionId || undefined,
     sessionDir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    claudePid: sctx?.sessionPid,
   });
   if (!client) return "unavailable";
 
