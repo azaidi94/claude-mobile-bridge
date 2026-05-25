@@ -201,8 +201,17 @@ function runDiscovery(): void {
     currentId = (
       JSON.parse(readFileSync(PORT_FILE, "utf-8")) as { sessionId?: string }
     ).sessionId;
-  } catch {
-    return; // Port file gone — stop
+  } catch (err) {
+    // ENOENT = port file gone, stop. Any other error (transient race with the
+    // bot's updatePortFile rewriting the file, empty mid-write, JSON parse
+    // failure) is recoverable — reschedule. Previously a single race here
+    // killed the loop and sessionId never backfilled.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    process.stderr.write(
+      `channel-relay: port file read failed (${(err as Error)?.message ?? err}), retrying\n`,
+    );
+    scheduleNextDiscovery(5_000);
+    return;
   }
 
   // If we already own a sessionId, only re-discover if:
