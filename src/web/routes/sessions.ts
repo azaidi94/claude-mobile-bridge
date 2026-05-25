@@ -1,5 +1,10 @@
 import { Hono } from "hono";
-import { getSessions, setActiveSession, getSessionState } from "../../sessions";
+import {
+  getSessions,
+  setActiveSession,
+  getSessionState,
+  getActiveSessionName,
+} from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
 import type { SseEvent } from "../sse";
@@ -30,8 +35,11 @@ export interface ApiSession {
 export function serializeSessions(
   sessions: Map<string, SessionInfo>,
 ): ApiSession[] {
-  // `active` is no longer surfaced — the global active pointer was retired
-  // in task 7g. Web clients should rely on per-session interaction state.
+  // `active` reflects the v1 picker pointer (the same one /switch + the
+  // web `/activate` route write). After task 7g the bot no longer routes
+  // by it, but the web UI's session picker still needs a "which one is
+  // currently selected" signal so the highlight and ChatPage default work.
+  const activeName = getActiveSessionName();
   return [...sessions.values()]
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .map((s) => ({
@@ -41,7 +49,7 @@ export function serializeSessions(
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: false,
+      active: s.name === activeName,
     }));
 }
 
@@ -105,6 +113,7 @@ export function createSessionsRouter(): Hono {
   app.get("/", async (c) => {
     const sessions = getSessions();
     const liveDirs = new Set(sessions.map((s) => s.dir));
+    const activeName = getActiveSessionName();
     const live: ApiSession[] = sessions.map((s) => ({
       id: s.id,
       name: s.name,
@@ -112,7 +121,7 @@ export function createSessionsRouter(): Hono {
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: false,
+      active: s.name === activeName,
     }));
     const offline = await listOfflineSessions();
     const offlineApi: ApiSession[] = offline
