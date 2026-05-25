@@ -1,7 +1,6 @@
-# Phase 1 — Handoff state (2026-05-25)
+# Phase 1 — Handoff state (2026-05-25, updated)
 
-This note describes where Phase 1 stopped mid-session so the next agent can
-resume cleanly.
+Resumes Phase 1 after tasks 3 and 4 landed. Next session picks up at task 5.
 
 ## Branches
 
@@ -9,153 +8,123 @@ resume cleanly.
 main
 └── refactor/clean-architecture           (237febb — 9 phase plan docs)
     └── refactor/phase-0-characterisation (887f0e8 — 16 scenario tests)
-        └── refactor/phase-1-session-context (0e27854 — foundation only)
+        └── refactor/phase-1-session-context
+            ├── 0e27854 — SessionContext type + resolver (additive)
+            ├── efcd745 — text.ts migrated  (task 3)
+            └── 4975619 — photo/voice/document migrated (task 4)
 ```
 
 Currently checked out: `refactor/phase-1-session-context`.
 
-## What's shipped on this branch
+## What's shipped
 
-**One commit (`0e27854`):**
+- `src/sessions/context.ts` — `SessionContext` + `resolveSessionContext` +
+  `sessionContextFromInfo`
+- `src/bot.ts` — all four `message:*` handlers wired through
+  `resolveSessionContext` and pass `sctx?: SessionContext`
+- `src/handlers/text.ts` — uses `sctx`, drops inline isTopicChat/isSessionTopic
+- `src/handlers/photo.ts`, `voice.ts`, `document.ts` — same, plus cursor
+  rejection now keys off `sctx.source === "cursor"` (not the id prefix)
+- `src/__tests__/smoke.test.ts` — mocks `resolveSessionContext` so the
+  bot.ts smoke importer doesn't blow up
 
-- `src/sessions/context.ts` (new) — `SessionContext` interface +
-  `resolveSessionContext(ctx)` + `sessionContextFromInfo(si, chatId, topicId?)`
-- `src/sessions/index.ts` — barrel export of the above
-- `src/__tests__/scenarios/resolve-session-context.test.ts` — 6 tests, green
+Behaviour delta vs main: none — `session.loadFromRegistry` is still called
+inline by each handler as a warm-up for the streaming SDK singleton. The
+data flow into the singleton is unchanged; only the _path_ into the handler
+is now explicit. The singleton retires in task 7.
 
-The change is **additive**. No existing handler calls `resolveSessionContext`
-yet. The singleton (`src/session.ts`) and `getActiveSession()` still drive
-every handler. Bot behaviour on this branch is identical to `main` + Phase 0.
+## Test state
+
+- `bun run typecheck` — clean
+- `bun run test` (= test:isolated) — 0 fail
+- `bun test src/__tests__/scenarios/` (single-process) — S5 fails as a test-
+  ordering flake; passes in isolation. Pre-existing on the Phase 0 commit
+  too. Not blocking Phase 1.
 
 ## What's NOT done
 
-Tasks 3-9 of Phase 1 (see `TaskList`):
+Tasks 5-9:
 
-3. **Migrate text.ts** to consume `SessionContext` (proof of pattern)
-4. **Migrate photo/voice/document** handlers
-5. **Migrate commands.ts + callback.ts** (biggest file — 2017 lines)
-6. **Migrate relay-bridge + watch dispatch**
-7. **Delete singleton `session.ts` + `getActiveSession()`**
-8. **Stop `addCursorSession`** bumping shared `lastActivity` timeline
+5. **Migrate commands.ts + callback.ts** — biggest file (2017 lines).
+   Trickier than the message handlers because of:
+   - `showSessionPicker(ctx, action)` in General context
+   - the callback router (`bot.on("callback_query:data", handleCallback)`)
+     — callback queries don't carry `message_thread_id` the same way; check
+     `getThreadIdFromCallback`
+   - `/clear`, `/retry`, `/list`, `/switch` semantics that read the
+     singleton's `lastMessage` and `pendingPlanApproval`
+6. **Migrate relay-bridge + watch dispatch** (notifications too)
+7. **Delete singleton `session.ts` + `getActiveSession()`** — needs the
+   streaming SDK wrapper refactored off the singleton first
+8. **Stop `addCursorSession` bumping shared `lastActivity`** so dir-match
+   in `sendViaRelay` stops mis-routing to recently-touched Cursor sessions
 9. **Full test sweep + manual smoke**
 
-## Scope (re-audited)
+## How to resume — Task 5 (commands.ts + callback.ts)
 
-The plan doc's 2-day estimate was honest but tight. Actual footprint:
+Bigger surface, same playbook. Suggest sub-stepping it as you go:
 
-- 14 files import from `src/session.ts`
-- 30+ call sites of `getActiveSession()` across handlers, watch, commands,
-  web routes, notifications, streaming, callback
-- `ClaudeSession` class has ~10 mutable fields (sessionId, lastActivity,
-  queryStarted, currentTool, lastTool, lastError, lastUsage, lastMessage,
-  abortController) + the streaming SDK wrapper
+### 5a. Audit + plan
 
-Realistic re-estimate: 3 focused days, ideally split across 2-3 sessions
-with PR reviews between.
-
-## How to resume — Task 3 (migrate text.ts)
-
-The pattern, once landed in `text.ts`, will be copy-paste for the others.
-
-### Step 1: change the signature
-
-```diff
-- export async function handleText(ctx: Context): Promise<void> {
-+ export async function handleText(
-+   ctx: Context,
-+   sctx: SessionContext | undefined,
-+ ): Promise<void> {
+```bash
+grep -n "getActiveSession\|loadTopicSession\|isSessionTopic" \
+  src/handlers/commands.ts src/handlers/callback.ts | wc -l
 ```
 
-`sctx` is optional during migration because `bot.ts` will keep calling the
-old signature for unmigrated paths. Once all handlers take it, make it
-required.
+Then read the file top-to-bottom and list every command/branch that needs
+sctx. Many commands (`/list`, `/help`, `/settings`) are session-agnostic
+and won't need it.
 
-### Step 2: replace the topic-resolution block
+### 5b. Migrate per-command
 
-`text.ts` lines 90-115 currently inline `isTopicChat` + `isSessionTopic` +
-`session.loadFromRegistry` + manual `sessionOverride` construction. Replace:
+The text.ts pattern (commit `efcd745`) is the template:
 
 ```ts
-// 1.2. Topic context — use the explicit session context the caller
-// resolved (Phase 1). Fall back to legacy globals when undefined (private
-// chat, General topic, or unbound session topic).
-let threadId = sctx?.topicId;
-let sessionOverride: SessionOverride | undefined = sctx
-  ? {
-      sessionId: sctx.sessionId,
-      sessionDir: sctx.sessionDir,
-      sessionPid: sctx.sessionPid,
-    }
-  : undefined;
-let cursorSessionName: string | undefined =
-  sctx?.source === "cursor" ? sctx.sessionName : undefined;
+export async function handleX(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> { ... }
 ```
 
-Then delete the inline topic-router code and the `session.loadFromRegistry`
-side-effect call.
-
-### Step 3: wire the resolver in `bot.ts`
+Then in `bot.ts`:
 
 ```diff
-  bot.on("message:text", async (ctx) => {
--   await handleText(ctx);
-+   const sctx = resolveSessionContext(ctx);
-+   await handleText(ctx, sctx);
-  });
+- bot.command("x", handleX);
++ bot.command("x", async (ctx) => {
++   await handleX(ctx, resolveSessionContext(ctx));
++ });
 ```
 
-### Step 4: replace `getActiveSession()` reads in `text.ts`
+For callback queries, derive sctx at the dispatch site too. Callbacks
+arrive without `message_thread_id` on the message — you may need to look
+up the topic via the callback's source message.
 
-Line 483: the fallback when no session is loaded. Use `sctx` directly when
-available; the existing code path runs only when `sctx` is undefined.
-
-### Step 5: run Phase 0 tests
+### 5c. Per-batch verify
 
 ```bash
-bun run test
+bun run typecheck && bun run test
 ```
 
-All 16 scenario tests + the 6 new resolver tests must still pass.
+Commit per logical batch (e.g. session-affecting commands, then
+session-agnostic ones, then callback router) instead of one giant commit.
 
-### Step 6: manual smoke
+### 5d. Don't migrate yet:
 
-```bash
-./restart.sh
-```
+- `session.lastMessage`, `session.pendingPlanApproval`,
+  `session.sessionId = null` — these are singleton-bound. Move the per-
+  session storage in task 7. For now, keep the singleton writes inline
+  exactly as today.
 
-Then send a TG text message in each of the live topics; verify each lands
-in the right CC/Cursor session via the bot log.
+## Pitfalls (still relevant)
 
-### Step 7: commit
-
-```
-feat(phase-1): migrate handleText to SessionContext
-
-text.ts's topic resolution + session-override construction is replaced
-with the explicit SessionContext from bot.ts. session.loadFromRegistry
-side-effect is removed from the text-message hot path.
-
-Other handlers still read the singleton; they'll migrate in subsequent
-commits. The singleton itself stays alive until task 7.
-```
-
-## Pitfalls
-
-- **`session.lastMessage = message;`** at line 476 — used by `/retry`. When
-  the singleton goes away (task 7), this needs a per-session store. For
-  now, keep the write — leave the dependency.
-- **`session.sessionId = null;`** in the `/clear` branch at line 461 — same
-  shape. The clear semantics need rethinking when there's no singleton;
-  ticket as a follow-up rather than block Phase 1.
-- **`session.loadFromRegistry(si)` warms the streaming SDK** so the next
-  `session.sendMessageStreaming` uses the right session. As long as the
-  singleton exists, keep the warm-up. Delete the call only after migrating
-  off the streaming SDK wrapper (Phase 1 task 7).
-- **Phase 0's S2 test** is the strongest guard against regressing the photo
-  bug class. It runs at the selector layer, not the handler layer — so
-  text.ts migration won't break it, but photo.ts migration in task 4 might.
-  Re-run it after every handler migration.
+- **`session.loadFromRegistry(si)` warms the streaming SDK** — don't drop
+  the warm-up until task 7.
+- **`session.lastMessage = message;`** in text.ts line ~476 — keep until
+  task 7 introduces a per-session store.
+- **`session.sessionId = null;`** in `/clear` — same. Ticket cleanup for
+  task 7.
+- **Phase 0's S2 test** still the strongest guard against photo-routing
+  regression. Re-run after every handler migration.
 
 ## Useful command snippets
 
@@ -168,10 +137,10 @@ grep -rn "getActiveSession" src --include="*.ts" \
 grep -rln 'from "../session"\|from "./session"' src --include="*.ts" \
   | grep -v __tests__ | grep -v __mocks__
 
-# Re-run Phase 0 + Phase 1 scenario tests
+# Re-run scenario tests
 bun test src/__tests__/scenarios/
 
-# Full isolated suite
+# Full isolated suite (used by `bun run test`)
 bun run test
 ```
 
@@ -179,4 +148,4 @@ bun run test
 
 - Overview: `docs/superpowers/plans/2026-05-25-clean-architecture-overview.md`
 - Phase 1 detail: `docs/superpowers/plans/2026-05-25-phase-1-session-context.md`
-- Phase 0 review (what shipped): `docs/superpowers/plans/2026-05-25-phase-0-characterisation-tests.md`
+- Phase 0 review: `docs/superpowers/plans/2026-05-25-phase-0-characterisation-tests.md`
