@@ -23,7 +23,9 @@ main
             ├── 21834a3 — photo/voice/document/callback → SessionState (task 7d)
             ├── a292128 — commands/relay-bridge/topic-router → SessionState (task 7e)
             ├── 1e042e5 — infra wireup → SessionState (task 7f)
-            └── f8053e5 — singleton + getActiveSession deleted (task 7g)
+            ├── f8053e5 — singleton + getActiveSession deleted (task 7g)
+            ├── 8c314ab — handoff after phase 1 wrap-up
+            └── 7b1dca7 — tighten Cursor lastActivity (task 8)
 ```
 
 ## Acceptance — all met
@@ -42,14 +44,23 @@ main
 3. Mode-change events now flow over `globalEventBus` (channel `sessionName`, type `mode_change`) instead of a singleton callback. `index.ts` installs a lazy per-state subscriber via `setOnSessionStateCreated`.
 4. Model state stays global (per R3): `_currentModel` module-level in `src/session.ts`. `/model` writes via `setCurrentModel`. Reasoning: per-session model is a feature change, parked for phase 5 if requested.
 
-## Remaining phase 1 tasks 8–9
+## Tasks 8 + 9 — DONE
 
-Tasks 8 and 9 are still open:
+8. **Tighten Cursor `lastActivity`** (commit `7b1dca7`) — `addCursorSession` no longer mutates `lastActivity` on re-registration. Initial attach still seeds the timestamp; binding-call events (HUMAN_BINDING / AI_BINDING in `src/cursor/bridge.ts`) remain the single channel for "real activity" updates. Picked design (b) from the plan: drop the auto-bump entirely.
 
-8. **Stop `addCursorSession` bumping shared `lastActivity`** — dir-match in `sendViaRelay` can still mis-route to recently-touched Cursor sessions. Small, self-contained.
-9. **Full test sweep + manual smoke** — exercise topic routing across CC + Cursor sessions in parallel; verify the known flakes are still flakes (not regressions).
+9. **Full test sweep** — automated portion done:
+   - `bun run typecheck` clean.
+   - `bun run test` — 0 failures across all 69 isolated test files.
+   - `bun test src/__tests__/scenarios/` — 21/22, the 1 fail being the documented `backfill-end-to-end` (S5) ordering-dependent flake. Passes in isolation.
+   - Phase 0 S2 (photo-to-cc-via-topic with Cursor recently active) green.
 
-Both can land in one branch (or two small commits) and close out phase 1.
+   **Manual smoke still TODO** (requires running the bot):
+   - Two CC sessions in different topics; send messages in rapid succession — verify each lands in the right session.
+   - One CC + one Cursor session; same exercise.
+   - `/clear`, `/retry`, `/status`, `/model`, `/stop` per-session.
+   - The new-chat pinned-status init from `getSessions()[0]` (semantic change vs the old `getActiveSession()` seed) — verify a fresh chat gets a sensible initial pin.
+
+   Recommend running these before merging the branch into `refactor/clean-architecture`.
 
 ## Open follow-ups for later phases
 
