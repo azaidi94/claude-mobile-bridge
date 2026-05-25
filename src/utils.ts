@@ -229,35 +229,53 @@ export function startTypingIndicator(ctx: Context): TypingController {
 
 // ============== Message Interrupt ==============
 
-// Import session lazily to avoid circular dependency
-let sessionModule: {
-  session: {
-    isRunning: boolean;
-    stop: () => Promise<"stopped" | "pending" | false>;
-    markInterrupt: () => void;
-    clearStopRequested: () => void;
-  };
-} | null = null;
+/**
+ * Minimal shape we need from a session-like object for the interrupt path.
+ * Both the legacy singleton (`session` in src/session.ts) and the per-session
+ * `SessionState` container satisfy this — kept here so this module doesn't
+ * depend on either type directly (avoids a circular import via ./session).
+ */
+interface InterruptTarget {
+  isRunning: boolean;
+  stop: () => Promise<"stopped" | "pending" | false>;
+  markInterrupt: () => void;
+  clearStopRequested: () => void;
+}
 
-export async function checkInterrupt(text: string): Promise<string> {
+// Import session lazily to avoid circular dependency
+let sessionModule: { session: InterruptTarget } | null = null;
+
+/**
+ * Strip a leading `!` from `text`; if present and a query is running on the
+ * supplied target (or the singleton when `state` is omitted), interrupt it.
+ * `state` lets per-topic handlers target their own SessionState rather than
+ * the global singleton (Phase 1 task 7e).
+ */
+export async function checkInterrupt(
+  text: string,
+  state?: InterruptTarget,
+): Promise<string> {
   if (!text || !text.startsWith("!")) {
     return text;
   }
 
-  // Lazy import to avoid circular dependency
-  if (!sessionModule) {
-    sessionModule = await import("./session");
+  let target: InterruptTarget | undefined = state;
+  if (!target) {
+    if (!sessionModule) {
+      sessionModule = await import("./session");
+    }
+    target = sessionModule.session;
   }
 
   const strippedText = text.slice(1).trimStart();
 
-  if (sessionModule.session.isRunning) {
+  if (target.isRunning) {
     info("interrupt: stopping active query");
-    sessionModule.session.markInterrupt();
-    await sessionModule.session.stop();
+    target.markInterrupt();
+    await target.stop();
     await Bun.sleep(100);
     // Clear stopRequested so the new message can proceed
-    sessionModule.session.clearStopRequested();
+    target.clearStopRequested();
   }
 
   return strippedText;

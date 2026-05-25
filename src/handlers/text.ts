@@ -466,11 +466,9 @@ export async function handleText(
     return;
   }
 
-  // 2. Check for interrupt prefix
-  // TODO(phase-1 7d/7e): checkInterrupt writes to the singleton's interrupt
-  // flag. Once photo/voice/document/callback handlers migrate, route this
-  // through `state` (or a per-state helper) instead of the singleton.
-  message = await checkInterrupt(message);
+  // 2. Check for interrupt prefix — write/read the flag on this topic's
+  // per-session SessionState when available, else the legacy singleton.
+  message = await checkInterrupt(message, state);
   if (!message.trim()) {
     await ctx
       .reply("✖ Empty message after interrupt — nothing to send.", {

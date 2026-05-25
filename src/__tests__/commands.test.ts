@@ -1272,21 +1272,41 @@ describe("commands: /retry", () => {
 
   test("handleRetry shows error when no last message", async () => {
     const { handleRetry } = await import("../handlers/commands");
-    mockSessionState.lastMessage = null;
+    const { getSessionState, _resetSessionStatesForTests } =
+      await import("../sessions/session-state");
+    _resetSessionStatesForTests();
+    const state = getSessionState("retry-test");
+    state.lastMessage = null;
     const ctx = createMockContext({ userId: 123456 });
+    const sctx = {
+      source: "cc" as const,
+      sessionName: "retry-test",
+      sessionDir: "/tmp",
+      sessionId: "",
+    };
 
-    await handleRetry(ctx as any);
+    await handleRetry(ctx as any, sctx as any);
 
     expect(ctx._replies[0]?.text).toContain("No message to retry");
   });
 
   test("handleRetry shows error when query running", async () => {
     const { handleRetry } = await import("../handlers/commands");
-    mockSessionState.lastMessage = "test message";
-    mockSessionState.isRunning = true;
+    const { getSessionState, _resetSessionStatesForTests } =
+      await import("../sessions/session-state");
+    _resetSessionStatesForTests();
+    const state = getSessionState("retry-test");
+    state.lastMessage = "test message";
+    state.isQueryRunning = true;
     const ctx = createMockContext({ userId: 123456 });
+    const sctx = {
+      source: "cc" as const,
+      sessionName: "retry-test",
+      sessionDir: "/tmp",
+      sessionId: "",
+    };
 
-    await handleRetry(ctx as any);
+    await handleRetry(ctx as any, sctx as any);
 
     expect(ctx._replies[0]?.text).toContain("running");
     expect(ctx._replies[0]?.text).toContain("/stop");

@@ -12,6 +12,7 @@ import { LOG_DIR } from "../paths";
 import type { Context } from "grammy";
 import { InlineKeyboard, GrammyError } from "grammy";
 import { session, MODEL_DISPLAY_NAMES, type ModelId } from "../session";
+import { getSessionState, dropSessionState } from "../sessions/session-state";
 import { triggerRestart } from "../lifecycle";
 import {
   ALLOWED_USERS,
@@ -142,24 +143,18 @@ async function resolveTopicSession(
   const topicCtx = isSessionTopic(ctx);
   if (topicCtx) {
     const sessionInfo = getSession(topicCtx.sessionName);
-    if (sessionInfo) session.loadFromRegistry(sessionInfo);
+    if (sessionInfo) {
+      getSessionState(sessionInfo.name).loadFromRegistry(sessionInfo);
+      // Keep singleton warm until 7g: handleModel and the model: callback
+      // still read session.model / session.modelDisplayName (global per R3).
+      session.loadFromRegistry(sessionInfo);
+    }
     return false;
   }
   if (isGeneralTopic(ctx)) {
     return showSessionPicker(ctx, pickerAction);
   }
   return false;
-}
-
-/**
- * Warm the streaming-SDK singleton so its session/dir match `sctx`. Keeps the
- * existing `session.xxx` reads inside the handlers correct until task 7
- * retires the singleton. No-op for Cursor sctx (no SDK relay).
- */
-function warmSingletonFromSctx(sctx: SessionContext | undefined): void {
-  if (!sctx || sctx.source !== "cc") return;
-  const si = getSession(sctx.sessionName);
-  if (si) session.loadFromRegistry(si);
 }
 
 function bashSingleQuotedPath(p: string): string {
@@ -770,10 +765,11 @@ export async function handleStop(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
   if (!sctx && (await resolveTopicSession(ctx, "stop_pick"))) return;
 
-  const result = await session.stop();
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
+  const result = state ? await state.stop() : await session.stop();
 
   if (result === "stopped") {
     await ctx.reply("🛑 Query stopped.");
@@ -784,7 +780,8 @@ export async function handleStop(
   }
 
   await Bun.sleep(100);
-  session.clearStopRequested();
+  if (state) state.clearStopRequested();
+  else session.clearStopRequested();
 }
 
 /**
@@ -820,6 +817,19 @@ export async function killSession(
     }
   }
 
+  // Tear down per-session SessionState (task 7e). Always do this so a
+  // recreated session by the same name starts with a clean state.
+  const perState = getSessionState(sessionInfo.name);
+  if (perState.isRunning) {
+    await perState.stop();
+    await Bun.sleep(100);
+    perState.clearStopRequested();
+  }
+  await perState.kill();
+  dropSessionState(sessionInfo.name);
+
+  // Legacy singleton kill: preserved until 7g so the global active pointer
+  // path (e.g. /switch, DM fallback) doesn't keep a stale session_id.
   const active = getActiveSession();
   if (active?.name === sessionInfo.name) {
     if (session.isRunning) {
@@ -1028,12 +1038,16 @@ export async function handleStatus(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
   if (!sctx && (await resolveTopicSession(ctx, "status_pick"))) return;
 
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   const activeSession = sctx ? null : getActiveSession();
   const sessionName =
-    sctx?.sessionName ?? session.sessionName ?? activeSession?.name;
+    sctx?.sessionName ??
+    state?.sessionName ??
+    session.sessionName ??
+    activeSession?.name;
 
   if (!sessionName) {
     await ctx.reply("No session. Use /list or /new.");
@@ -1042,32 +1056,31 @@ export async function handleStatus(
 
   const lines: string[] = [`📊 <b>${sessionName}</b>\n`];
 
-  // Model
+  // Model (still global per R3)
   lines.push(`🤖 ${session.modelDisplayName}`);
 
-  // Session/query status
-  if (session.isRunning) {
-    const elapsed = session.queryStarted
-      ? Math.floor((Date.now() - session.queryStarted.getTime()) / 1000)
+  // Session/query status — prefer per-state when sctx resolved
+  const src = state ?? session;
+  if (src.isRunning) {
+    const elapsed = src.queryStarted
+      ? Math.floor((Date.now() - src.queryStarted.getTime()) / 1000)
       : 0;
     lines.push(`🔄 Running (${elapsed}s)`);
-    if (session.currentTool) {
-      lines.push(`   └─ ${session.currentTool}`);
+    if (src.currentTool) {
+      lines.push(`   └─ ${src.currentTool}`);
     }
-  } else if (session.isActive) {
-    lines.push(`✅ Ready (${session.sessionId?.slice(0, 8)}...)`);
-    if (session.lastTool) {
-      lines.push(`   └─ Last: ${session.lastTool}`);
+  } else if (src.isActive) {
+    lines.push(`✅ Ready (${src.sessionId?.slice(0, 8)}...)`);
+    if (src.lastTool) {
+      lines.push(`   └─ Last: ${src.lastTool}`);
     }
   } else {
     lines.push("⏳ Not started");
   }
 
   // Last activity
-  if (session.lastActivity) {
-    const ago = Math.floor(
-      (Date.now() - session.lastActivity.getTime()) / 1000,
-    );
+  if (src.lastActivity) {
+    const ago = Math.floor((Date.now() - src.lastActivity.getTime()) / 1000);
     lines.push(`⏱️ ${ago}s ago`);
   }
 
@@ -1082,6 +1095,7 @@ export async function handleStatus(
   const sid =
     watch?.sessionId ||
     sctx?.sessionId ||
+    state?.sessionId ||
     activeSession?.info.id ||
     session.sessionId;
   if (sid) {
@@ -1092,13 +1106,14 @@ export async function handleStatus(
   }
 
   // Error status
-  if (session.lastError) {
-    lines.push(`⚠️ ${session.lastError.slice(0, 50)}`);
+  if (src.lastError) {
+    lines.push(`⚠️ ${src.lastError.slice(0, 50)}`);
   }
 
   // Working directory
   const dir = (
     sctx?.sessionDir ||
+    state?.workingDir ||
     session.workingDir ||
     activeSession?.info.dir ||
     getWorkingDir()
@@ -1107,7 +1122,10 @@ export async function handleStatus(
 
   // Git branch
   const branchDir =
-    sctx?.sessionDir || session.workingDir || activeSession?.info.dir;
+    sctx?.sessionDir ||
+    state?.workingDir ||
+    session.workingDir ||
+    activeSession?.info.dir;
   const branch = branchDir ? await getGitBranch(branchDir) : null;
   if (branch) {
     lines.push(`🌿 <code>${branch}</code>`);
@@ -1117,18 +1135,23 @@ export async function handleStatus(
   const relayUp = await isRelayAvailable({
     sessionId:
       sctx?.sessionId ||
+      state?.sessionId ||
       activeSession?.info.id ||
       session.sessionId ||
       undefined,
     sessionDir:
-      sctx?.sessionDir || session.workingDir || activeSession?.info.dir,
+      sctx?.sessionDir ||
+      state?.workingDir ||
+      session.workingDir ||
+      activeSession?.info.dir,
     claudePid: sctx?.sessionPid ?? activeSession?.info.pid,
   });
   lines.push(relayUp ? "📡 Relay: connected" : "📡 Relay: unavailable");
 
   // Resume command (tap to copy)
-  if (session.sessionId) {
-    lines.push(`\n🔗 <code>claude --resume ${session.sessionId}</code>`);
+  const resumeId = state?.sessionId ?? session.sessionId;
+  if (resumeId) {
+    lines.push(`\n🔗 <code>claude --resume ${resumeId}</code>`);
   }
 
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
@@ -1148,9 +1171,9 @@ export async function handleModel(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
   if (!sctx && (await resolveTopicSession(ctx, "model_pick"))) return;
 
+  // Model state is still global (R3) — read straight from the singleton.
   const currentModel = session.model;
   const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
 
@@ -1193,7 +1216,10 @@ export async function handleRestart(ctx: Context): Promise<void> {
 /**
  * /retry - Retry the last message.
  */
-export async function handleRetry(ctx: Context): Promise<void> {
+export async function handleRetry(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
@@ -1201,17 +1227,24 @@ export async function handleRetry(ctx: Context): Promise<void> {
     return;
   }
 
-  if (!session.lastMessage) {
+  if (!sctx || sctx.source !== "cc") {
+    await ctx.reply("Use /retry in a session topic.");
+    return;
+  }
+
+  const state = getSessionState(sctx.sessionName);
+
+  if (!state.lastMessage) {
     await ctx.reply("❌ No message to retry.");
     return;
   }
 
-  if (session.isRunning) {
+  if (state.isRunning) {
     await ctx.reply("⏳ Query running. Use /stop first.");
     return;
   }
 
-  const message = session.lastMessage;
+  const message = state.lastMessage;
   await ctx.reply(`🔄 Retrying...`);
 
   const { handleText } = await import("./text");
@@ -1221,7 +1254,7 @@ export async function handleRetry(ctx: Context): Promise<void> {
     message: { ...ctx.message, text: message },
   } as Context;
 
-  await handleText(fakeCtx);
+  await handleText(fakeCtx, sctx);
 }
 
 // ============== Session Commands ==============
@@ -1448,13 +1481,20 @@ export async function handlePin(
 
   if (!chatId) return;
 
-  warmSingletonFromSctx(sctx);
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   const active = sctx ? null : getActiveSession();
-  const branch = await getGitBranch(sctx?.sessionDir || session.workingDir);
+  const branch = await getGitBranch(
+    sctx?.sessionDir || state?.workingDir || session.workingDir,
+  );
   const status = {
     sessionName:
-      sctx?.sessionName || active?.name || session.sessionName || null,
-    isPlanMode: session.isPlanMode,
+      sctx?.sessionName ||
+      state?.sessionName ||
+      active?.name ||
+      session.sessionName ||
+      null,
+    isPlanMode: state?.isPlanMode ?? session.isPlanMode,
     model: session.modelDisplayName,
     branch,
   };
@@ -1788,8 +1828,13 @@ export async function handlePwd(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
-  const dir = sctx?.sessionDir || session.workingDir || getWorkingDir();
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
+  const dir =
+    sctx?.sessionDir ||
+    state?.workingDir ||
+    session.workingDir ||
+    getWorkingDir();
   await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
     parse_mode: "HTML",
   });
@@ -1817,7 +1862,8 @@ export async function handleCd(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   if (!rawPath) {
@@ -1827,7 +1873,10 @@ export async function handleCd(
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
   const targetPath = resolve(
-    sctx?.sessionDir || session.workingDir || getWorkingDir(),
+    sctx?.sessionDir ||
+      state?.workingDir ||
+      session.workingDir ||
+      getWorkingDir(),
     rawPath,
   );
 
@@ -1849,7 +1898,8 @@ export async function handleCd(
     return;
   }
 
-  session.setWorkingDir(targetPath);
+  if (state) state.setWorkingDir(targetPath);
+  else session.setWorkingDir(targetPath);
   await ctx.reply(`📂 Now in: <code>${escapeHtml(targetPath)}</code>`, {
     parse_mode: "HTML",
   });
@@ -1877,8 +1927,13 @@ export async function handleLs(
     return;
   }
 
-  warmSingletonFromSctx(sctx);
-  const baseDir = sctx?.sessionDir || session.workingDir || getWorkingDir();
+  const state =
+    sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
+  const baseDir =
+    sctx?.sessionDir ||
+    state?.workingDir ||
+    session.workingDir ||
+    getWorkingDir();
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   // resolve() normalizes ../segments and handles both absolute and relative paths

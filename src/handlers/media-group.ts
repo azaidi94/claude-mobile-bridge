@@ -12,6 +12,7 @@ import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import { session } from "../session";
+import type { SessionState } from "../sessions/session-state";
 import { debug, error as logError, info } from "../logger";
 
 /**
@@ -201,6 +202,7 @@ export async function handleProcessingError(
   ctx: Context,
   error: unknown,
   toolMessages: Message[],
+  state?: SessionState,
 ): Promise<void> {
   logError("media-group: processing failed", error, {
     chatId: ctx.chat?.id,
@@ -224,8 +226,7 @@ export async function handleProcessingError(
   const errorStr = String(error);
   if (errorStr.includes("abort") || errorStr.includes("cancel")) {
     // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-    // TODO(phase-1 7e): interrupt flag migrates to SessionState alongside commands.ts.
-    const wasInterrupt = session.consumeInterruptFlag();
+    const wasInterrupt = (state ?? session).consumeInterruptFlag();
     if (!wasInterrupt) {
       await ctx.reply("🛑 Query stopped.");
     }

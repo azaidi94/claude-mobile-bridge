@@ -235,7 +235,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("status", withSctx(handleStatus));
   bot.command("model", withSctx(handleModel));
   bot.command("restart", handleRestart);
-  bot.command("retry", handleRetry);
+  bot.command("retry", withSctx(handleRetry));
   bot.command("list", handleList);
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);

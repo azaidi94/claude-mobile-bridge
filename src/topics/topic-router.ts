@@ -11,8 +11,8 @@ import {
   removeTopicMapping,
 } from "./topic-store";
 import { warn } from "../logger";
-import { session } from "../session";
 import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
 import type { TopicMapping } from "../types";
 import type { SessionOverride } from "../sessions/types";
 
@@ -73,7 +73,7 @@ export function loadTopicSession(ctx: Context): TopicSessionResult | undefined {
   const topicCtx = isSessionTopic(ctx);
   if (!topicCtx) return undefined;
   const si = getSession(topicCtx.sessionName);
-  if (si) session.loadFromRegistry(si);
+  if (si) getSessionState(si.name).loadFromRegistry(si);
   return {
     threadId: topicCtx.topicId,
     sessionOverride: si
