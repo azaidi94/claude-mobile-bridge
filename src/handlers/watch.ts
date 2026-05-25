@@ -12,6 +12,7 @@ import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
 import type { SessionContext } from "../sessions/context";
 import { session } from "../session";
+import { getSessionState } from "../sessions";
 import {
   ALLOWED_USERS,
   STREAMING_THROTTLE_MS,
@@ -571,7 +572,7 @@ export function notifySessionOffline(botApi: Api, sessionName: string): void {
 
     const sessionInfo = getSession(state.sessionName);
     if (sessionInfo) {
-      session.loadFromRegistry(sessionInfo);
+      getSessionState(state.sessionName).loadFromRegistry(sessionInfo);
       setActiveSession(state.sessionName);
     }
 
@@ -922,10 +923,15 @@ export async function handleWatch(
     return;
   }
 
-  // Don't start watching while a query is running
-  if (session.isRunning) {
-    await ctx.reply("A query is in progress. Use /stop first.");
-    return;
+  // Don't start watching while a query is running on this topic's session.
+  // (For General-topic /watch with no sctx, there's no specific session to
+  // check; the watch target is parsed below.)
+  if (sctx?.sessionName) {
+    const st = getSessionState(sctx.sessionName);
+    if (st.isRunning) {
+      await ctx.reply("A query is in progress. Use /stop first.");
+      return;
+    }
   }
 
   // Already watching?
@@ -1237,11 +1243,18 @@ export async function handleUnwatch(
 
     // Restore normal pinned status. Prefer the topic-resolved sctx; fall
     // back to the global active pointer only when sctx is unavailable.
+    // Plan-mode comes from the per-session SessionState (when known); model
+    // is global (R3).
     const active = sctx ? null : getActiveSession();
-    const branch = await getGitBranch(sctx?.sessionDir || session.workingDir);
+    const sessionName = sctx?.sessionName || active?.info.name || null;
+    const dir = sctx?.sessionDir || active?.info.dir || process.cwd();
+    const isPlanMode = sessionName
+      ? getSessionState(sessionName).isPlanMode
+      : false;
+    const branch = await getGitBranch(dir);
     updatePinnedStatus(ctx.api, chatId, {
-      sessionName: sctx?.sessionName || active?.name || null,
-      isPlanMode: session.isPlanMode,
+      sessionName,
+      isPlanMode,
       model: session.modelDisplayName,
       branch,
     }).catch(() => {});

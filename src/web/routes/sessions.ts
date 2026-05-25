@@ -3,13 +3,14 @@ import {
   getSessions,
   getActiveSession,
   setActiveSession,
+  getSessionState,
 } from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
 import type { SseEvent } from "../sse";
 import { authMiddleware } from "../auth";
 import type { SessionInfo } from "../../sessions/types";
-import { session as claudeSession } from "../../session";
+import { runQueryStreaming, session } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
@@ -258,11 +259,16 @@ export function createSessionsRouter(): Hono {
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
-      if (found) claudeSession.loadFromRegistry(found);
+      const state = getSessionState(busKey);
+      if (found) state.loadFromRegistry(found);
       const cb = globalEventBus.makeStatusCallback(busKey);
-      claudeSession
-        .sendMessageStreaming(body.text, "web", 0, cb)
-        .catch(() => emit("done", ""));
+      runQueryStreaming(state, {
+        message: body.text,
+        username: "web",
+        userId: 0,
+        statusCallback: cb,
+        model: session.model,
+      }).catch(() => emit("done", ""));
     }
 
     return c.json({ ok: true });
@@ -274,7 +280,7 @@ export function createSessionsRouter(): Hono {
     const found = sessions.find((s) => s.name === name);
     if (!found) return c.json({ error: "session not found" }, 404);
     setActiveSession(name);
-    claudeSession.loadFromRegistry(found);
+    getSessionState(found.name).loadFromRegistry(found);
     return c.json({ ok: true });
   });
 

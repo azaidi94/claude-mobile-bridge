@@ -42,9 +42,6 @@ export class SessionState {
   _isProcessing = false;
   _wasInterruptedByNewMessage = false;
 
-  // Mode change callback (same shape as singleton; wired per-state in 7c/7e).
-  onModeChange?: (isPlanMode: boolean) => void;
-
   constructor(name: string | null = null) {
     this.sessionName = name;
     this.workingDir = getWorkingDir();
@@ -183,6 +180,19 @@ export class SessionState {
 // ============== Resolver ==============
 
 const states = new Map<string, SessionState>();
+let onCreateHook: ((state: SessionState) => void) | null = null;
+
+/**
+ * Register a hook invoked once when a SessionState is first created via
+ * `getSessionState`. Used by infra wireups (e.g. pinned-status mode-change
+ * subscription in src/index.ts) to lazily attach per-session listeners
+ * without coupling this module to the event bus. Pass `null` to clear.
+ */
+export function setOnSessionStateCreated(
+  cb: ((state: SessionState) => void) | null,
+): void {
+  onCreateHook = cb;
+}
 
 /**
  * Resolve (and lazily create) a SessionState for the given session name.
@@ -193,6 +203,11 @@ export function getSessionState(name: string): SessionState {
   if (!state) {
     state = new SessionState(name);
     states.set(name, state);
+    try {
+      onCreateHook?.(state);
+    } catch {
+      // never let a misbehaving hook break the resolver
+    }
   }
   return state;
 }

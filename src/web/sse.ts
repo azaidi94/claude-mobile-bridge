@@ -14,7 +14,8 @@ export interface SseEvent {
     | "user_message"
     | "ask_remote"
     | "ask_remote_cleared"
-    | "ask_remote_state";
+    | "ask_remote_state"
+    | "mode_change";
   content: string;
   source?: "telegram" | "web" | "terminal" | "cursor";
   clientId?: string;
@@ -40,6 +41,8 @@ export interface SseEvent {
   /** ask_remote_cleared: how the question was resolved, for UX hint. */
   askResolution?: "answered" | "cancelled" | "timeout" | "expired";
   askAnswer?: string;
+  /** `mode_change`: new plan-mode value for the session. */
+  isPlanMode?: boolean;
   /**
    * `ask_remote_state`: authoritative snapshot of currently-open bridge asks
    * for this session. Emitted on every new SSE subscription so clients that

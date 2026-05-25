@@ -108,6 +108,8 @@ mock.module("../sessions", () => ({
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
   resolveSessionContext: mock(() => undefined),
+  getSessionState: mock(() => mockSessionState),
+  dropSessionState: mock(() => {}),
 }));
 
 // Mock session singleton with plan mode state

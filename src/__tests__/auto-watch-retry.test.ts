@@ -48,6 +48,14 @@ mock.module("../sessions", () => ({
   formatHistoryMessage: () => "",
   sendSwitchHistory: async () => {},
   resolveSessionContext: () => undefined,
+  getSessionState: () => ({
+    sessionName: null,
+    workingDir: "/tmp",
+    isPlanMode: false,
+    isRunning: false,
+    loadFromRegistry: () => {},
+  }),
+  dropSessionState: () => {},
 }));
 
 const SESSION: SessionInfo = {

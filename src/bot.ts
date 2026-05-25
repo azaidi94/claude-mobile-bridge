@@ -171,14 +171,19 @@ export function createBot(options: BotOptions): Bot {
         }
       }
 
-      // Create pinned status for new chats
+      // Create pinned status for new chats. Working dir + active-session
+      // name come from the registry (SessionInfo); model is global (R3);
+      // plan mode defaults to false at boot since no SessionState is
+      // warmed yet — the first query will fire a mode_change event that
+      // refreshes the pin.
       if (isNew) {
         const active = getActiveSession();
-        getGitBranch(session.workingDir)
+        const dir = active?.info.dir ?? process.cwd();
+        getGitBranch(dir)
           .then((branch) =>
             updatePinnedStatus(bot.api, ctx.chat!.id, {
-              sessionName: active?.name || null,
-              isPlanMode: session.isPlanMode,
+              sessionName: active?.info.name || null,
+              isPlanMode: false,
               model: session.modelDisplayName,
               branch,
             }),

@@ -30,7 +30,10 @@ import {
   getActiveSession,
   getGitBranch,
   getSessions,
+  setOnSessionStateCreated,
+  getSession,
 } from "./sessions";
+import { globalEventBus } from "./web/sse";
 import {
   isWatching,
   notifySessionOffline,
@@ -108,24 +111,34 @@ try {
   warn(`topic-ledger: backfill failed: ${err}`);
 }
 
-// Wire up mode change callback to update pinned status
-session.onModeChange = (isPlanMode) => {
-  const active = getActiveSession();
-  const topicId = active ? getThreadId(active.name) : undefined;
-  getGitBranch(session.workingDir)
-    .then((branch) => {
-      const status = {
-        sessionName: active?.name || null,
-        isPlanMode,
-        model: session.modelDisplayName,
-        branch,
-      };
-      for (const chatId of getChatIds()) {
-        updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
-      }
-    })
-    .catch(() => {});
-};
+// Wire up pinned-status updates on plan-mode change. Each newly created
+// SessionState gets a globalEventBus subscriber that updates the pin for
+// that session's topic. The hook is registered before any handler runs,
+// so the first time getSessionState(name) is called for a session, this
+// closure subscribes and stays attached for the process lifetime.
+setOnSessionStateCreated((state) => {
+  const sessionName = state.sessionName;
+  if (!sessionName) return;
+  globalEventBus.subscribe(sessionName, (evt) => {
+    if (evt.type !== "mode_change") return;
+    const info = getSession(sessionName);
+    const topicId = getThreadId(sessionName);
+    const dir = info?.dir ?? state.workingDir;
+    getGitBranch(dir)
+      .then((branch) => {
+        const status = {
+          sessionName,
+          isPlanMode: !!evt.isPlanMode,
+          model: session.modelDisplayName,
+          branch,
+        };
+        for (const chatId of getChatIds()) {
+          updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  });
+});
 
 // Wire up watch handler's offline callback for resume flow
 setSessionOfflineCallback(notifySessionOffline);

@@ -61,4 +61,5 @@ export {
   getSessionState,
   dropSessionState,
   listSessionStates,
+  setOnSessionStateCreated,
 } from "./session-state";

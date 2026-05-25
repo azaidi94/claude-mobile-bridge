@@ -39,6 +39,7 @@ import type {
 } from "./types";
 import { updateSessionId } from "./sessions";
 import { SessionState } from "./sessions/session-state";
+import { globalEventBus } from "./web/sse";
 import { createOpId, elapsedMs, info, warn, error, debug } from "./logger";
 
 export interface RequestTelemetry {
@@ -412,11 +413,17 @@ export async function runQueryStreaming(
     },
   };
 
-  // Track plan mode
+  // Track plan mode. Mode changes are broadcast on the global event bus
+  // keyed by sessionName so infra wireups (pinned-status updater in
+  // index.ts, SSE subscribers in web/) can react without a direct callback.
   const wasPlanMode = state.isPlanMode;
   state.isPlanMode = permissionMode === "plan";
-  if (state.isPlanMode !== wasPlanMode) {
-    state.onModeChange?.(state.isPlanMode);
+  if (state.isPlanMode !== wasPlanMode && state.sessionName) {
+    globalEventBus.emit(state.sessionName, {
+      type: "mode_change",
+      content: "",
+      isPlanMode: state.isPlanMode,
+    });
   }
 
   // Add Claude Code executable path if set (required for standalone builds)
@@ -859,8 +866,15 @@ export async function runPlanApproval(
   let message: string;
   if (action === "accept") {
     message = "Plan approved. Proceed with implementation.";
+    const wasPlanMode = state.isPlanMode;
     state.isPlanMode = false;
-    state.onModeChange?.(false);
+    if (wasPlanMode && state.sessionName) {
+      globalEventBus.emit(state.sessionName, {
+        type: "mode_change",
+        content: "",
+        isPlanMode: false,
+      });
+    }
   } else if (action === "reject") {
     message = `Plan rejected. ${feedback || "Please revise the plan."}`;
   } else {
