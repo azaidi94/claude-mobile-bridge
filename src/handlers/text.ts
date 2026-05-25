@@ -22,6 +22,7 @@ import {
   sendPlanContent,
 } from "./streaming";
 import { getActiveSession } from "../sessions";
+import type { SessionContext } from "../sessions/context";
 import { pendingPlanFeedback } from "./callback";
 import { tryConsumeCustomTextAnswer } from "./relay-ask";
 import { isWatching, sendWatchRelay } from "./watch";
@@ -49,7 +50,10 @@ import { globalEventBus } from "../web/sse";
 /**
  * Handle incoming text messages.
  */
-export async function handleText(ctx: Context): Promise<void> {
+export async function handleText(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -87,45 +91,41 @@ export async function handleText(ctx: Context): Promise<void> {
     messagePreview: truncate(message, 120),
   });
 
-  // Topic routing — resolve session from topic context
-  let threadId: number | undefined;
+  // Topic routing — use the explicit SessionContext the caller resolved.
+  // Falls back to the General-topic nudge when no context (private chats,
+  // General topic, or unbound session topic).
+  let threadId: number | undefined = sctx?.topicId;
   let sessionOverride: SessionOverride | undefined;
   let cursorSessionName: string | undefined;
 
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-
-    if (topicCtx) {
-      // In a session topic — load that session
-      threadId = topicCtx.topicId;
-      const si = getSession(topicCtx.sessionName);
-      if (si) {
-        if (si.source === "cursor") {
-          // Cursor sessions don't have a Claude SDK relay; the CursorBridge
-          // delivers via the event bus directly into Cursor's Composer.
-          cursorSessionName = si.name;
-        } else {
-          session.loadFromRegistry(si);
-          sessionOverride = {
-            sessionId: si.id || "",
-            sessionDir: si.dir,
-            sessionPid: si.pid,
-          };
-        }
-      }
-    } else if (isGeneralTopic(ctx)) {
-      // Free text in General — nudge to use a topic
-      // But allow through if there are pending interactive states
-      if (
-        !pendingSettingsInput.has(chatId) &&
-        !pendingPlanFeedback.has(chatId) &&
-        !pendingAskUserQuestionCustom.has(chatId)
-      ) {
-        await ctx.reply(
-          "❌ Send messages in a session topic.\nUse /list to see sessions.",
-        );
-        return;
-      }
+  if (sctx) {
+    if (sctx.source === "cursor") {
+      // Cursor sessions don't have a Claude SDK relay; the CursorBridge
+      // delivers via the event bus directly into Cursor's Composer.
+      cursorSessionName = sctx.sessionName;
+    } else {
+      // CC session — warm up the singleton so sendMessageStreaming targets
+      // the right session. Drops out once Phase 1 task 7 retires the singleton.
+      const si = getSession(sctx.sessionName);
+      if (si) session.loadFromRegistry(si);
+      sessionOverride = {
+        sessionId: sctx.sessionId,
+        sessionDir: sctx.sessionDir,
+        sessionPid: sctx.sessionPid,
+      };
+    }
+  } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
+    // Free text in General — nudge to use a topic.
+    // Allow through if there are pending interactive states.
+    if (
+      !pendingSettingsInput.has(chatId) &&
+      !pendingPlanFeedback.has(chatId) &&
+      !pendingAskUserQuestionCustom.has(chatId)
+    ) {
+      await ctx.reply(
+        "❌ Send messages in a session topic.\nUse /list to see sessions.",
+      );
+      return;
     }
   }
 

@@ -17,6 +17,7 @@ import {
   getActiveSession,
   updatePinnedStatus,
   getGitBranch,
+  resolveSessionContext,
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { session } from "./session";
@@ -245,7 +246,10 @@ export function createBot(options: BotOptions): Bot {
   bot.command("settings", handleSettings);
 
   // Message handlers
-  bot.on("message:text", handleText);
+  bot.on("message:text", async (ctx) => {
+    const sctx = resolveSessionContext(ctx);
+    await handleText(ctx, sctx);
+  });
   bot.on("message:voice", handleVoice);
   bot.on("message:photo", handlePhoto);
   bot.on("message:document", handleDocument);

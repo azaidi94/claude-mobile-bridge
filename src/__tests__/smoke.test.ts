@@ -70,6 +70,7 @@ mock.module("../sessions", () => ({
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
+  resolveSessionContext: mock(() => undefined),
 }));
 
 // Mock security
