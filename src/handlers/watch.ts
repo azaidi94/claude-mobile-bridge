@@ -112,6 +112,13 @@ export function bridgeTailToSse(
       return;
     case "turn_boundary":
       return;
+    case "turn_end":
+      // The web client treats SSE `done` as "streaming finished → re-enable
+      // input." Without this, streaming stays true forever when the user
+      // drives CC from the terminal/TG and the web UI is watching the
+      // same session — the input stays disabled.
+      bus.emit(sessionId, { type: "done", content: "" });
+      return;
     case "tool_result":
       bus.emit(sessionId, {
         type: "tool_result",
