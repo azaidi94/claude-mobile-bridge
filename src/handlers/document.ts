@@ -13,7 +13,8 @@ import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getActiveSession, getSession } from "../sessions";
+import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
   elapsedMs,
@@ -21,7 +22,6 @@ import {
   info,
   warn,
 } from "../logger";
-import { loadTopicSession } from "../topics";
 import type { SessionOverride } from "../sessions/types";
 
 // Supported text file extensions
@@ -510,7 +510,10 @@ async function processDocumentPaths(
 /**
  * Handle incoming document messages.
  */
-export async function handleDocument(ctx: Context): Promise<void> {
+export async function handleDocument(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -527,17 +530,29 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Cursor topics: no CC relay, no CDP file channel — reject before paying
   // for the download. Falling through would silently mis-route to whichever
   // CC session shares the dir.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Documents aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
+  let sessionOverride: SessionOverride | undefined;
+  if (sctx) {
+    const si = getSession(sctx.sessionName);
+    if (si) session.loadFromRegistry(si);
+    sessionOverride = {
+      sessionId: sctx.sessionId,
+      sessionDir: sctx.sessionDir,
+      sessionPid: sctx.sessionPid,
+    };
   }
 
   // 2. Check file size

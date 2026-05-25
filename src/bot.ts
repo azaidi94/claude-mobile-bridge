@@ -247,12 +247,17 @@ export function createBot(options: BotOptions): Bot {
 
   // Message handlers
   bot.on("message:text", async (ctx) => {
-    const sctx = resolveSessionContext(ctx);
-    await handleText(ctx, sctx);
+    await handleText(ctx, resolveSessionContext(ctx));
   });
-  bot.on("message:voice", handleVoice);
-  bot.on("message:photo", handlePhoto);
-  bot.on("message:document", handleDocument);
+  bot.on("message:voice", async (ctx) => {
+    await handleVoice(ctx, resolveSessionContext(ctx));
+  });
+  bot.on("message:photo", async (ctx) => {
+    await handlePhoto(ctx, resolveSessionContext(ctx));
+  });
+  bot.on("message:document", async (ctx) => {
+    await handleDocument(ctx, resolveSessionContext(ctx));
+  });
 
   // Callback queries
   bot.on("callback_query:data", handleCallback);

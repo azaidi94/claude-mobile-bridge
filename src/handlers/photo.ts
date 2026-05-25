@@ -12,7 +12,8 @@ import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getActiveSession, getSession } from "../sessions";
+import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
   debug,
@@ -21,7 +22,6 @@ import {
   info,
   warn,
 } from "../logger";
-import { loadTopicSession } from "../topics";
 import type { SessionOverride } from "../sessions/types";
 
 // Create photo-specific media group buffer
@@ -133,7 +133,10 @@ async function processPhotos(
 /**
  * Handle incoming photo messages.
  */
-export async function handlePhoto(ctx: Context): Promise<void> {
+export async function handlePhoto(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -149,19 +152,31 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Reject early in Cursor topics: the CC relay path can't reach Cursor's
   // Composer (no port file, no relay process), and sendViaRelay would
   // otherwise fall back to dir-match and silently route to an unrelated CC
   // session that happens to share the dir. Cursor doesn't currently accept
   // image attachments through the CDP bridge either.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Photos aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
+  let sessionOverride: SessionOverride | undefined;
+  if (sctx) {
+    const si = getSession(sctx.sessionName);
+    if (si) session.loadFromRegistry(si);
+    sessionOverride = {
+      sessionId: sctx.sessionId,
+      sessionDir: sctx.sessionDir,
+      sessionPid: sctx.sessionPid,
+    };
   }
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");

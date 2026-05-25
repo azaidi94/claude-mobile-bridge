@@ -15,14 +15,18 @@ import {
 } from "../utils";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getActiveSession, getSession } from "../sessions";
+import type { SessionContext } from "../sessions/context";
+import type { SessionOverride } from "../sessions/types";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
-import { loadTopicSession } from "../topics";
 
 /**
  * Handle incoming voice messages.
  */
-export async function handleVoice(ctx: Context): Promise<void> {
+export async function handleVoice(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -38,17 +42,29 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
 
   // Cursor topics: no CC relay, no CDP voice channel — reject before paying
   // for transcription. Falling through would silently mis-route to whichever
   // CC session shares the dir.
-  if (sessionOverride?.sessionId?.startsWith("cursor-")) {
+  if (sctx?.source === "cursor") {
     await ctx.reply(
       "❌ Voice messages aren't supported in Cursor topics yet — only text.",
       { message_thread_id: threadId },
     );
     return;
+  }
+
+  // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
+  let sessionOverride: SessionOverride | undefined;
+  if (sctx) {
+    const si = getSession(sctx.sessionName);
+    if (si) session.loadFromRegistry(si);
+    sessionOverride = {
+      sessionId: sctx.sessionId,
+      sessionDir: sctx.sessionDir,
+      sessionPid: sctx.sessionPid,
+    };
   }
 
   const opId = createOpId("voice");
