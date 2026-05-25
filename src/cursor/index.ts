@@ -85,16 +85,38 @@ async function syncBridges(): Promise<void> {
     const composerTargets = targets.filter(isComposerTarget);
     const liveIds = new Set(composerTargets.map((t) => t.id));
 
-    // Tear down bridges for closed windows.
+    // Tear down bridges for closed windows OR for sessions whose CDP
+    // WebSocket has died silently. The latter happens when Cursor reloads a
+    // renderer, the extension host restarts, or the webview is otherwise
+    // recycled — the targetId stays in /json/list, but our WS to it is dead.
+    // Without this, the bridge looks attached forever and injections silently
+    // no-op. Dropping the entry here lets the "attach new" pass below
+    // reconnect with a fresh WebSocket against the same target on the next
+    // sync tick.
+    //
+    // Closed vs dead is asymmetric: a *closed* window is gone, so we remove
+    // the session registry entry and unwire crossPost (the topic stays).
+    // A *dead-WS reconnect* keeps the session and crossPost in place —
+    // tearing those down would make the next attach trigger
+    // addCursorSession's "added" callback, which re-runs the topic-manager
+    // verification ping (`🟢 <session> online`). On unstable CDP that
+    // produced one ping every ~10-20min per session.
     for (const [id, active] of bridges) {
-      if (!liveIds.has(id)) {
-        active.bridge.stop();
+      const closed = !liveIds.has(id);
+      const dead = !closed && !active.bridge.isAlive();
+      if (!closed && !dead) continue;
+      active.bridge.stop();
+      bridges.delete(id);
+      if (closed) {
         crossPostUnsubs.get(active.sessionName)?.();
         crossPostUnsubs.delete(active.sessionName);
         removeSession(active.sessionName);
-        bridges.delete(id);
         info(
           `cursor-bridge: detached from closed window "${active.sessionName}"`,
+        );
+      } else {
+        info(
+          `cursor-bridge: reconnecting "${active.sessionName}" — CDP WebSocket dead`,
         );
       }
     }
