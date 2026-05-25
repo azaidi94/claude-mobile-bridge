@@ -239,8 +239,8 @@ export function createBot(options: BotOptions): Bot {
   bot.command("list", handleList);
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);
-  bot.command("watch", handleWatch);
-  bot.command("unwatch", handleUnwatch);
+  bot.command("watch", withSctx(handleWatch));
+  bot.command("unwatch", withSctx(handleUnwatch));
   bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);

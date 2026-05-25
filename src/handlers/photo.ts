@@ -12,7 +12,7 @@ import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession, getSession } from "../sessions";
+import { getSession } from "../sessions";
 import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
@@ -22,7 +22,6 @@ import {
   info,
   warn,
 } from "../logger";
-import type { SessionOverride } from "../sessions/types";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -69,7 +68,7 @@ async function processPhotos(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -89,7 +88,7 @@ async function processPhotos(
       photoPaths[0],
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
@@ -168,15 +167,9 @@ export async function handlePhoto(
   }
 
   // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  let sessionOverride: SessionOverride | undefined;
   if (sctx) {
     const si = getSession(sctx.sessionName);
     if (si) session.loadFromRegistry(si);
-    sessionOverride = {
-      sessionId: sctx.sessionId,
-      sessionDir: sctx.sessionDir,
-      sessionPid: sctx.sessionPid,
-    };
   }
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
@@ -189,17 +182,15 @@ export async function handlePhoto(
   });
 
   // 2. Relay preflight — avoid download if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() returns
-  // whichever session was most recently touched globally, which is often a
-  // Cursor session (its lastActivity gets bumped on every CDP nudge). That
-  // mismatched the topic's real session and the preflight kept rejecting
-  // photos with "No desktop session found".
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back only to
+  // the streaming-SDK singleton's workingDir. We deliberately do NOT
+  // consult getActiveSession() — that chases the most-recent global
+  // session (often a Cursor session whose lastActivity gets bumped on
+  // every CDP nudge) and mis-targeted the preflight.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || session.workingDir,
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -281,7 +272,7 @@ export async function handlePhoto(
       chatId,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
 
     // Clean up status message
@@ -316,7 +307,7 @@ export async function handlePhoto(
         groupChatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       ),
   );
 }

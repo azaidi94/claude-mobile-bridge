@@ -13,7 +13,7 @@ import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession, getSession } from "../sessions";
+import { getSession } from "../sessions";
 import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
@@ -22,7 +22,6 @@ import {
   info,
   warn,
 } from "../logger";
-import type { SessionOverride } from "../sessions/types";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -229,7 +228,7 @@ async function processArchive(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -290,7 +289,7 @@ async function processArchive(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -368,7 +367,7 @@ async function processDocuments(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
   const stopProcessing = session.startProcessing();
   const requestStartedAt = Date.now();
@@ -398,7 +397,7 @@ async function processDocuments(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(
@@ -457,7 +456,7 @@ async function processDocumentPaths(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
@@ -503,7 +502,7 @@ async function processDocumentPaths(
     chatId,
     opId,
     threadId,
-    sessionOverride,
+    sctx,
   );
 }
 
@@ -544,15 +543,9 @@ export async function handleDocument(
   }
 
   // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  let sessionOverride: SessionOverride | undefined;
   if (sctx) {
     const si = getSession(sctx.sessionName);
     if (si) session.loadFromRegistry(si);
-    sessionOverride = {
-      sessionId: sctx.sessionId,
-      sessionDir: sctx.sessionDir,
-      sessionPid: sctx.sessionPid,
-    };
   }
 
   // 2. Check file size
@@ -598,15 +591,15 @@ export async function handleDocument(
   }
 
   // 4. Relay preflight — avoid download/extraction if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() can return a
-  // Cursor session (lastActivity bumped on every CDP nudge), which won't match
-  // the topic's CC relay and incorrectly rejects the upload.
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back to the
+  // streaming-SDK singleton's workingDir. We deliberately avoid
+  // getActiveSession() — it returns whichever session was most-recently
+  // touched globally (often a Cursor session whose lastActivity bumps on
+  // every CDP nudge), which mis-routes the preflight.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || session.workingDir,
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -663,7 +656,7 @@ export async function handleDocument(
       chatId,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     return;
   }
@@ -698,7 +691,7 @@ export async function handleDocument(
         chatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       );
     } catch (error) {
       logError("document: single-file processing failed", error, {
@@ -733,7 +726,7 @@ export async function handleDocument(
         groupChatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       ),
   );
 }

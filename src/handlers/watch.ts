@@ -10,7 +10,7 @@
 
 import type { Context, Api } from "grammy";
 import type { Message } from "grammy/types";
-import type { SessionOverride } from "../sessions/types";
+import type { SessionContext } from "../sessions/context";
 import { session } from "../session";
 import {
   ALLOWED_USERS,
@@ -445,13 +445,13 @@ export async function sendWatchRelay(
   opId?: string,
   imagePath?: string,
   /** Override session target (for topic mode where watch may point at a different session). */
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<boolean> {
   const state = watches.get(watchKey(chatId, threadId));
   if (!state) return false;
   const startedAt = Date.now();
 
-  const target = sessionOverride || state;
+  const target = sctx ?? state;
   const client = await getRelayClient({
     sessionId: target.sessionId,
     sessionDir: target.sessionDir,
@@ -897,7 +897,10 @@ export async function startAutoWatch(
 /**
  * /watch [session-name] - Start watching a desktop session.
  */
-export async function handleWatch(ctx: Context): Promise<void> {
+export async function handleWatch(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
@@ -955,8 +958,17 @@ export async function handleWatch(ctx: Context): Promise<void> {
       return;
     }
     targetName = requestedName;
-  } else {
-    // Try active session, or find first desktop session
+  } else if (sctx?.sessionName) {
+    // Topic-resolved session takes precedence over the global active pointer.
+    const sessionInfo = getSession(sctx.sessionName);
+    if (sessionInfo && sessionInfo.source === "desktop") {
+      targetName = sctx.sessionName;
+    }
+  }
+
+  if (!targetName && !requestedName) {
+    // Fallback when sctx is unavailable (private DM) or its session isn't
+    // a desktop session — pick the most-recent active one or any desktop.
     const active = getActiveSession();
     if (active && active.info.source === "desktop") {
       targetName = active.name;
@@ -1190,7 +1202,10 @@ export async function startWatchingAndNotify(
 /**
  * /unwatch - Stop watching.
  */
-export async function handleUnwatch(ctx: Context): Promise<void> {
+export async function handleUnwatch(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
@@ -1217,11 +1232,12 @@ export async function handleUnwatch(ctx: Context): Promise<void> {
       },
     );
 
-    // Restore normal pinned status
-    const active = getActiveSession();
-    const branch = await getGitBranch(session.workingDir);
+    // Restore normal pinned status. Prefer the topic-resolved sctx; fall
+    // back to the global active pointer only when sctx is unavailable.
+    const active = sctx ? null : getActiveSession();
+    const branch = await getGitBranch(sctx?.sessionDir || session.workingDir);
     updatePinnedStatus(ctx.api, chatId, {
-      sessionName: active?.name || null,
+      sessionName: sctx?.sessionName || active?.name || null,
       isPlanMode: session.isPlanMode,
       model: session.modelDisplayName,
       branch,

@@ -43,7 +43,6 @@ import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
 import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
-import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
 
@@ -95,7 +94,6 @@ export async function handleText(
   // Falls back to the General-topic nudge when no context (private chats,
   // General topic, or unbound session topic).
   let threadId: number | undefined = sctx?.topicId;
-  let sessionOverride: SessionOverride | undefined;
   let cursorSessionName: string | undefined;
 
   if (sctx) {
@@ -108,11 +106,6 @@ export async function handleText(
       // the right session. Drops out once Phase 1 task 7 retires the singleton.
       const si = getSession(sctx.sessionName);
       if (si) session.loadFromRegistry(si);
-      sessionOverride = {
-        sessionId: sctx.sessionId,
-        sessionDir: sctx.sessionDir,
-        sessionPid: sctx.sessionPid,
-      };
     }
   } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
     // Free text in General — nudge to use a topic.
@@ -387,7 +380,7 @@ export async function handleText(
       message,
       opId,
       undefined,
-      sessionOverride,
+      sctx,
     );
     if (relayed) {
       const topicCtx = isSessionTopic(ctx);
@@ -498,7 +491,7 @@ export async function handleText(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "RELAY", message, "(via relay)");

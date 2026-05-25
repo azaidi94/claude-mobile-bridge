@@ -15,9 +15,8 @@ import {
 } from "../utils";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession, getSession } from "../sessions";
+import { getSession } from "../sessions";
 import type { SessionContext } from "../sessions/context";
-import type { SessionOverride } from "../sessions/types";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
 
 /**
@@ -56,15 +55,9 @@ export async function handleVoice(
   }
 
   // Warm the streaming-SDK singleton for CC sessions (retired in task 7).
-  let sessionOverride: SessionOverride | undefined;
   if (sctx) {
     const si = getSession(sctx.sessionName);
     if (si) session.loadFromRegistry(si);
-    sessionOverride = {
-      sessionId: sctx.sessionId,
-      sessionDir: sctx.sessionDir,
-      sessionPid: sctx.sessionPid,
-    };
   }
 
   const opId = createOpId("voice");
@@ -98,15 +91,14 @@ export async function handleVoice(
   }
 
   // 4. Quick relay preflight — avoid transcription cost if no session exists.
-  // Prefer the topic-resolved sessionOverride: getActiveSession() returns the
-  // globally most-recent session, which is often a Cursor session and won't
-  // match the topic's CC relay.
-  const active = getActiveSession();
+  // Use the topic-resolved sctx when present; otherwise fall back to the
+  // streaming-SDK singleton's workingDir. We avoid getActiveSession() —
+  // it returns the globally most-recent session, often a Cursor session
+  // whose lastActivity bumps on every CDP nudge.
   const relayUp = await isRelayAvailable({
-    sessionId: sessionOverride?.sessionId ?? active?.info.id,
-    sessionDir:
-      sessionOverride?.sessionDir || session.workingDir || active?.info.dir,
-    claudePid: sessionOverride?.sessionPid ?? active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || session.workingDir,
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
     await ctx.reply(
@@ -184,7 +176,7 @@ export async function handleVoice(
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(
