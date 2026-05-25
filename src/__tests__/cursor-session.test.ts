@@ -22,14 +22,17 @@ describe("addCursorSession", () => {
     expect(s!.dir).toBe("/tmp/proj");
   });
 
-  it("updates lastActivity on re-registration without duplicating", async () => {
+  it("does NOT bump lastActivity on re-registration (task 8)", async () => {
+    // Re-registration is the cursor-bridge attach/reconnect path; treating
+    // it as activity makes cursor sessions falsely look "most-recently
+    // active" and hijacks dir-match heuristics in sendViaRelay.
     addCursorSession({ name, dir: "/tmp/proj" });
     const first = getSession(name)!.lastActivity;
     await new Promise((r) => setTimeout(r, 5));
     addCursorSession({ name, dir: "/tmp/proj" });
     const second = getSession(name)!.lastActivity;
-    expect(second).toBeGreaterThanOrEqual(first);
-    // Only one session with this name
+    expect(second).toBe(first);
+    // Still idempotent — no duplicate
     const all = getSessions();
     expect(all.filter((s) => s.name === name).length).toBe(1);
   });
