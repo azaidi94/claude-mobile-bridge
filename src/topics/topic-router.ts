@@ -45,6 +45,14 @@ export function isSessionTopic(
   };
 }
 
+/**
+ * @deprecated Retained ONLY to keep the Phase 0 characterisation tests
+ * (`text-to-cc-via-topic`, `cursor-topic-resolution`, `resolve-session-context`)
+ * pinned to their current baseline behaviour.  Production code now uses
+ * `resolveSessionContext` from `src/sessions/context.ts` instead.
+ * This interface will be removed in Phase 1 task 9 once those tests have been
+ * re-pointed at `resolveSessionContext`.
+ */
 export interface TopicSessionResult {
   threadId: number;
   sessionOverride?: SessionOverride;
@@ -53,6 +61,13 @@ export interface TopicSessionResult {
 /**
  * Resolve topic context and load the session.
  * Returns threadId and sessionOverride if in a session topic, undefined otherwise.
+ *
+ * @deprecated Retained ONLY to keep the Phase 0 characterisation tests
+ * (`text-to-cc-via-topic`, `cursor-topic-resolution`, `resolve-session-context`)
+ * pinned to their current baseline behaviour.  Production code now uses
+ * `resolveSessionContext` from `src/sessions/context.ts` instead.
+ * This function will be removed in Phase 1 task 9 once those tests have been
+ * re-pointed at `resolveSessionContext`.
  */
 export function loadTopicSession(ctx: Context): TopicSessionResult | undefined {
   const topicCtx = isSessionTopic(ctx);

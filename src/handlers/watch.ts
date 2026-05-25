@@ -451,6 +451,9 @@ export async function sendWatchRelay(
   if (!state) return false;
   const startedAt = Date.now();
 
+  // Only sessionId, sessionDir, and sessionPid are read from `target`.
+  // SessionContext and WatchState are structurally compatible for exactly
+  // those three fields; no other properties should be accessed here.
   const target = sctx ?? state;
   const client = await getRelayClient({
     sessionId: target.sessionId,
