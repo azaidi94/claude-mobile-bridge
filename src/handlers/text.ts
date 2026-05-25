@@ -3,7 +3,7 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import { session, runQueryStreaming, runPlanApproval } from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
@@ -21,7 +21,7 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { getActiveSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
 import { pendingPlanFeedback } from "./callback";
 import { tryConsumeCustomTextAnswer } from "./relay-ask";
@@ -95,6 +95,12 @@ export async function handleText(
   // General topic, or unbound session topic).
   let threadId: number | undefined = sctx?.topicId;
   let cursorSessionName: string | undefined;
+  // Per-session state resolved from sctx. Undefined for cursor / no-sctx
+  // paths; CC handlers use this in place of the singleton (task 7c).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
 
   if (sctx) {
     if (sctx.source === "cursor") {
@@ -102,10 +108,10 @@ export async function handleText(
       // delivers via the event bus directly into Cursor's Composer.
       cursorSessionName = sctx.sessionName;
     } else {
-      // CC session — warm up the singleton so sendMessageStreaming targets
-      // the right session. Drops out once Phase 1 task 7 retires the singleton.
+      // CC session — sync the per-session SessionState with the registry so
+      // sessionId/cwd/lastActivity reflect the latest watcher snapshot.
       const si = getSession(sctx.sessionName);
-      if (si) session.loadFromRegistry(si);
+      if (si && state) state.loadFromRegistry(si);
     }
   } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
     // Free text in General — nudge to use a topic.
@@ -167,8 +173,13 @@ export async function handleText(
     const requestId = pendingPlanFeedback.get(chatId)!;
     pendingPlanFeedback.delete(chatId);
 
-    // Check if there's still a pending plan approval
-    if (!session.pendingPlanApproval) {
+    // Check if there's still a pending plan approval — prefer per-session
+    // state when sctx provided one; otherwise fall back to the singleton
+    // (e.g. private DM / General topic still goes through the singleton).
+    const pendingApproval = state
+      ? state.pendingPlanApproval
+      : session.pendingPlanApproval;
+    if (!pendingApproval) {
       await ctx.reply("❌ Plan approval expired.", {
         message_thread_id: threadId,
       });
@@ -177,26 +188,41 @@ export async function handleText(
 
     // Process feedback
     const typing = startTypingIndicator(ctx);
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state, threadId);
+    const streamState = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, streamState, threadId);
 
     try {
-      const response = await session.respondToPlanApproval(
-        "edit",
-        message,
-        ctx.from?.username || "unknown",
-        userId,
-        statusCallback,
-        chatId,
-        ctx,
-        {
-          opId,
-          requestKind: "plan_edit",
-        },
-      );
+      const response = state
+        ? await runPlanApproval(state, {
+            action: "edit",
+            feedback: message,
+            username: ctx.from?.username || "unknown",
+            userId,
+            statusCallback,
+            chatId,
+            ctx,
+            telemetry: { opId, requestKind: "plan_edit" },
+            model: session.model,
+          })
+        : await session.respondToPlanApproval(
+            "edit",
+            message,
+            ctx.from?.username || "unknown",
+            userId,
+            statusCallback,
+            chatId,
+            ctx,
+            {
+              opId,
+              requestKind: "plan_edit",
+            },
+          );
 
       // Check if another plan approval is pending
-      if (session.pendingPlanApproval) {
+      const nextPending = state
+        ? state.pendingPlanApproval
+        : session.pendingPlanApproval;
+      if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
         await ctx.reply("📋 Revised plan ready. Review and approve?", {
@@ -281,33 +307,52 @@ export async function handleText(
 
       // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
-      const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state, threadId);
+      const streamState = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, streamState, threadId);
 
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
-        const response = await session.sendMessageStreaming(
-          answersText,
-          username,
-          userId,
-          statusCallback,
-          chatId,
-          ctx,
-          permissionMode,
-          {
-            opId,
-            requestKind: wasPlanMode
-              ? "ask_user_custom_plan"
-              : "ask_user_custom",
-          },
-        );
+        const response = state
+          ? await runQueryStreaming(state, {
+              message: answersText,
+              username,
+              userId,
+              statusCallback,
+              chatId,
+              ctx,
+              permissionMode,
+              telemetry: {
+                opId,
+                requestKind: wasPlanMode
+                  ? "ask_user_custom_plan"
+                  : "ask_user_custom",
+              },
+              model: session.model,
+            })
+          : await session.sendMessageStreaming(
+              answersText,
+              username,
+              userId,
+              statusCallback,
+              chatId,
+              ctx,
+              permissionMode,
+              {
+                opId,
+                requestKind: wasPlanMode
+                  ? "ask_user_custom_plan"
+                  : "ask_user_custom",
+              },
+            );
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
 
         // Check if plan approval is pending (ExitPlanMode was called)
-        if (session.pendingPlanApproval) {
+        const pendingForKeyboard = state
+          ? state.pendingPlanApproval
+          : session.pendingPlanApproval;
+        if (pendingForKeyboard) {
           const displayContent =
-            session.pendingPlanApproval.planContent ||
-            session.pendingPlanApproval.planSummary;
+            pendingForKeyboard.planContent || pendingForKeyboard.planSummary;
           if (displayContent && displayContent.length > 50) {
             await sendPlanContent(ctx, displayContent);
           }
@@ -422,6 +467,9 @@ export async function handleText(
   }
 
   // 2. Check for interrupt prefix
+  // TODO(phase-1 7d/7e): checkInterrupt writes to the singleton's interrupt
+  // flag. Once photo/voice/document/callback handlers migrate, route this
+  // through `state` (or a per-state helper) instead of the singleton.
   message = await checkInterrupt(message);
   if (!message.trim()) {
     await ctx
@@ -451,7 +499,11 @@ export async function handleText(
         updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
       }
     }
-    session.sessionId = null;
+    if (state) {
+      state.clearSession();
+    } else {
+      session.sessionId = null;
+    }
     await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
     info("request: completed", {
@@ -465,19 +517,16 @@ export async function handleText(
     return;
   }
 
-  // 5. Store message for retry
-  session.lastMessage = message;
+  // 5. Store message for retry — per-session when sctx provided one,
+  // singleton as fallback for the no-sctx (DM / General) path.
+  if (state) {
+    state.lastMessage = message;
+  } else {
+    session.lastMessage = message;
+  }
 
   // Debug log incoming message
   debug(`msg: "${truncate(message)}"`);
-
-  // 7. Sync with registry if no session loaded
-  if (!session.sessionName) {
-    const active = await getActiveSession();
-    if (active) {
-      session.loadFromRegistry(active.info);
-    }
-  }
 
   // 7.5. Try relay path — inject into running desktop session
   // Slash commands must run locally via the SDK (for <local-command-stdout> handling),
@@ -529,21 +578,35 @@ export async function handleText(
     return;
   }
 
-  // 8. Slash command — run locally via SDK so <local-command-stdout> is handled
+  // 8. Slash command — run locally via SDK so <local-command-stdout> is handled.
+  // Task 7c: slash commands require a resolved CC SessionState. With no sctx
+  // (General topic / private DM), reply with "no desktop session" instead of
+  // running locally against the singleton — that fallback was the bug being
+  // fixed by Phase 1.
+  if (!state) {
+    await ctx.reply(
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+      { message_thread_id: threadId },
+    );
+    return;
+  }
+
   const typing = startTypingIndicator(ctx);
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state, threadId);
+  const streamState = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, streamState, threadId);
   try {
-    const response = await session.sendMessageStreaming(
+    const response = await runQueryStreaming(state, {
       message,
       username,
-      userId!,
+      userId: userId!,
       statusCallback,
-      chatId!,
+      chatId: chatId!,
       ctx,
-      "bypassPermissions",
-      { opId, requestKind: "slash_cmd" },
-    );
+      permissionMode: "bypassPermissions",
+      telemetry: { opId, requestKind: "slash_cmd" },
+      model: session.model,
+    });
     await auditLog(
       userId,
       username,

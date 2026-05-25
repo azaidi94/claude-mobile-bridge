@@ -139,6 +139,11 @@ mock.module("../session", () => ({
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
   getModelDisplayName: (m: string) => m,
+  // Phase 1 task 7c: text.ts imports the free functions directly. Tests
+  // exercise the no-sctx path (state undefined), so these aren't actually
+  // invoked, but the named exports must exist for the module mock.
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
 
 // Mock security
