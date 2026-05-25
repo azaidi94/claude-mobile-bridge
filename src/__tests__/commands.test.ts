@@ -152,6 +152,7 @@ mock.module("../sessions", () => ({
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
+  resolveSessionContext: mock(() => undefined),
 }));
 
 const mockScanPortFiles = mock(async (): Promise<MockPortFile[]> => []);

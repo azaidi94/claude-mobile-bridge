@@ -33,7 +33,10 @@ import {
   updatePinnedStatus,
   getGitBranch,
   sendSwitchHistory,
+  resolveSessionContext,
 } from "../sessions";
+import { sessionContextFromInfo } from "../sessions/context";
+import type { SessionContext } from "../sessions/context";
 import { isWatchingAny } from "./watch";
 import {
   killSession,
@@ -89,7 +92,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // Handle topic session-picker callbacks
+  // Handle topic session-picker callbacks. The user picked a session from
+  // the General-topic picker; build an sctx from it and dispatch to the
+  // handler exactly as if they'd invoked it from that session's topic.
   for (const [prefix, handler] of [
     ["status_pick:", "handleStatus"],
     ["model_pick:", "handleModel"],
@@ -99,9 +104,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
       const sessionName = callbackData.slice(prefix.length);
       const sessionInfo = getSession(sessionName);
       if (sessionInfo) {
-        session.loadFromRegistry(sessionInfo);
+        const sctx = sessionContextFromInfo(sessionInfo, chatId);
         const commands = await import("./commands");
-        await (commands[handler] as (ctx: Context) => Promise<void>)(ctx);
+        await (
+          commands[handler] as (
+            ctx: Context,
+            sctx?: SessionContext,
+          ) => Promise<void>
+        )(ctx, sctx);
       } else {
         await ctx.reply("Session not found.");
       }
@@ -109,6 +119,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
   }
+
+  // SessionContext for the originating topic (if any). Some callback
+  // branches use this to render correct pinned-status names and avoid
+  // mis-routing to whichever session the singleton last touched.
+  const sctx = resolveSessionContext(ctx);
 
   // 2. Handle model switch callbacks: model:{model_id}
   if (callbackData.startsWith("model:")) {
@@ -149,12 +164,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
       text: `Switched to ${getModelDisplayName(modelId)}`,
     });
 
-    // Update pinned status with new model
-    const active = getActiveSession();
-    getGitBranch(session.workingDir)
+    // Update pinned status with new model. Prefer the originating topic's
+    // session name; fall back to the global active pointer.
+    const active = sctx ? null : getActiveSession();
+    getGitBranch(sctx?.sessionDir || session.workingDir)
       .then((branch) =>
         updatePinnedStatus(ctx.api, chatId, {
-          sessionName: active?.name || null,
+          sessionName: sctx?.sessionName || active?.name || null,
           isPlanMode: session.isPlanMode,
           model: session.modelDisplayName,
           branch,

@@ -47,6 +47,7 @@ mock.module("../sessions", () => ({
   getRecentHistory: () => [],
   formatHistoryMessage: () => "",
   sendSwitchHistory: async () => {},
+  resolveSessionContext: () => undefined,
 }));
 
 const SESSION: SessionInfo = {
