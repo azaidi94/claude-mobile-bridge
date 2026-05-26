@@ -12,6 +12,7 @@ import { promisify } from "util";
 import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error } from "../logger";
+import { safeAsync } from "../utils/safe-async";
 import {
   scanPortFiles,
   invalidateScanCache,
@@ -159,21 +160,25 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
 
     // Extract session IDs from process args for precise matching
     if (pids.length > 0) {
-      try {
-        const { stdout: argsOutput } = await execAsync(
-          `ps -p ${pids.join(",")} -o pid=,args= 2>/dev/null`,
-        );
-        for (const line of argsOutput.trim().split("\n")) {
-          const match = line.match(/^\s*(\d+)\s.*--session-id\s+(\S+)/);
-          if (match) {
-            const proc = processes.find((p) => p.pid === parseInt(match[1]!));
-            if (proc) proc.sessionId = match[2];
+      await safeAsync(
+        "watcher.ps_args_lookup",
+        async () => {
+          const { stdout: argsOutput } = await execAsync(
+            `ps -p ${pids.join(",")} -o pid=,args= 2>/dev/null`,
+          );
+          for (const line of argsOutput.trim().split("\n")) {
+            const match = line.match(/^\s*(\d+)\s.*--session-id\s+(\S+)/);
+            if (match) {
+              const proc = processes.find((p) => p.pid === parseInt(match[1]!));
+              if (proc) proc.sessionId = match[2];
+            }
           }
-        }
-      } catch {}
+        },
+        { severity: "debug" },
+      );
     }
   } catch {
-    // No claude processes running
+    // silently ok: no claude processes running (ps exits non-zero)
   }
   return processes;
 }

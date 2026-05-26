@@ -7,6 +7,7 @@
 
 import type { Api } from "grammy";
 import { watchKey, type WatchKey } from "./registry";
+import { safeAsync } from "../../utils/safe-async";
 
 // Liveness typing: every tail event extends; turn_end / turn_boundary stop
 // it explicitly. The safety timeout is a belt-and-suspenders fallback for
@@ -42,11 +43,14 @@ export function touchWatchTyping(
   entry.running = true;
   const loop = async () => {
     while (entry!.running) {
-      try {
-        await botApi.sendChatAction(chatId, "typing", {
-          message_thread_id: threadId,
-        });
-      } catch {}
+      await safeAsync(
+        "watch.typing_action",
+        () =>
+          botApi.sendChatAction(chatId, "typing", {
+            message_thread_id: threadId,
+          }),
+        { severity: "debug" },
+      );
       await Bun.sleep(4000);
     }
   };

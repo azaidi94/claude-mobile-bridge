@@ -34,7 +34,9 @@ function shiftArchives(logPath: string): void {
   if (existsSync(oldest)) {
     try {
       unlinkSync(oldest);
-    } catch {}
+    } catch {
+      // silently ok: best-effort archive cleanup; logger can't log its own pipeline errors
+    }
   }
   for (let i = MAX_ARCHIVES - 1; i >= 1; i--) {
     const src = `${logPath}.${i}`;
@@ -42,13 +44,17 @@ function shiftArchives(logPath: string): void {
     if (existsSync(src)) {
       try {
         renameSync(src, dst);
-      } catch {}
+      } catch {
+        // silently ok: best-effort rotation; logger can't log its own pipeline errors
+      }
     }
   }
   if (existsSync(logPath)) {
     try {
       renameSync(logPath, `${logPath}.1`);
-    } catch {}
+    } catch {
+      // silently ok: best-effort rotation; logger can't log its own pipeline errors
+    }
   }
 }
 
@@ -90,7 +96,9 @@ function rotateNow(): void {
   currentBytes = 0;
   try {
     oldStream.end();
-  } catch {}
+  } catch {
+    // silently ok: rotating away from a broken stream; cannot log from logger pipeline
+  }
   shiftArchives(path);
   currentStream = openStream(path);
 }
@@ -103,7 +111,9 @@ export function _resetForTests(): void {
   if (currentStream) {
     try {
       currentStream.end();
-    } catch {}
+    } catch {
+      // silently ok: test-reset path; cannot log from logger pipeline
+    }
   }
   currentStream = null;
   currentBytes = 0;
