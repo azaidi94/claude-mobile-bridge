@@ -193,6 +193,20 @@ describe("MessageBus.send — text", () => {
     expect(api._sentTexts[0]!.text).toBe("<x>raw</x>");
   });
 
+  test("silent=true sets disable_notification on the send", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    await bus.send({ chatId: 1, content: "shh", silent: true });
+    expect(api._sentTexts[0]!.opts.disable_notification).toBe(true);
+  });
+
+  test("silent omitted → no disable_notification opt", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    await bus.send({ chatId: 1, content: "loud" });
+    expect(api._sentTexts[0]!.opts.disable_notification).toBeUndefined();
+  });
+
   test("replyTo translates to reply_parameters", async () => {
     const api = makeApi();
     const bus = createMessageBus(api as any);

@@ -35,6 +35,11 @@ export interface OutboundMessage {
   dedupKey?: string;
   replyTo?: { messageId: number };
   attachment?: { kind: AttachmentKind; path: string };
+  /**
+   * Suppress the user's push notification for this message (TG's
+   * `disable_notification`). Used by quiet streaming bubbles in watch.ts.
+   */
+  silent?: boolean;
   /** Optional caller-provided opId for correlation; bus generates one if absent. */
   opId?: string;
 }
@@ -185,10 +190,12 @@ export function createMessageBus(api: Api): MessageBus {
     replyTo: { messageId: number } | undefined,
     rawChunk: string,
     formatHint: FormatHint,
+    silent: boolean,
   ): Promise<number> {
     const opts: Parameters<Api["sendMessage"]>[2] = {};
     if (parseMode) opts.parse_mode = parseMode;
     if (threadId !== undefined) opts.message_thread_id = threadId;
+    if (silent) opts.disable_notification = true;
     if (replyTo) {
       (opts as any).reply_parameters = { message_id: replyTo.messageId };
     }
@@ -201,6 +208,7 @@ export function createMessageBus(api: Api): MessageBus {
         const plain = plainFallback(rawChunk, formatHint);
         const plainOpts: Parameters<Api["sendMessage"]>[2] = {};
         if (threadId !== undefined) plainOpts.message_thread_id = threadId;
+        if (silent) plainOpts.disable_notification = true;
         if (replyTo) {
           (plainOpts as any).reply_parameters = {
             message_id: replyTo.messageId,
@@ -222,12 +230,14 @@ export function createMessageBus(api: Api): MessageBus {
     parseMode: ResolvedParseMode | undefined,
     rawCaption: string,
     formatHint: FormatHint,
+    silent: boolean,
   ): Promise<number> {
     const buf = Buffer.from(await Bun.file(path).arrayBuffer());
     const name = path.split("/").pop() || "file";
     const input = new InputFile(buf, name);
     const baseOpts: Record<string, unknown> = {};
     if (threadId !== undefined) baseOpts.message_thread_id = threadId;
+    if (silent) baseOpts.disable_notification = true;
     if (caption) {
       baseOpts.caption = caption;
       if (parseMode) baseOpts.parse_mode = parseMode;
@@ -247,6 +257,7 @@ export function createMessageBus(api: Api): MessageBus {
         const plain = plainFallback(rawCaption, formatHint);
         const plainOpts: Record<string, unknown> = { caption: plain };
         if (threadId !== undefined) plainOpts.message_thread_id = threadId;
+        if (silent) plainOpts.disable_notification = true;
         // Re-create input — InputFile streams may be consumed on first send.
         const buf2 = Buffer.from(await Bun.file(path).arrayBuffer());
         const input2 = new InputFile(buf2, name);
@@ -316,6 +327,7 @@ export function createMessageBus(api: Api): MessageBus {
             resolved.parse_mode,
             msg.content,
             formatHint,
+            msg.silent === true,
           );
           info("bus.send", {
             opId,
@@ -348,6 +360,7 @@ export function createMessageBus(api: Api): MessageBus {
             i === 0 ? msg.replyTo : undefined,
             rawChunks[i] ?? formattedChunks[i]!,
             formatHint,
+            msg.silent === true,
           );
           if (firstMessageId === null) firstMessageId = id;
         }

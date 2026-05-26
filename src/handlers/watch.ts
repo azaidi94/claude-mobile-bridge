@@ -52,7 +52,19 @@ import { isBridgeOnline } from "../bridge-health";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { getRelayClient } from "../relay";
 import type { RelayReply } from "../relay/client";
-import { sendFile, sendPdfReply, sendTextReply } from "../relay/display";
+import { sendFile, sendPdfReply } from "../relay/display";
+import { getMessageBus } from "../messaging";
+
+/**
+ * Build a minimal grammy `Message`-shaped stub from a bus `messageId`. The
+ * watch display state only ever reads `.message_id` (for edits/deletes) and
+ * `.chat.id` (for delete targets) — so a stub is sufficient. Centralised here
+ * so phase-2 step-4 has one place to revisit if the bus ever returns a richer
+ * object.
+ */
+function busStubMessage(chatId: number, messageId: number): Message {
+  return { message_id: messageId, chat: { id: chatId } } as Message;
+}
 import { getRecentHistory } from "../sessions/history";
 import {
   globalEventBus,
@@ -439,22 +451,23 @@ export function isWatchingAny(chatId: number): boolean {
  * Called from index.ts when bridge-health flips back online.
  */
 export async function flushBridgeReconnectSummaries(
-  botApi: Api,
+  _botApi: Api,
 ): Promise<void> {
   for (const state of watches.values()) {
     const skipped = state.skippedWhileOffline ?? 0;
     if (skipped === 0) continue;
     state.skippedWhileOffline = 0;
     try {
-      await botApi.sendMessage(
-        state.chatId,
-        `⏸ <i>Skipped ${skipped} watch event${skipped === 1 ? "" : "s"} while bridge was offline. Scroll the desktop JSONL for full history.</i>`,
-        {
-          parse_mode: "HTML",
-          message_thread_id: state.threadId,
-          disable_notification: true,
-        },
-      );
+      const res = await getMessageBus().send({
+        chatId: state.chatId,
+        threadId: state.threadId,
+        content: `⏸ <i>Skipped ${skipped} watch event${skipped === 1 ? "" : "s"} while bridge was offline. Scroll the desktop JSONL for full history.</i>`,
+        format: "html",
+        silent: true,
+      });
+      if ("dropped" in res) {
+        warn(`watch: flush reconnect summary dropped: ${res.dropped}`);
+      }
     } catch (err) {
       warn(`watch: flush reconnect summary failed: ${err}`);
     }
@@ -644,12 +657,13 @@ export function notifySessionOffline(botApi: Api, sessionName: string): void {
       setActiveSession(state.sessionName);
     }
 
-    botApi
-      .sendMessage(
+    getMessageBus()
+      .send({
         chatId,
-        `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
-        { parse_mode: "HTML", message_thread_id: threadId },
-      )
+        threadId,
+        content: `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
+        format: "html",
+      })
       .catch((err) => warn(`watch offline notify: ${err}`));
 
     warn("watch: session went offline", {
@@ -764,12 +778,13 @@ function setupIdDriftDetection(botApi: Api, watchState: WatchState): void {
       suppressedNotice: wasSpawnSeed,
     });
     if (wasSpawnSeed) return;
-    botApi
-      .sendMessage(
+    getMessageBus()
+      .send({
         chatId,
-        `🔄 <b>${escapeHtml(sessionName)}</b> started a new conversation.`,
-        { parse_mode: "HTML", message_thread_id: watchState.threadId },
-      )
+        threadId: watchState.threadId,
+        content: `🔄 <b>${escapeHtml(sessionName)}</b> started a new conversation.`,
+        format: "html",
+      })
       .catch(() => {});
   }, intervalMs);
 }
@@ -844,9 +859,12 @@ export function setupCrossPostSubscription(
           : "🖥 Terminal";
     const preview =
       evt.content.length > 300 ? evt.content.slice(0, 300) + "…" : evt.content;
-    botApi
-      .sendMessage(chatId, `${prefix}: ${preview}`, {
-        message_thread_id: threadId,
+    getMessageBus()
+      .send({
+        chatId,
+        threadId,
+        content: `${prefix}: ${preview}`,
+        format: "plain",
       })
       .catch(() => {});
   });
@@ -1020,8 +1038,9 @@ export async function startAutoWatch(
           .then(markDelivered)
           .catch(() => {});
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text, tid)
-          .then(markDelivered)
+        getMessageBus()
+          .send({ chatId, threadId: tid, content: msg.text, format: "auto" })
+          .then((r) => markDelivered("messageId" in r))
           .catch(() => {});
       }
 
@@ -1036,12 +1055,14 @@ export async function startAutoWatch(
     relayClient.onReply(onReply, scopeChatId);
     watchState.relayCleanup = () => relayClient.offReply(onReply);
   } else {
-    sendTextReply(
-      botApi,
-      chatId,
-      `👁 Watching output only — no relay connection for ${sessionName}. Claude's responses will appear here but messages you send won't reach Claude until the relay reconnects.`,
-      threadId,
-    );
+    getMessageBus()
+      .send({
+        chatId,
+        threadId,
+        content: `👁 Watching output only — no relay connection for ${sessionName}. Claude's responses will appear here but messages you send won't reach Claude until the relay reconnects.`,
+        format: "auto",
+      })
+      .catch(() => {});
   }
 
   info("auto-watch: started", {
@@ -1271,8 +1292,9 @@ export async function startWatchingSession(
           .then(markDelivered)
           .catch(() => {});
       } else if (msg.text) {
-        sendTextReply(botApi, chatId, msg.text, tid)
-          .then(markDelivered)
+        getMessageBus()
+          .send({ chatId, threadId: tid, content: msg.text, format: "auto" })
+          .then((r) => markDelivered("messageId" in r))
           .catch(() => {});
       }
 
@@ -1497,10 +1519,13 @@ export async function maybeNotifyContextCrossing(
 
   state.lastNotifiedBucket = bucket;
 
-  await botApi
-    .sendMessage(state.chatId, `⚠️ Context ${pct}%`, {
-      message_thread_id: state.threadId,
-      disable_notification: true,
+  await getMessageBus()
+    .send({
+      chatId: state.chatId,
+      threadId: state.threadId,
+      content: `⚠️ Context ${pct}%`,
+      format: "plain",
+      silent: true,
     })
     .catch((err) => warn(`context notify: ${err}`));
 }
@@ -1533,7 +1558,7 @@ export function handleTailEvent(
 
   const { chatId } = state;
   const threadOpts = threadId ? { message_thread_id: threadId } : {};
-  const silent = { disable_notification: true } as const;
+  const bus = getMessageBus();
 
   // Watchdog bookkeeping: every event resets the idle clock. Mid-turn flag
   // tracks whether Claude owes the user a continuation. Cleared by the same
@@ -1584,15 +1609,19 @@ export function handleTailEvent(
         event.content.length > 300
           ? event.content.slice(0, 300) + "..."
           : event.content;
-      botApi
-        .sendMessage(chatId, `🧠 <i>${escapeHtml(preview)}</i>`, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...silent,
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: `🧠 <i>${escapeHtml(preview)}</i>`,
+          format: "html",
+          silent: true,
         })
-        .then((msg) => {
-          state.currentToolMsg = msg;
-          trackProgress(msg);
+        .then((r) => {
+          if (!("messageId" in r)) return;
+          const stub = busStubMessage(chatId, r.messageId);
+          state.currentToolMsg = stub;
+          trackProgress(stub);
         })
         .catch((err) => debug(`tail thinking: ${err}`));
       break;
@@ -1618,6 +1647,7 @@ export function handleTailEvent(
       // killed the visible activity feedback in Telegram topics.)
 
       if (state.currentToolMsg) {
+        // TODO(phase-2 delete): bus doesn't own deletions.
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
           .catch(() => {});
@@ -1627,15 +1657,19 @@ export function handleTailEvent(
         finalizeTextMessage(botApi, state);
       }
 
-      botApi
-        .sendMessage(chatId, event.content, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...silent,
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: event.content,
+          format: "html",
+          silent: true,
         })
-        .then((msg) => {
-          state.currentToolMsg = msg;
-          trackProgress(msg);
+        .then((r) => {
+          if (!("messageId" in r)) return;
+          const stub = busStubMessage(chatId, r.messageId);
+          state.currentToolMsg = stub;
+          trackProgress(stub);
         })
         .catch((err) => debug(`tail tool: ${err}`));
       break;
@@ -1644,6 +1678,7 @@ export function handleTailEvent(
     case "ask_user_question": {
       // User still answers at the desktop's native picker; this is observe-only.
       if (state.currentToolMsg) {
+        // TODO(phase-2 delete): bus doesn't own deletions.
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
           .catch(() => {});
@@ -1653,15 +1688,19 @@ export function handleTailEvent(
         finalizeTextMessage(botApi, state);
       }
       const html = formatAskUserQuestion(event.questions ?? []);
-      botApi
-        .sendMessage(chatId, html, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...silent,
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: html,
+          format: "html",
+          silent: true,
         })
-        .then((msg) => {
-          state.currentToolMsg = msg;
-          trackProgress(msg);
+        .then((r) => {
+          if (!("messageId" in r)) return;
+          const stub = busStubMessage(chatId, r.messageId);
+          state.currentToolMsg = stub;
+          trackProgress(stub);
         })
         .catch((err) => debug(`tail ask_user_question: ${err}`));
       break;
@@ -1684,6 +1723,7 @@ export function handleTailEvent(
       // cycle it out the same way. Tracking as currentToolMsg + adding to
       // progressMessages keeps it in the rolling-status chain.
       if (state.currentToolMsg) {
+        // TODO(phase-2 delete): bus doesn't own deletions.
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
           .catch(() => {});
@@ -1695,15 +1735,19 @@ export function handleTailEvent(
         event.content,
         Boolean(event.isError),
       );
-      botApi
-        .sendMessage(chatId, summary, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...silent,
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: summary,
+          format: "html",
+          silent: true,
         })
-        .then((msg) => {
-          state.currentToolMsg = msg;
-          trackProgress(msg);
+        .then((r) => {
+          if (!("messageId" in r)) return;
+          const stub = busStubMessage(chatId, r.messageId);
+          state.currentToolMsg = stub;
+          trackProgress(stub);
         })
         .catch((err) => debug(`tail tool_result: ${err}`));
       break;
@@ -1727,8 +1771,14 @@ export function handleTailEvent(
         bypassPermissions: "Bypass permissions on",
       };
       const label = labels[mode] ?? `${mode} mode`;
-      botApi
-        .sendMessage(chatId, `⚙ ${label}`, { ...threadOpts, ...silent })
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: `⚙ ${label}`,
+          format: "plain",
+          silent: true,
+        })
         .catch((err) => debug(`tail permission_mode: ${err}`));
       break;
     }
@@ -1743,11 +1793,13 @@ export function handleTailEvent(
       const trail = h.firstError
         ? `: ${escapeHtml(h.firstError.slice(0, 200))}`
         : "";
-      botApi
-        .sendMessage(chatId, `🪝 stop hook${tag} ${verb}${trail}`, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...(h.preventedContinuation ? {} : silent),
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: `🪝 stop hook${tag} ${verb}${trail}`,
+          format: "html",
+          silent: !h.preventedContinuation,
         })
         .catch((err) => debug(`tail hook_summary: ${err}`));
       firePendingRunCompletion(botApi, state, threadOpts.message_thread_id);
@@ -1756,6 +1808,7 @@ export function handleTailEvent(
 
     case "text": {
       if (state.currentToolMsg) {
+        // TODO(phase-2 delete): bus doesn't own deletions.
         botApi
           .deleteMessage(chatId, state.currentToolMsg.message_id)
           .catch(() => {});
@@ -1773,33 +1826,40 @@ export function handleTailEvent(
         state.currentTextContent.length > TELEGRAM_SAFE_LIMIT
           ? state.currentTextContent.slice(0, TELEGRAM_SAFE_LIMIT) + "..."
           : state.currentTextContent;
-      const formatted = convertMarkdownToHtml(display);
+      // Bus owns markdown→HTML conversion when given format="auto" — pass the
+      // raw display text so bus.edit gets the same source string and the
+      // edit-while-streaming math stays consistent.
+      const rawDisplay = display;
 
       if (!state.currentTextMsg) {
-        botApi
-          .sendMessage(chatId, formatted, {
-            parse_mode: "HTML",
-            ...threadOpts,
-            ...silent,
+        bus
+          .send({
+            chatId,
+            threadId,
+            content: rawDisplay,
+            format: "auto",
+            silent: true,
           })
-          .then((msg) => {
-            state.currentTextMsg = msg;
-            trackProgress(msg);
+          .then((r) => {
+            if (!("messageId" in r)) {
+              debug(`tail text create dropped: ${(r as any).dropped}`);
+              return;
+            }
+            const stub = busStubMessage(chatId, r.messageId);
+            state.currentTextMsg = stub;
+            trackProgress(stub);
           })
-          .catch((err) => {
-            debug(`tail text create: ${err}`);
-            botApi
-              .sendMessage(chatId, display, { ...threadOpts, ...silent })
-              .then((msg) => {
-                state.currentTextMsg = msg;
-                trackProgress(msg);
-              })
-              .catch(() => {});
-          });
+          .catch((err) => debug(`tail text create: ${err}`));
       } else {
-        botApi
-          .editMessageText(chatId, state.currentTextMsg.message_id, formatted, {
-            parse_mode: "HTML",
+        bus
+          .edit(state.currentTextMsg.message_id, {
+            chatId,
+            threadId,
+            content: rawDisplay,
+            format: "auto",
+          })
+          .then((r) => {
+            if (!r.ok) debug(`tail text edit not ok: ${r.reason}`);
           })
           .catch((err) => debug(`tail text edit: ${err}`));
       }
@@ -1814,12 +1874,14 @@ export function handleTailEvent(
       if (isForeignOrigin) {
         // TCP fast path delivered to the origin surface (e.g. chat_id=web),
         // not to this Telegram chat. Fan the reply here.
-        sendTextReply(
-          botApi,
-          chatId,
-          event.content,
-          threadOpts.message_thread_id,
-        );
+        bus
+          .send({
+            chatId,
+            threadId: threadOpts.message_thread_id,
+            content: event.content,
+            format: "auto",
+          })
+          .catch(() => {});
       } else if (state.suppressRelayReplyText) {
         // Own-origin and TCP's onReply already fired. Reset the flag, don't
         // duplicate.
@@ -1827,12 +1889,14 @@ export function handleTailEvent(
       } else {
         // Own-origin but TCP didn't deliver (failure or race). Tailer is the
         // fallback so the Telegram topic still sees the reply.
-        sendTextReply(
-          botApi,
-          chatId,
-          event.content,
-          threadOpts.message_thread_id,
-        );
+        bus
+          .send({
+            chatId,
+            threadId: threadOpts.message_thread_id,
+            content: event.content,
+            format: "auto",
+          })
+          .catch(() => {});
       }
 
       firePendingRunCompletion(botApi, state, threadOpts.message_thread_id);
@@ -1878,11 +1942,13 @@ export function handleTailEvent(
       const taskCard = formatTaskNotification(event.content);
       if (taskCard) {
         resetDisplaySegment(botApi, state);
-        botApi
-          .sendMessage(chatId, taskCard, {
-            parse_mode: "HTML",
-            ...threadOpts,
-            ...silent,
+        bus
+          .send({
+            chatId,
+            threadId,
+            content: taskCard,
+            format: "html",
+            silent: true,
           })
           .catch(() => {});
         break;
@@ -1917,25 +1983,18 @@ export function handleTailEvent(
       // Foreign Telegram chat — direct send with cross-chat label.
       const preview =
         content.length > 300 ? content.slice(0, 300) + "…" : content;
-      const formatted = convertMarkdownToHtml(preview);
       const labelHtml = `💬 <b>Chat ${escapeHtml(event.originChat)}:</b>`;
-      const labelPlain = `💬 Chat ${event.originChat}:`;
 
-      botApi
-        .sendMessage(chatId, `${labelHtml}\n${formatted}`, {
-          parse_mode: "HTML",
-          ...threadOpts,
-          ...silent,
+      // Bus owns markdown→HTML for `preview` (format="auto") and plain-fallback.
+      bus
+        .send({
+          chatId,
+          threadId,
+          content: `${labelHtml}\n${preview}`,
+          format: "auto",
+          silent: true,
         })
-        .catch((err) => {
-          debug(`tail user: ${err}`);
-          botApi
-            .sendMessage(chatId, `${labelPlain}\n${preview}`, {
-              ...threadOpts,
-              ...silent,
-            })
-            .catch(() => {});
-        });
+        .catch((err) => debug(`tail user: ${err}`));
       break;
     }
 
@@ -1951,7 +2010,7 @@ export function handleTailEvent(
  * pendingRunCompletion field. No-op for non-WatchState (relay display).
  */
 function firePendingRunCompletion(
-  botApi: Api,
+  _botApi: Api,
   state: TailDisplayState,
   threadId: number | undefined,
 ): void {
@@ -1962,10 +2021,12 @@ function firePendingRunCompletion(
   const elapsedLabel = formatRunElapsedLabel(Date.now() - pending.startedAt);
   const message = `✅ /run done in ${elapsedLabel}\n<i>${escapeHtml(truncate(pending.prompt, 60))}</i>`;
 
-  botApi
-    .sendMessage(state.chatId, message, {
-      parse_mode: "HTML",
-      message_thread_id: threadId,
+  getMessageBus()
+    .send({
+      chatId: state.chatId,
+      threadId,
+      content: message,
+      format: "html",
     })
     .catch((err) => debug(`run completion ping: ${err}`));
 }
@@ -2028,7 +2089,7 @@ export function _handleIdleWatchForTests(botApi: Api, state: WatchState): void {
   handleIdleWatch(botApi, state);
 }
 
-function handleIdleWatch(botApi: Api, state: WatchState): void {
+function handleIdleWatch(_botApi: Api, state: WatchState): void {
   const idleMin = Math.round((Date.now() - state.lastEventTime) / 60_000);
   const lastText = state.currentTextContent.trim().slice(0, 200);
   const tailQuote = lastText
@@ -2055,21 +2116,24 @@ function handleIdleWatch(botApi: Api, state: WatchState): void {
         const msg = ok
           ? `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-sent "continue".${tailQuote}`
           : `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b> — auto-continue failed (relay unavailable).${tailQuote}`;
-        return botApi.sendMessage(state.chatId, msg, {
-          parse_mode: "HTML",
-          message_thread_id: state.threadId,
+        return getMessageBus().send({
+          chatId: state.chatId,
+          threadId: state.threadId,
+          content: msg,
+          format: "html",
         });
       })
       .catch((err) => debug(`watchdog auto-continue: ${err}`));
     return;
   }
 
-  botApi
-    .sendMessage(
-      state.chatId,
-      `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b>${tailQuote}`,
-      { parse_mode: "HTML", message_thread_id: state.threadId },
-    )
+  getMessageBus()
+    .send({
+      chatId: state.chatId,
+      threadId: state.threadId,
+      content: `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b>${tailQuote}`,
+      format: "html",
+    })
     .catch((err) => debug(`watchdog notify: ${err}`));
 }
 
@@ -2079,6 +2143,7 @@ function resetDisplaySegment(botApi: Api, state: TailDisplayState): void {
     finalizeTextMessage(botApi, state);
   }
   if (state.currentToolMsg) {
+    // TODO(phase-2 delete): bus doesn't own deletions.
     botApi
       .deleteMessage(state.chatId, state.currentToolMsg.message_id)
       .catch(() => {});
@@ -2090,20 +2155,26 @@ function resetDisplaySegment(botApi: Api, state: TailDisplayState): void {
 }
 
 export function finalizeTextMessage(
-  botApi: Api,
+  _botApi: Api,
   state: TailDisplayState,
 ): void {
   if (!state.currentTextMsg || !state.currentTextContent) return;
 
+  // Bus owns markdown→HTML; pre-check the formatted length only to skip the
+  // overflow case (matching prior behaviour). Bus handles chunking on send
+  // but edits target a single message, so a too-long final string is just
+  // skipped here — the prior segment edits already showed a truncated view.
   const formatted = convertMarkdownToHtml(state.currentTextContent);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    botApi
-      .editMessageText(
-        state.chatId,
-        state.currentTextMsg.message_id,
-        formatted,
-        { parse_mode: "HTML" },
-      )
+    getMessageBus()
+      .edit(state.currentTextMsg.message_id, {
+        chatId: state.chatId,
+        content: state.currentTextContent,
+        format: "auto",
+      })
+      .then((r) => {
+        if (!r.ok) debug(`tail finalize edit not ok: ${r.reason}`);
+      })
       .catch((err) => debug(`tail finalize: ${err}`));
   }
 

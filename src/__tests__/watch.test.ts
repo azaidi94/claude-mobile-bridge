@@ -64,6 +64,63 @@ mock.module("../settings", () => ({
   getContextNotifyStep: () => _settingsState.contextNotifyStep,
 }));
 
+// ---------------------------------------------------------------------------
+// Bus mock — phase-2 step-4 routes watch sends through getMessageBus().send.
+// Tests assert on a `sent[]` array populated by both `api.sendMessage` (legacy
+// path, e.g. typing actions or tests that still inject directly) and the bus.
+// `_setBusSink` is called by each describe's `makeMockApi` helper so the bus
+// mock pushes into that test's local `sent[]`.
+// ---------------------------------------------------------------------------
+type _BusSink = Array<{
+  chatId: number | string;
+  text: string;
+  opts?: unknown;
+}>;
+let _currentBusSink: _BusSink | null = null;
+function _setBusSink(sink: _BusSink): void {
+  _currentBusSink = sink;
+}
+let _busMessageIdCounter = 50_000;
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: (m: {
+      chatId: number;
+      threadId?: number;
+      content: string;
+      format?: string;
+      silent?: boolean;
+    }) => {
+      const opts: Record<string, unknown> = {};
+      if (m.format === "html") opts.parse_mode = "HTML";
+      else if (m.format === "markdown") opts.parse_mode = "MarkdownV2";
+      if (m.threadId !== undefined) opts.message_thread_id = m.threadId;
+      if (m.silent) opts.disable_notification = true;
+      _currentBusSink?.push({ chatId: m.chatId, text: m.content, opts });
+      return Promise.resolve({ messageId: ++_busMessageIdCounter });
+    },
+    edit: (
+      messageId: number,
+      m: {
+        chatId: number;
+        threadId?: number;
+        content: string;
+        format?: string;
+      },
+    ) => {
+      const opts: Record<string, unknown> = {};
+      if (m.format === "html") opts.parse_mode = "HTML";
+      if (m.threadId !== undefined) opts.message_thread_id = m.threadId;
+      // Edits don't show up in `sent[]` assertions historically (they targeted
+      // editMessageText, not sendMessage). Skip pushing to keep counts stable.
+      void messageId;
+      void opts;
+      return Promise.resolve({ ok: true as const });
+    },
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({ send: () => Promise.resolve({ messageId: 0 }) }),
+}));
+
 // Import directly from source to avoid barrel export issues
 import {
   formatStatusMessage,
@@ -309,6 +366,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
       text: string;
       opts?: unknown;
     }> = [];
+    _setBusSink(sent);
     const api = {
       sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
         sent.push({ chatId, text, opts });
@@ -524,6 +582,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
       text: string;
       opts?: unknown;
     }> = [];
+    _setBusSink(sent);
     const api = {
       sendMessage: (chatId: number | string, text: string, opts?: unknown) => {
         sent.push({ chatId, text, opts });
@@ -619,6 +678,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
 describe("watch: handleTailEvent tool_result", () => {
   function makeMockApi() {
     const sent: Array<{ chatId: number | string; text: string }> = [];
+    _setBusSink(sent as _BusSink);
     const api = {
       sendMessage: (chatId: number | string, text: string) => {
         sent.push({ chatId, text });
@@ -734,6 +794,7 @@ describe("watch: handleTailEvent tool_result", () => {
 describe("watch: handleTailEvent permission_mode", () => {
   function makeMockApi() {
     const sent: Array<{ chatId: number | string; text: string }> = [];
+    _setBusSink(sent as _BusSink);
     const api = {
       sendMessage: (chatId: number | string, text: string) => {
         sent.push({ chatId, text });
@@ -849,6 +910,7 @@ describe("watch: handleTailEvent permission_mode", () => {
 describe("watch: handleTailEvent hook_summary", () => {
   function makeMockApi() {
     const sent: Array<{ chatId: number | string; text: string }> = [];
+    _setBusSink(sent as _BusSink);
     const api = {
       sendMessage: (chatId: number | string, text: string) => {
         sent.push({ chatId, text });
@@ -912,6 +974,7 @@ describe("context notify", () => {
       text: string;
       opts?: unknown;
     }> = [];
+    _setBusSink(sent);
     const api = {
       sendMessage: mock(
         (chatId: number | string, text: string, opts?: unknown) => {
@@ -1061,6 +1124,7 @@ describe("watch: handleTailEvent liveness typing", () => {
 
   function makeMockApi() {
     const chatActions: Array<{ chatId: number; threadId?: number }> = [];
+    _setBusSink([]); // typing tests don't assert on sent text
     const api = {
       sendMessage: () => Promise.resolve({ message_id: 1 }),
       deleteMessage: () => Promise.resolve(true),
@@ -1301,6 +1365,7 @@ describe("watch: handleIdleWatch (notify-only branch)", () => {
     const mod = await import("../handlers/watch");
     const sent: Array<{ chatId: number | string; text: string; opts?: any }> =
       [];
+    _setBusSink(sent as _BusSink);
     const api = {
       sendMessage: (chatId: number | string, text: string, opts?: any) => {
         sent.push({ chatId, text, opts });
@@ -1320,6 +1385,7 @@ describe("watch: handleIdleWatch (notify-only branch)", () => {
   test("omits the last-said quote when no buffered text is present", async () => {
     const mod = await import("../handlers/watch");
     const sent: Array<{ text: string }> = [];
+    _setBusSink(sent as _BusSink);
     const api = {
       sendMessage: (_c: any, text: string) => {
         sent.push({ text });
@@ -1361,6 +1427,7 @@ describe("watch: handleTailEvent ask_user_question render", () => {
       text: string;
       opts?: any;
     }> = [];
+    _setBusSink(sent);
     const deleted: Array<{ chatId: number | string; messageId: number }> = [];
     const api = {
       sendMessage: (chatId: number | string, text: string, opts?: any) => {
@@ -1449,16 +1516,12 @@ describe("cross-post subscription", () => {
     const { SessionEventBus } = await import("../web/sse");
     const { setupCrossPostSubscription } = await import("../handlers/watch");
     const bus = new SessionEventBus();
-    const calls: Array<[number, string, unknown]> = [];
-    const mockSendMessage = mock(
-      (chatId: number, text: string, opts: unknown) => {
-        calls.push([chatId, text, opts]);
-        return Promise.resolve({ message_id: 1 });
-      },
-    );
+    const sink: _BusSink = [];
+    _setBusSink(sink);
     const mockApi = {
-      sendMessage: mockSendMessage,
+      sendMessage: () => Promise.resolve({ message_id: 1 }),
     } as unknown as import("grammy").Api;
+    const calls = sink;
 
     const fakeWatchState = {
       chatId: 100,
@@ -1474,9 +1537,9 @@ describe("cross-post subscription", () => {
       content: "hello from web",
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]![0]).toBe(100);
-    expect(calls[0]![1]).toContain("hello from web");
-    expect(calls[0]![2]).toMatchObject({ message_thread_id: 42 });
+    expect(calls[0]!.chatId).toBe(100);
+    expect(calls[0]!.text).toContain("hello from web");
+    expect(calls[0]!.opts).toMatchObject({ message_thread_id: 42 });
 
     calls.length = 0;
     bus.emit("my-session", {
@@ -1497,12 +1560,10 @@ describe("cross-post subscription", () => {
     const { SessionEventBus } = await import("../web/sse");
     const { setupCrossPostSubscription } = await import("../handlers/watch");
     const bus = new SessionEventBus();
-    const calls: Array<[number, string, unknown]> = [];
+    const calls: _BusSink = [];
+    _setBusSink(calls);
     const mockApi = {
-      sendMessage: (chatId: number, text: string, opts: unknown) => {
-        calls.push([chatId, text, opts]);
-        return Promise.resolve({ message_id: 1 });
-      },
+      sendMessage: () => Promise.resolve({ message_id: 1 }),
     } as unknown as import("grammy").Api;
 
     const fakeWatchState = {
@@ -1536,12 +1597,10 @@ describe("cross-post subscription", () => {
     const { SessionEventBus } = await import("../web/sse");
     const { setupCrossPostSubscription } = await import("../handlers/watch");
     const bus = new SessionEventBus();
-    const calls: Array<[number, string, unknown]> = [];
+    const calls: _BusSink = [];
+    _setBusSink(calls);
     const mockApi = {
-      sendMessage: (chatId: number, text: string, opts: unknown) => {
-        calls.push([chatId, text, opts]);
-        return Promise.resolve({ message_id: 1 });
-      },
+      sendMessage: () => Promise.resolve({ message_id: 1 }),
     } as unknown as import("grammy").Api;
 
     const fakeWatchState = {
@@ -1560,7 +1619,7 @@ describe("cross-post subscription", () => {
     });
 
     expect(calls).toHaveLength(1);
-    const sentText = calls[0]![1] as string;
+    const sentText = calls[0]!.text;
     expect(sentText.length).toBeLessThan(400);
     expect(sentText.endsWith("…")).toBe(true);
 

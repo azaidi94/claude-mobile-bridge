@@ -13,10 +13,9 @@ import type {
   RelayReact,
 } from "./client";
 import type { TailDisplayState } from "../handlers/watch";
-import { convertMarkdownToHtml } from "../formatting";
 import { convertMarkdownToPdf } from "../lib/convert-pdf";
-import { TELEGRAM_SAFE_LIMIT } from "../config";
 import { debug, info, warn } from "../logger";
+import { getMessageBus } from "../messaging";
 
 export interface RelayDisplayState extends TailDisplayState {
   progressMessages: import("grammy/types").Message[];
@@ -45,6 +44,7 @@ export function cleanupProgressMessages(
   botApi: Api,
   state: RelayDisplayState,
 ): void {
+  // TODO(phase-2 delete): bus doesn't own deletions yet.
   for (const msg of state.progressMessages) {
     botApi.deleteMessage(state.chatId, msg.message_id).catch(() => {});
   }
@@ -78,7 +78,14 @@ export function wireRelayDisplay(
       if (msg.send_as_pdf) {
         sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
       } else {
-        sendTextReply(botApi, chatId, msg.text, tid);
+        getMessageBus()
+          .send({
+            chatId,
+            threadId: tid,
+            content: msg.text,
+            format: "auto",
+          })
+          .catch((err) => warn(`relay onReply send: ${err}`));
       }
     }
 
@@ -96,9 +103,16 @@ export function wireRelayDisplay(
     const messageId = Number(msg.message_id);
     if (!messageId) return;
 
-    const formatted = convertMarkdownToHtml(msg.text);
-    botApi
-      .editMessageText(chatId, messageId, formatted, { parse_mode: "HTML" })
+    getMessageBus()
+      .edit(messageId, {
+        chatId,
+        threadId: tid,
+        content: msg.text,
+        format: "auto",
+      })
+      .then((r) => {
+        if (!r.ok) debug(`relay edit not ok: ${r.reason}`);
+      })
       .catch((err) => debug(`relay edit: ${err}`));
   };
 
@@ -156,7 +170,13 @@ export async function sendPdfReply(
     }
   } catch (err) {
     warn(`pdf convert: ${err}`);
-    return sendTextReply(botApi, chatId, text, threadId);
+    const res = await getMessageBus().send({
+      chatId,
+      threadId,
+      content: text,
+      format: "auto",
+    });
+    return "messageId" in res;
   }
 }
 
@@ -178,111 +198,6 @@ function deriveFilenameFromMarkdown(text: string): string {
     if (slug) return `${slug}.pdf`;
   }
   return "response.pdf";
-}
-
-async function sendHtmlWithPlainFallback(
-  botApi: Api,
-  chatId: number,
-  html: string,
-  plain: string,
-  threadId: number | undefined,
-  label: string,
-): Promise<boolean> {
-  // Returns true iff Telegram acknowledged the send. Callers (notably the
-  // watch.ts onReply hook) gate `suppressRelayReplyText` on this so the
-  // JSONL-tailer fallback can rescue us when the TCP fast-path fails silently
-  // — previously the suppress flag was set unconditionally before the send
-  // resolved, locking out the fallback even when the message never reached TG.
-  try {
-    const msg = await botApi.sendMessage(chatId, html, {
-      parse_mode: "HTML",
-      message_thread_id: threadId,
-    });
-    info(`relay sendTextReply ${label}(HTML) ok`, {
-      chatId,
-      threadId,
-      messageId: msg.message_id,
-      textLen: plain.length,
-    });
-    return true;
-  } catch (err) {
-    warn(`relay sendTextReply ${label}(HTML) failed: ${err}`, {
-      chatId,
-      threadId,
-    });
-    try {
-      const msg = await botApi.sendMessage(chatId, plain, {
-        message_thread_id: threadId,
-      });
-      info(`relay sendTextReply ${label}(plain) ok`, {
-        chatId,
-        threadId,
-        messageId: msg.message_id,
-        textLen: plain.length,
-      });
-      return true;
-    } catch (err2) {
-      warn(`relay sendTextReply ${label}(plain) failed: ${err2}`, {
-        chatId,
-        threadId,
-      });
-      return false;
-    }
-  }
-}
-
-export async function sendTextReply(
-  botApi: Api,
-  chatId: number,
-  text: string,
-  threadId?: number,
-): Promise<boolean> {
-  if (!text || !text.trim()) {
-    warn("relay: sendTextReply called with empty text", { chatId, threadId });
-    return false;
-  }
-  const formatted = convertMarkdownToHtml(text);
-  if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    return sendHtmlWithPlainFallback(
-      botApi,
-      chatId,
-      formatted,
-      text,
-      threadId,
-      "",
-    );
-  }
-  // Chunked send: succeed iff every chunk succeeded. Send in parallel because
-  // chunk ordering at TG is determined by API arrival order; serializing would
-  // make the user wait N× the latency for a long message.
-  const results = await Promise.all(
-    splitMessage(text).map((chunk) =>
-      sendHtmlWithPlainFallback(
-        botApi,
-        chatId,
-        convertMarkdownToHtml(chunk),
-        chunk,
-        threadId,
-        "chunk ",
-      ),
-    ),
-  );
-  return results.every(Boolean);
-}
-
-function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > limit) {
-    const para = rest.lastIndexOf("\n\n", limit);
-    const line = rest.lastIndexOf("\n", limit);
-    const cut = para > limit / 2 ? para : line > limit / 2 ? line : limit;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n+/, "");
-  }
-  if (rest) chunks.push(rest);
-  return chunks;
 }
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
