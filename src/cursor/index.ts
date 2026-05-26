@@ -9,6 +9,7 @@ import { addCursorSession, removeSession, getSessions } from "../sessions";
 import { scanPortFiles } from "../relay/discovery";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { TELEGRAM_SAFE_LIMIT } from "../config";
+import { getMessageBus } from "../messaging";
 import { basename } from "path";
 
 const CURSOR_CDP_PORT = Number(process.env.CURSOR_CDP_PORT ?? 9222);
@@ -242,10 +243,19 @@ async function wireCrossPost(
         if (html.length > TELEGRAM_SAFE_LIMIT) {
           html = html.slice(0, TELEGRAM_SAFE_LIMIT) + "…";
         }
-        fwd.api
-          .sendMessage(fwd.chatId, html, {
-            parse_mode: "HTML",
-            message_thread_id: currentTopic.topicId,
+        void getMessageBus()
+          .send({
+            chatId: fwd.chatId,
+            threadId: currentTopic.topicId,
+            content: html,
+            format: "html",
+          })
+          .then((res) => {
+            if ("dropped" in res) {
+              warn(
+                `cursor-bridge: cross-post dropped for "${sessionName}": ${res.dropped}`,
+              );
+            }
           })
           .catch(() => {});
       });
