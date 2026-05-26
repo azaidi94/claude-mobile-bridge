@@ -13,6 +13,18 @@ import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import type { SessionState } from "../sessions/session-state";
 import { debug, error as logError, info } from "../logger";
+import { getMessageBus } from "../messaging";
+
+function busReply(ctx: Context, content: string): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: ctx.message?.message_thread_id,
+    content,
+    format: "plain",
+  });
+}
 
 /**
  * Configuration for a media group handler.
@@ -75,18 +87,17 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
 
     // Update status message
     if (group.statusMsg) {
-      try {
-        await group.ctx.api.editMessageText(
-          group.statusMsg.chat.id,
-          group.statusMsg.message_id,
-          `${config.emoji} Processing ${group.items.length} ${config.itemLabelPlural}...`,
-        );
-      } catch (error) {
+      const editRes = await getMessageBus().edit(group.statusMsg.message_id, {
+        chatId: group.statusMsg.chat.id,
+        content: `${config.emoji} Processing ${group.items.length} ${config.itemLabelPlural}...`,
+        format: "plain",
+      });
+      if (!editRes.ok) {
         debug("media-group: failed to update status message", {
           groupId,
           chatId: group.statusMsg.chat.id,
           messageId: group.statusMsg.message_id,
-          err: String(error),
+          reason: editRes.reason,
         });
       }
     }
@@ -136,7 +147,8 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       const [allowed, retryAfter] = rateLimiter.check(userId);
       if (!allowed) {
         await auditLogRateLimit(userId, username, retryAfter!);
-        await ctx.reply(
+        await busReply(
+          ctx,
           `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
         );
         return false;
@@ -150,6 +162,9 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
         chatId: ctx.chat?.id,
         userId,
       });
+      // Status message; kept as ctx.reply so api.deleteMessage below can
+      // target the returned message_id. TODO(phase-2): refactor status-
+      // message lifecycle to use bus.send + bus.edit.
       const statusMsg = await ctx.reply(
         `${config.emoji} Receiving ${config.itemLabelPlural}...`,
       );
@@ -227,9 +242,9 @@ export async function handleProcessingError(
     // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
     const wasInterrupt = state ? state.consumeInterruptFlag() : false;
     if (!wasInterrupt) {
-      await ctx.reply("🛑 Query stopped.");
+      await busReply(ctx, "🛑 Query stopped.");
     }
   } else {
-    await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+    await busReply(ctx, `❌ Error: ${errorStr.slice(0, 200)}`);
   }
 }

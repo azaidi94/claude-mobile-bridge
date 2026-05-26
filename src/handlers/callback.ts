@@ -72,6 +72,31 @@ import {
   buildExecuteMenu,
 } from "./execute";
 import { handleAskRemoteCallback, handleBridgeCallback } from "./relay-ask";
+import { getMessageBus } from "../messaging";
+
+/**
+ * Bus-routed reply helper. ctx.editMessageText / ctx.answerCallbackQuery /
+ * ctx.editMessageReplyMarkup stay inline — they're TG callback-flow
+ * primitives that the bus doesn't model.
+ */
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: {
+    format?: "plain" | "html";
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: ctx.callbackQuery?.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
+  });
+}
 
 // Track pending plan feedback by chat ID (exported for text.ts)
 export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
@@ -117,7 +142,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
           ) => Promise<void>
         )(ctx, sctx);
       } else {
-        await ctx.reply("Session not found.");
+        await busReply(ctx, "Session not found.");
       }
       await ctx.answerCallbackQuery();
       return;
@@ -467,8 +492,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
       if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        await ctx.reply("📋 Revised plan ready. Review and approve?", {
-          reply_markup: keyboard,
+        await busReply(ctx, "📋 Revised plan ready. Review and approve?", {
+          replyMarkup: keyboard,
         });
       }
 
@@ -486,7 +511,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
         username,
         action,
       });
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
     } finally {
       typing.stop();
     }
@@ -531,7 +556,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
       try {
         if (!auqState) {
-          await ctx.reply("❌ Question expired — no session.");
+          await busReply(ctx, "❌ Question expired — no session.");
           return;
         }
         const response = await runQueryStreaming(auqState, {
@@ -551,7 +576,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
           username,
           requestId,
         });
-        await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+        await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
       } finally {
         typing.stop();
       }
@@ -618,7 +643,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
         try {
           const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
           if (!auqState) {
-            await ctx.reply("❌ Question expired — no session.");
+            await busReply(ctx, "❌ Question expired — no session.");
             return;
           }
           const response = await runQueryStreaming(auqState, {
@@ -643,7 +668,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
             }
 
             const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-            await ctx.reply("Review and approve?", { reply_markup: keyboard });
+            await busReply(ctx, "Review and approve?", {
+              replyMarkup: keyboard,
+            });
           }
         } catch (error) {
           logError("callback: ask-user answer failed", error, {
@@ -652,7 +679,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
             username,
             requestId,
           });
-          await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+          await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
         } finally {
           typing.stop();
         }
@@ -789,7 +816,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const legacyState =
     sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   if (!legacyState) {
-    await ctx.reply("❌ Cannot route answer — no session for this topic.");
+    await busReply(ctx, "❌ Cannot route answer — no session for this topic.");
     return;
   }
 
@@ -848,10 +875,10 @@ export async function handleCallback(ctx: Context): Promise<void> {
       // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
       const wasInterrupt = legacyState.consumeInterruptFlag();
       if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
+        await busReply(ctx, "🛑 Query stopped.");
       }
     } else {
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
     }
   } finally {
     typing.stop();

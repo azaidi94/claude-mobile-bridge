@@ -142,6 +142,50 @@ mock.module("../utils", () => ({
   checkInterrupt: mock((msg: string) => Promise.resolve(msg)),
 }));
 
+// Bus mock — pushes into a per-test sink mirroring ctx._replies shape so
+// existing assertions catch bus-routed replies too.
+let busSendSink: Array<{ text: string; options?: Record<string, unknown> }> =
+  [];
+const mockBusSend = mock(
+  async (msg: {
+    chatId: number;
+    threadId?: number;
+    content: string;
+    format?: string;
+    replyMarkup?: unknown;
+  }) => {
+    const options: Record<string, unknown> = {};
+    if (msg.format === "html") options.parse_mode = "HTML";
+    if (msg.threadId !== undefined) options.message_thread_id = msg.threadId;
+    if (msg.replyMarkup !== undefined) options.reply_markup = msg.replyMarkup;
+    busSendSink.push({ text: msg.content, options });
+    return { messageId: 12345 };
+  },
+);
+const mockBusEdit = mock(
+  async (
+    _messageId: number,
+    input: {
+      chatId: number;
+      content: string;
+      format?: string;
+      replyMarkup?: unknown;
+    },
+  ) => {
+    const options: Record<string, unknown> = {};
+    if (input.format === "html") options.parse_mode = "HTML";
+    if (input.replyMarkup !== undefined)
+      options.reply_markup = input.replyMarkup;
+    busSendSink.push({ text: input.content, options });
+    return { ok: true as const };
+  },
+);
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({ send: mockBusSend, edit: mockBusEdit }),
+  setMessageBus: mock(() => {}),
+  createMessageBus: mock(() => ({ send: mockBusSend, edit: mockBusEdit })),
+}));
+
 // Test helpers
 function createMockContext(
   overrides: Partial<{
@@ -162,6 +206,9 @@ function createMockContext(
 
   const replies: Array<{ text: string; options?: Record<string, unknown> }> =
     [];
+  // Route bus sends/edits into the same array so existing _replies-based
+  // assertions catch bus-routed messages too.
+  busSendSink = replies;
   const editedMessages: Array<{
     text: string;
     options?: Record<string, unknown>;

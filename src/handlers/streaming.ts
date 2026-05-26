@@ -23,6 +23,27 @@ import {
 } from "../config";
 import { isPathAllowed } from "../security";
 import { debug, warn, error, info } from "../logger";
+import { getMessageBus } from "../messaging";
+
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: {
+    format?: "plain" | "html";
+    threadId?: number;
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
+  });
+}
 
 /**
  * Image extensions that Telegram Bot API accepts via sendPhoto.
@@ -49,76 +70,79 @@ export async function sendFileToTelegram(
   // Security: validate path is within allowed directories
   if (!isPathAllowed(resolvedPath)) {
     warn(`send_file blocked: ${resolvedPath}`);
-    await ctx.reply(`⚠️ Cannot send file outside allowed directories.`, {
-      message_thread_id: threadId,
+    await busReply(ctx, `⚠️ Cannot send file outside allowed directories.`, {
+      threadId,
     });
     return;
   }
 
   const filename = basename(resolvedPath);
 
-  // Read file atomically via Bun.file() — avoids TOCTOU race
-  let fileBuffer: Buffer;
+  // Verify the file is readable and within Telegram's 50MB limit before
+  // handing it to the bus. The bus re-reads from disk to build the upload.
   try {
     const file = Bun.file(resolvedPath);
 
     if (!(await file.exists())) {
-      await ctx.reply(`⚠️ Could not read file: ${filename}`, {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, `⚠️ Could not read file: ${filename}`, { threadId });
       return;
     }
 
     const size = file.size;
 
     if (size === 0) {
-      await ctx.reply(`⚠️ File is empty: ${filename}`, {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, `⚠️ File is empty: ${filename}`, { threadId });
       return;
     }
     if (size > TELEGRAM_FILE_SIZE_LIMIT) {
       const sizeMB = (size / (1024 * 1024)).toFixed(1);
-      await ctx.reply(
+      await busReply(
+        ctx,
         `⚠️ File too large (${sizeMB} MB). Telegram limit is 50 MB.`,
-        { message_thread_id: threadId },
+        { threadId },
       );
       return;
     }
-
-    fileBuffer = Buffer.from(await file.arrayBuffer());
   } catch {
-    await ctx.reply(`⚠️ Could not read file: ${filename}`, {
-      message_thread_id: threadId,
-    });
+    await busReply(ctx, `⚠️ Could not read file: ${filename}`, { threadId });
     return;
   }
 
   const ext = extname(filename).toLowerCase();
   const isPhoto = PHOTO_EXTENSIONS.has(ext);
-  const inputFile = new InputFile(fileBuffer, filename);
 
   info(`send_file: ${filename} (${isPhoto ? "photo" : "document"})`);
 
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  const bus = getMessageBus();
+
   if (isPhoto) {
-    try {
-      await ctx.replyWithPhoto(inputFile, {
-        caption: filename,
-        message_thread_id: threadId,
-      });
-    } catch {
+    const photoRes = await bus.send({
+      chatId,
+      threadId,
+      content: filename,
+      format: "plain",
+      attachment: { kind: "photo", path: resolvedPath },
+    });
+    if ("dropped" in photoRes) {
       // Fall back to document if photo send fails (e.g. too large for photo API)
       debug(`photo fallback to document: ${filename}`);
-      const fallbackFile = new InputFile(fileBuffer, filename);
-      await ctx.replyWithDocument(fallbackFile, {
-        caption: filename,
-        message_thread_id: threadId,
+      await bus.send({
+        chatId,
+        threadId,
+        content: filename,
+        format: "plain",
+        attachment: { kind: "document", path: resolvedPath },
       });
     }
   } else {
-    await ctx.replyWithDocument(inputFile, {
-      caption: filename,
-      message_thread_id: threadId,
+    await bus.send({
+      chatId,
+      threadId,
+      content: filename,
+      format: "plain",
+      attachment: { kind: "document", path: resolvedPath },
     });
   }
 }
@@ -168,15 +192,17 @@ export async function sendPlanContent(
   content: string,
 ): Promise<void> {
   if (content.length > 4000) {
-    // Long plan - send as file
+    // Long plan - send as file. TODO(phase-2 attachments-from-buffer):
+    // bus.send's attachment kind takes a `path` on disk; in-memory buffers
+    // need a different shape.
     const buffer = Buffer.from(content, "utf-8");
     await ctx.replyWithDocument(new InputFile(buffer, "plan.md"), {
       caption: "📋 Plan ready for review",
     });
   } else {
-    // Short plan - send inline with markdown formatting
+    // Short plan - send inline with markdown formatting.
     const html = convertMarkdownToHtml(content);
-    await ctx.reply(`📋 <b>Plan:</b>\n\n${html}`, { parse_mode: "HTML" });
+    await busReply(ctx, `📋 <b>Plan:</b>\n\n${html}`, { format: "html" });
   }
 }
 
@@ -266,7 +292,10 @@ export async function checkPendingAskUserQuestionRequests(
     0,
     input.questions.length,
   );
-  await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+  await busReply(ctx, questionText, {
+    format: "html",
+    replyMarkup: keyboard,
+  });
 
   return true;
 }
@@ -298,7 +327,7 @@ export async function checkPendingAskUserRequests(
 
       if (options.length > 0 && requestId) {
         const keyboard = createAskUserKeyboard(requestId, options);
-        await ctx.reply(`❓ ${question}`, { reply_markup: keyboard });
+        await busReply(ctx, `❓ ${question}`, { replyMarkup: keyboard });
         buttonsSent = true;
 
         // Mark as sent
@@ -325,6 +354,12 @@ export class StreamingState {
 
 /**
  * Create a status callback for streaming updates.
+ *
+ * TODO(phase-2 streaming): all sends here pass `disable_notification` and
+ * store the returned grammy Message for later edit/delete via `ctx.api`.
+ * Migrating to the bus needs (a) `disable_notification` on OutboundMessage,
+ * and (b) a messageId-returning send + delete path. Deferred until the
+ * status-message lifecycle is refactored.
  */
 export function createStatusCallback(
   ctx: Context,
@@ -343,6 +378,10 @@ export function createStatusCallback(
         const preview =
           content.length > 500 ? content.slice(0, 500) + "..." : content;
         const escaped = escapeHtml(preview);
+        // TODO(phase-2 status-msg): status-msg pattern — the returned Message
+        // is stashed in state.toolMessages for later api.deleteMessage when
+        // the turn completes. Bus.send returns a messageId, not a Message
+        // stub; migrating needs either a bus extension or a stub builder.
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
           message_thread_id: threadId,
@@ -350,6 +389,7 @@ export function createStatusCallback(
         });
         state.toolMessages.push(thinkingMsg);
       } else if (statusType === "tool") {
+        // TODO(phase-2 status-msg): see "thinking" above — same pattern.
         const toolMsg = await ctx.reply(content, {
           parse_mode: "HTML",
           message_thread_id: threadId,
@@ -369,6 +409,10 @@ export function createStatusCallback(
               : content;
           const formatted = convertMarkdownToHtml(display);
           try {
+            // TODO(phase-2 status-msg): the returned Message is stashed in
+            // state.textMessages and edited via api.editMessageText on
+            // subsequent stream chunks. Migrating needs a bus extension that
+            // returns a Message-like stub.
             const msg = await ctx.reply(formatted, {
               parse_mode: "HTML",
               message_thread_id: threadId,
@@ -379,6 +423,7 @@ export function createStatusCallback(
           } catch (htmlError) {
             // HTML parse failed, fall back to plain text
             debug(`html reply fallback: ${htmlError}`);
+            // TODO(phase-2 status-msg): same as above.
             const msg = await ctx.reply(formatted, {
               message_thread_id: threadId,
               disable_notification: true,
@@ -454,22 +499,17 @@ export function createStatusCallback(
             } catch (err) {
               debug(`delete for split: ${err}`);
             }
-            for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
-              const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
-              try {
-                await ctx.reply(chunk, {
-                  parse_mode: "HTML",
-                  message_thread_id: threadId,
-                  disable_notification: true,
-                });
-              } catch (htmlError) {
-                debug(`chunk html fallback: ${htmlError}`);
-                await ctx.reply(chunk, {
-                  message_thread_id: threadId,
-                  disable_notification: true,
-                });
-              }
-            }
+            // Bus chunks at TELEGRAM_SAFE_LIMIT and falls back to plain on
+            // parse-entity errors — we no longer need a manual split loop or
+            // per-chunk html fallback here.
+            const chatId = msg.chat.id;
+            await getMessageBus().send({
+              chatId,
+              threadId,
+              content: formatted,
+              format: "html",
+              silent: true,
+            });
           }
         }
       } else if (statusType === "send_file") {
@@ -478,9 +518,7 @@ export function createStatusCallback(
           await sendFileToTelegram(ctx, content, threadId);
         } catch (err) {
           warn(`send_file error: ${err}`);
-          await ctx.reply(`⚠️ Failed to send file.`, {
-            message_thread_id: threadId,
-          });
+          await busReply(ctx, `⚠️ Failed to send file.`, { threadId });
         }
       } else if (statusType === "done") {
         // Delete tool messages - text messages stay

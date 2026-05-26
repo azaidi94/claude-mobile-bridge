@@ -49,6 +49,33 @@ import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
+import { getMessageBus } from "../messaging";
+
+/**
+ * Bus-routed reply helper. Use for plain or HTML text replies including
+ * thread-routed sends and inline keyboards. Callers stay on grammy directly
+ * when they need link_preview_options or other TG-specific options the bus
+ * doesn't model.
+ */
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: {
+    format?: "plain" | "html";
+    threadId?: number;
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
+  });
+}
 
 /**
  * Handle incoming text messages.
@@ -68,7 +95,7 @@ export async function handleText(
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
@@ -125,7 +152,8 @@ export async function handleText(
       !pendingPlanFeedback.has(chatId) &&
       !pendingAskUserQuestionCustom.has(chatId)
     ) {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ Send messages in a session topic.\nUse /list to see sessions.",
       );
       return;
@@ -137,37 +165,34 @@ export async function handleText(
     const field = pendingSettingsInput.get(chatId)!;
     if (message.trim() === "/cancel") {
       pendingSettingsInput.delete(chatId);
-      await ctx.reply("✖ Cancelled.", { message_thread_id: threadId });
+      await busReply(ctx, "✖ Cancelled.", { threadId });
       return;
     }
     if (field === "workdir") {
       const path = message.trim();
       if (!isAbsolute(path)) {
-        await ctx.reply("❌ Path must be absolute (start with /).", {
-          message_thread_id: threadId,
+        await busReply(ctx, "❌ Path must be absolute (start with /).", {
+          threadId,
         });
         return;
       }
       try {
         const s = await stat(path);
         if (!s.isDirectory()) {
-          await ctx.reply("❌ Not a directory.", {
-            message_thread_id: threadId,
-          });
+          await busReply(ctx, "❌ Not a directory.", { threadId });
           return;
         }
       } catch {
-        await ctx.reply("❌ Path does not exist.", {
-          message_thread_id: threadId,
-        });
+        await busReply(ctx, "❌ Path does not exist.", { threadId });
         return;
       }
       await saveSetting({ workingDir: path });
       pendingSettingsInput.delete(chatId);
-      await ctx.reply(`✅ Working dir set:\n<code>${escapeHtml(path)}</code>`, {
-        parse_mode: "HTML",
-        message_thread_id: threadId,
-      });
+      await busReply(
+        ctx,
+        `✅ Working dir set:\n<code>${escapeHtml(path)}</code>`,
+        { format: "html", threadId },
+      );
       return;
     }
   }
@@ -182,9 +207,7 @@ export async function handleText(
     // session to apply the edit to.
     const pendingApproval = state?.pendingPlanApproval;
     if (!pendingApproval) {
-      await ctx.reply("❌ Plan approval expired.", {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, "❌ Plan approval expired.", { threadId });
       return;
     }
 
@@ -211,9 +234,9 @@ export async function handleText(
       if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        await ctx.reply("📋 Revised plan ready. Review and approve?", {
-          reply_markup: keyboard,
-          message_thread_id: threadId,
+        await busReply(ctx, "📋 Revised plan ready. Review and approve?", {
+          replyMarkup: keyboard,
+          threadId,
         });
       }
 
@@ -240,8 +263,8 @@ export async function handleText(
         userId,
         durationMs: elapsedMs(requestStartedAt),
       });
-      await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
-        message_thread_id: threadId,
+      await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
+        threadId,
       });
     } finally {
       typing.stop();
@@ -256,7 +279,7 @@ export async function handleText(
 
     const pending = pendingAskUserQuestions.get(requestId);
     if (!pending) {
-      await ctx.reply("❌ Question expired.", { message_thread_id: threadId });
+      await busReply(ctx, "❌ Question expired.", { threadId });
       return;
     }
 
@@ -277,19 +300,17 @@ export async function handleText(
         pending.currentIndex,
         pending.questions.length,
       );
-      await ctx.reply(questionText, {
-        reply_markup: keyboard,
-        parse_mode: "HTML",
-        message_thread_id: threadId,
+      await busReply(ctx, questionText, {
+        replyMarkup: keyboard,
+        format: "html",
+        threadId,
       });
     } else {
       // All questions answered - send to Claude
       const wasPlanMode = pending.isPlanMode;
       pendingAskUserQuestions.delete(requestId);
       const answersText = pending.answers.join(", ");
-      await ctx.reply(`✅ Answered: ${answersText}`, {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, `✅ Answered: ${answersText}`, { threadId });
 
       // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
@@ -299,8 +320,8 @@ export async function handleText(
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
         if (!state) {
-          await ctx.reply("❌ Question expired — no session.", {
-            message_thread_id: threadId,
+          await busReply(ctx, "❌ Question expired — no session.", {
+            threadId,
           });
           return;
         }
@@ -332,9 +353,9 @@ export async function handleText(
           }
 
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-          await ctx.reply("Review and approve?", {
-            reply_markup: keyboard,
-            message_thread_id: threadId,
+          await busReply(ctx, "Review and approve?", {
+            replyMarkup: keyboard,
+            threadId,
           });
         }
         info("request: completed", {
@@ -353,8 +374,8 @@ export async function handleText(
           userId,
           durationMs: elapsedMs(requestStartedAt),
         });
-        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
-          message_thread_id: threadId,
+        await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
+          threadId,
         });
       } finally {
         typing.stop();
@@ -432,10 +453,11 @@ export async function handleText(
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ Relay failed. Session may be offline.\n" +
         "Use /unwatch and check /list.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -444,11 +466,9 @@ export async function handleText(
   // per-session SessionState when available, else the legacy singleton.
   message = await checkInterrupt(message, state);
   if (!message.trim()) {
-    await ctx
-      .reply("✖ Empty message after interrupt — nothing to send.", {
-        message_thread_id: threadId,
-      })
-      .catch(() => {});
+    await busReply(ctx, "✖ Empty message after interrupt — nothing to send.", {
+      threadId,
+    }).catch(() => {});
     return;
   }
 
@@ -456,9 +476,10 @@ export async function handleText(
   const [allowed, retryAfter] = rateLimiter.check(userId);
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
+    await busReply(
+      ctx,
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -474,7 +495,7 @@ export async function handleText(
     if (state) {
       state.clearSession();
     }
-    await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
+    await busReply(ctx, "✓ Session cleared", { threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
     info("request: completed", {
       opId,
@@ -531,16 +552,18 @@ export async function handleText(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
     return;
@@ -552,10 +575,11 @@ export async function handleText(
   // running locally against the singleton — that fallback was the bug being
   // fixed by Phase 1.
   if (!state) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -592,9 +616,10 @@ export async function handleText(
     });
   } catch (err) {
     logError("slash cmd error", err);
-    await ctx.reply(
+    await busReply(
+      ctx,
       `❌ Error: ${err instanceof Error ? err.message : String(err)}`,
-      { message_thread_id: threadId },
+      { threadId },
     );
   } finally {
     typing.stop();

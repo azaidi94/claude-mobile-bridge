@@ -22,6 +22,7 @@ import {
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
+import { getMessageBus } from "../messaging";
 
 /**
  * Map of chat IDs awaiting a text reply for a settings field.
@@ -114,14 +115,27 @@ export function renderSettingsKeyboard(): {
  */
 export async function handleSettings(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    if (chatId !== undefined) {
+      await getMessageBus().send({
+        chatId,
+        threadId: ctx.message?.message_thread_id,
+        content: "Unauthorized.",
+        format: "plain",
+      });
+    }
     return;
   }
-  await ctx.reply(renderSettingsBody(), {
-    parse_mode: "HTML",
-    reply_markup: renderSettingsKeyboard(),
-  });
+  if (chatId !== undefined) {
+    await getMessageBus().send({
+      chatId,
+      threadId: ctx.message?.message_thread_id,
+      content: renderSettingsBody(),
+      format: "html",
+      replyMarkup: renderSettingsKeyboard(),
+    });
+  }
 }
 
 /**

@@ -9,6 +9,35 @@ import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
 import { unlink, writeFile } from "fs/promises";
 import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
+// Stub the message bus and route sends into the per-test ctx._replies sink so
+// existing assertions keep working after step 6c migrated keyboard sites in
+// streaming.ts from ctx.reply to busReply.
+let busReplySink: Array<{
+  text: string;
+  options?: Record<string, unknown>;
+}> | null = null;
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async (msg: {
+      chatId: number;
+      content: string;
+      format?: string;
+      threadId?: number;
+      replyMarkup?: unknown;
+    }) => {
+      const options: Record<string, unknown> = {};
+      if (msg.format === "html") options.parse_mode = "HTML";
+      if (msg.threadId !== undefined) options.message_thread_id = msg.threadId;
+      if (msg.replyMarkup !== undefined) options.reply_markup = msg.replyMarkup;
+      busReplySink?.push({ text: msg.content, options });
+      return { messageId: 1 };
+    },
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 // Mock config before importing handlers - must include all exports to avoid conflicts
 mock.module("../config", () => ({
   ALLOWED_USERS: [123456],
@@ -208,6 +237,7 @@ describe("streaming: createStatusCallback", () => {
   function createMockContext() {
     const replies: Array<{ text: string; options?: Record<string, unknown> }> =
       [];
+    busReplySink = replies;
     const edits: Array<{
       chatId: number;
       msgId: number;
@@ -217,6 +247,7 @@ describe("streaming: createStatusCallback", () => {
     const deletes: Array<{ chatId: number; msgId: number }> = [];
 
     return {
+      chat: { id: 123 },
       reply: mock(async (text: string, options?: Record<string, unknown>) => {
         replies.push({ text, options });
         return { chat: { id: 123 }, message_id: replies.length };
@@ -586,7 +617,9 @@ describe("streaming: checkPendingAskUserRequests", () => {
   function createMockContext(chatId: number) {
     const replies: Array<{ text: string; options?: Record<string, unknown> }> =
       [];
+    busReplySink = replies;
     return {
+      chat: { id: chatId },
       reply: mock(async (text: string, options?: Record<string, unknown>) => {
         replies.push({ text, options });
         return { chat: { id: chatId }, message_id: Date.now() };

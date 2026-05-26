@@ -39,6 +39,13 @@ mock.module("grammy", () => ({
   // bridge-health imports HttpError to discriminate network vs API errors.
   HttpError: class HttpError extends Error {},
   GrammyError: class GrammyError extends Error {},
+  // messaging/bus.ts uses InputFile to upload attachments.
+  InputFile: class InputFile {
+    constructor(
+      public data: unknown,
+      public filename?: string,
+    ) {}
+  },
 }));
 
 mock.module("@grammyjs/runner", () => ({
@@ -102,6 +109,9 @@ mock.module("../config", () => ({
   BOT_DIR: "/tmp/test-bot-dir",
   WEB_URL: "http://localhost:3000",
   WEB_APP_SHORT_URL: "",
+  // bot.ts now eagerly constructs the MessageBus via createMessageBus,
+  // whose chunkContent helper reads TELEGRAM_SAFE_LIMIT from config.
+  TELEGRAM_SAFE_LIMIT: 4000,
   ...DESKTOP_SPAWN_CONFIG_MOCK,
 }));
 

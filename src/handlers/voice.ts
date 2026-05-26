@@ -19,6 +19,22 @@ import { getSession } from "../sessions";
 import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
 import { createOpId, debug, elapsedMs, info, warn } from "../logger";
+import { getMessageBus } from "../messaging";
+
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: { format?: "plain" | "html"; threadId?: number } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+  });
+}
 
 /**
  * Handle incoming voice messages.
@@ -38,7 +54,7 @@ export async function handleVoice(
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
@@ -48,9 +64,10 @@ export async function handleVoice(
   // for transcription. Falling through would silently mis-route to whichever
   // CC session shares the dir.
   if (sctx?.source === "cursor") {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ Voice messages aren't supported in Cursor topics yet — only text.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -77,9 +94,10 @@ export async function handleVoice(
 
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "Voice transcription is not configured. Set OPENAI_API_KEY in .env",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -88,9 +106,10 @@ export async function handleVoice(
   const [allowed, retryAfter] = rateLimiter.check(userId);
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
+    await busReply(
+      ctx,
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -106,10 +125,11 @@ export async function handleVoice(
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -136,6 +156,9 @@ export async function handleVoice(
     await Bun.write(voicePath, buffer);
 
     // 7. Transcribe
+    // TODO(phase-2 status-msg): keep ctx.reply — the returned Message is
+    // edited later via api.editMessageText / deleted via api.deleteMessage,
+    // and the bus does not yet return a Message-like stub.
     const statusMsg = await ctx.reply("🎤 Transcribing...", {
       message_thread_id: threadId,
     });
@@ -149,11 +172,11 @@ export async function handleVoice(
         userId,
         durationMs: elapsedMs(transcriptionStartedAt),
       });
-      await ctx.api.editMessageText(
+      await getMessageBus().edit(statusMsg.message_id, {
         chatId,
-        statusMsg.message_id,
-        "❌ Transcription failed.",
-      );
+        content: "❌ Transcription failed.",
+        format: "plain",
+      });
       stopProcessing();
       return;
     }
@@ -166,11 +189,11 @@ export async function handleVoice(
     });
 
     // 8. Show transcript
-    await ctx.api.editMessageText(
+    await getMessageBus().edit(statusMsg.message_id, {
       chatId,
-      statusMsg.message_id,
-      `🎤 "${transcript}"`,
-    );
+      content: `🎤 "${transcript}"`,
+      format: "plain",
+    });
 
     // 9. Send via relay
     const relayResult = await sendViaRelay(
@@ -210,16 +233,18 @@ export async function handleVoice(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
   } catch (error) {
@@ -231,8 +256,8 @@ export async function handleVoice(
       durationMs: elapsedMs(requestStartedAt),
       err: String(error).slice(0, 200),
     });
-    await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`, {
-      message_thread_id: threadId,
+    await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`, {
+      threadId,
     });
   } finally {
     stopProcessing();
