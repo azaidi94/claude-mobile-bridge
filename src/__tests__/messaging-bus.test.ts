@@ -207,6 +207,14 @@ describe("MessageBus.send — text", () => {
     expect(api._sentTexts[0]!.opts.disable_notification).toBeUndefined();
   });
 
+  test("replyMarkup is passed through as reply_markup", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const markup = { inline_keyboard: [[{ text: "Yes", callback_data: "y" }]] };
+    await bus.send({ chatId: 1, content: "pick?", replyMarkup: markup });
+    expect(api._sentTexts[0]!.opts.reply_markup).toEqual(markup);
+  });
+
   test("replyTo translates to reply_parameters", async () => {
     const api = makeApi();
     const bus = createMessageBus(api as any);
@@ -404,6 +412,20 @@ describe("MessageBus.edit", () => {
     });
     expect(r).toEqual({ ok: true });
     expect(api.editMessageText).toHaveBeenCalledTimes(2);
+  });
+
+  test("replyMarkup on edit is passed through as reply_markup", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const markup = { inline_keyboard: [[{ text: "Ok", callback_data: "ok" }]] };
+    const r = await bus.edit(7, {
+      chatId: 1,
+      content: "updated",
+      replyMarkup: markup,
+    });
+    expect(r).toEqual({ ok: true });
+    const call = api.editMessageText.mock.calls[0] as any[];
+    expect(call[3].reply_markup).toEqual(markup);
   });
 
   test("missing message → { ok: false, reason }", async () => {

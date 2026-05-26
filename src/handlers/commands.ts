@@ -82,23 +82,35 @@ import { listOfflineSessions } from "../sessions/offline";
 import { getMessageBus } from "../messaging";
 
 /**
- * Bus-routed reply helper. Replaces `ctx.reply(text)` /
- * `ctx.reply(text, { parse_mode: "HTML" })` call sites. Caller must use
- * `ctx.reply(...)` directly when passing `reply_markup`, `link_preview_options`,
- * `reply_parameters`, etc.
+ * Bus-routed reply helper. Replaces direct grammy reply calls for plain or
+ * HTML text and inline keyboards. Callers stay on grammy directly when they
+ * need link_preview_options, reply_parameters, or non-inline reply markup
+ * (e.g. ReplyKeyboardMarkup).
+ *
+ * Overloads accept either a `format` string or an options bag with
+ * `replyMarkup` for inline keyboards.
  */
 function busReply(
   ctx: Context,
   content: string,
-  format: "plain" | "html" = "plain",
+  formatOrOpts:
+    | "plain"
+    | "html"
+    | {
+        format?: "plain" | "html";
+        replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+      } = "plain",
 ): Promise<unknown> {
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return Promise.resolve();
+  const opts =
+    typeof formatOrOpts === "string" ? { format: formatOrOpts } : formatOrOpts;
   return getMessageBus().send({
     chatId,
     threadId: ctx.message?.message_thread_id,
     content,
-    format,
+    format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
   });
 }
 
@@ -153,8 +165,7 @@ async function showSessionPicker(
   for (const s of sessions) {
     keyboard.text(s.name, `${action}:${s.name}`).row();
   }
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply("Pick a session:", { reply_markup: keyboard });
+  await busReply(ctx, "Pick a session:", { replyMarkup: keyboard });
   return true;
 }
 
@@ -916,10 +927,9 @@ export async function sendPostKillSessionList(
     },
   ]);
 
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(lines.join("\n"), {
-    parse_mode: "HTML",
-    reply_markup: { inline_keyboard: buttons },
+  await busReply(ctx, lines.join("\n"), {
+    format: "html",
+    replyMarkup: { inline_keyboard: buttons },
   });
 }
 
@@ -1179,10 +1189,9 @@ export async function handleModel(
     },
   ]);
 
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(`🤖 <b>Model:</b> ${getCurrentModelDisplayName()}`, {
-    parse_mode: "HTML",
-    reply_markup: { inline_keyboard: buttons },
+  await busReply(ctx, `🤖 <b>Model:</b> ${getCurrentModelDisplayName()}`, {
+    format: "html",
+    replyMarkup: { inline_keyboard: buttons },
   });
 }
 
@@ -1349,10 +1358,9 @@ export async function handleList(ctx: Context): Promise<void> {
       },
     ]);
 
-    // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-    await ctx.reply(lines.join("\n"), {
-      parse_mode: "HTML",
-      reply_markup:
+    await busReply(ctx, lines.join("\n"), {
+      format: "html",
+      replyMarkup:
         buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
     });
   }
@@ -1477,10 +1485,9 @@ export async function handleSessions(ctx: Context): Promise<void> {
     },
   ]);
 
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(lines.join("\n"), {
-    parse_mode: "HTML",
-    reply_markup: { inline_keyboard: buttons },
+  await busReply(ctx, lines.join("\n"), {
+    format: "html",
+    replyMarkup: { inline_keyboard: buttons },
   });
 }
 
@@ -1575,10 +1582,9 @@ export async function handleGroupMode(ctx: Context): Promise<void> {
   }
 
   const current = getGroupModeSetting();
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(renderGroupModeText(current), {
-    parse_mode: "HTML",
-    reply_markup: buildGroupModeKeyboard(current),
+  await busReply(ctx, renderGroupModeText(current), {
+    format: "html",
+    replyMarkup: buildGroupModeKeyboard(current),
   });
 }
 
@@ -2025,8 +2031,8 @@ export async function handleApp(ctx: Context): Promise<void> {
   const url = WEB_URL;
   const threadId = ctx.message?.message_thread_id;
 
-  // TODO(phase-2 link_preview/keyboards): bus doesn't yet carry
-  // link_preview_options or inline_keyboard.
+  // TODO(phase-2 link_preview): bus doesn't yet carry link_preview_options.
+  // Keep these two sites inline until the bus grows that option.
   if (shortUrl) {
     await ctx.reply(`Open the Mini App:\n${shortUrl}`, {
       message_thread_id: threadId,
@@ -2036,8 +2042,8 @@ export async function handleApp(ctx: Context): Promise<void> {
   }
 
   if (ctx.chat?.type === "private") {
-    await ctx.reply("Open the Mini App:", {
-      reply_markup: new InlineKeyboard().webApp("Open", url),
+    await busReply(ctx, "Open the Mini App:", {
+      replyMarkup: new InlineKeyboard().webApp("Open", url),
     });
     return;
   }

@@ -52,15 +52,19 @@ import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
 
 /**
- * Bus-routed reply helper. Use for `ctx.reply(text)`,
- * `ctx.reply(text, { parse_mode })`, or `ctx.reply(text, { message_thread_id })`
- * — anything with `reply_markup`, `link_preview_options`, or other TG-specific
- * options must stay inline.
+ * Bus-routed reply helper. Use for plain or HTML text replies including
+ * thread-routed sends and inline keyboards. Callers stay on grammy directly
+ * when they need link_preview_options or other TG-specific options the bus
+ * doesn't model.
  */
 function busReply(
   ctx: Context,
   content: string,
-  opts: { format?: "plain" | "html"; threadId?: number } = {},
+  opts: {
+    format?: "plain" | "html";
+    threadId?: number;
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
 ): Promise<unknown> {
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return Promise.resolve();
@@ -69,6 +73,7 @@ function busReply(
     threadId: opts.threadId ?? ctx.message?.message_thread_id,
     content,
     format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
   });
 }
 
@@ -229,10 +234,9 @@ export async function handleText(
       if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-        await ctx.reply("📋 Revised plan ready. Review and approve?", {
-          reply_markup: keyboard,
-          message_thread_id: threadId,
+        await busReply(ctx, "📋 Revised plan ready. Review and approve?", {
+          replyMarkup: keyboard,
+          threadId,
         });
       }
 
@@ -296,11 +300,10 @@ export async function handleText(
         pending.currentIndex,
         pending.questions.length,
       );
-      // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-      await ctx.reply(questionText, {
-        reply_markup: keyboard,
-        parse_mode: "HTML",
-        message_thread_id: threadId,
+      await busReply(ctx, questionText, {
+        replyMarkup: keyboard,
+        format: "html",
+        threadId,
       });
     } else {
       // All questions answered - send to Claude
@@ -350,10 +353,9 @@ export async function handleText(
           }
 
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-          // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-          await ctx.reply("Review and approve?", {
-            reply_markup: keyboard,
-            message_thread_id: threadId,
+          await busReply(ctx, "Review and approve?", {
+            replyMarkup: keyboard,
+            threadId,
           });
         }
         info("request: completed", {

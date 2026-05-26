@@ -14,6 +14,39 @@ mock.module("../sessions/watcher", () => ({
   getActiveSession: mock(() => null),
 }));
 
+// Stub the message bus — notifications.broadcast() now sends via the bus
+// (step 6a). Tests still inspect a per-call "sendMessage" mock by routing the
+// bus send through it so the existing assertions keep working.
+let activeBusSink: ReturnType<typeof mock> | null = null;
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async (msg: {
+      chatId: number;
+      content: string;
+      replyMarkup?: unknown;
+    }) => {
+      // Route the bus send through the test's sendMessage mock so existing
+      // assertions like broadcastsContaining(sendMessage, "x") keep working.
+      try {
+        await activeBusSink?.(
+          msg.chatId,
+          msg.content,
+          msg.replyMarkup
+            ? { parse_mode: "HTML", reply_markup: msg.replyMarkup }
+            : { parse_mode: "HTML" },
+        );
+        return { messageId: 1 };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return { dropped: "error" as const, reason };
+      }
+    },
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 import {
   registerChatId,
   removeChatId,
@@ -32,6 +65,7 @@ function makeFakeApi(): {
 } {
   const sendMessage = mock(() => Promise.resolve({ message_id: 1 }));
   const api = { sendMessage } as unknown as Api;
+  activeBusSink = sendMessage;
   return { api, sendMessage };
 }
 
@@ -146,6 +180,7 @@ describe("notifications: suppressDirNotifications", () => {
       return Promise.resolve({ message_id: 1 });
     });
     const api = { sendMessage } as unknown as Api;
+    activeBusSink = sendMessage;
     const handler = createNotificationHandler(api);
     const session = makeSession("stale-drop", "/tmp/stale-drop-dir");
 

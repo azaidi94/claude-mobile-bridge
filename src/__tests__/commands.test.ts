@@ -377,6 +377,7 @@ const mockBusSend = mock(
     content: string;
     format?: string;
     attachment?: { kind: string; path: string };
+    replyMarkup?: unknown;
   }) => {
     // Translate bus shape back into the legacy ctx.reply { text, options }
     // shape that assertions key off. parse_mode comes from `format`.
@@ -385,6 +386,7 @@ const mockBusSend = mock(
     else if (msg.format === "markdown") options.parse_mode = "MarkdownV2";
     if (msg.threadId !== undefined) options.message_thread_id = msg.threadId;
     if (msg.attachment) options.attachment = msg.attachment;
+    if (msg.replyMarkup !== undefined) options.reply_markup = msg.replyMarkup;
     busSendSink.push({ text: msg.content, options });
     return { messageId: 12345 };
   },
@@ -392,12 +394,19 @@ const mockBusSend = mock(
 const mockBusEdit = mock(
   async (
     _messageId: number,
-    input: { chatId: number; content: string; format?: string },
+    input: {
+      chatId: number;
+      content: string;
+      format?: string;
+      replyMarkup?: unknown;
+    },
   ) => {
     // Treat edits like sends for assertion purposes — tests typically check
     // text content, not which TG primitive routed it.
     const options: Record<string, unknown> = {};
     if (input.format === "html") options.parse_mode = "HTML";
+    if (input.replyMarkup !== undefined)
+      options.reply_markup = input.replyMarkup;
     busSendSink.push({ text: input.content, options });
     return { ok: true as const };
   },

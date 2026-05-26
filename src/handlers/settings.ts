@@ -127,11 +127,15 @@ export async function handleSettings(ctx: Context): Promise<void> {
     }
     return;
   }
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(renderSettingsBody(), {
-    parse_mode: "HTML",
-    reply_markup: renderSettingsKeyboard(),
-  });
+  if (chatId !== undefined) {
+    await getMessageBus().send({
+      chatId,
+      threadId: ctx.message?.message_thread_id,
+      content: renderSettingsBody(),
+      format: "html",
+      replyMarkup: renderSettingsKeyboard(),
+    });
+  }
 }
 
 /**

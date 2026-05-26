@@ -323,20 +323,18 @@ describe("watch: multi-topic isolation", () => {
 describe("handleWatch: General-chat rejection", () => {
   test("rejects when message has no thread", async () => {
     const { handleWatch } = await import("../handlers/watch");
-    const replies: string[] = [];
+    const sink: _BusSink = [];
+    _setBusSink(sink);
     const ctx = {
       from: { id: 123 },
       chat: { id: 456 },
       message: {}, // no message_thread_id
-      reply: (text: string) => {
-        replies.push(text);
-        return Promise.resolve();
-      },
+      reply: (_text: string) => Promise.resolve(),
     } as any;
 
     await handleWatch(ctx);
-    expect(replies.length).toBe(1);
-    expect(replies[0]).toContain("per-topic");
+    expect(sink.length).toBe(1);
+    expect(sink[0]!.text).toContain("per-topic");
   });
 });
 

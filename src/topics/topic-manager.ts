@@ -16,6 +16,7 @@ import { info, warn, debug } from "../logger";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 import { scanPortFiles, updatePortFile } from "../relay/discovery";
 import { recordTopicCreated, recordTopicDeleted } from "./topic-ledger";
+import { getMessageBus } from "../messaging";
 
 interface ReconcileSession {
   name: string;
@@ -62,13 +63,26 @@ export class TopicManager {
   ): Promise<number | undefined> {
     const existing = getTopicBySession(sessionName);
     if (existing) {
-      // Verify the topic still exists in Telegram
-      try {
-        await this.api.sendMessage(
-          this.chatId,
-          `🟢 <b>${sessionName}</b> online`,
-          { parse_mode: "HTML", message_thread_id: existing.topicId },
-        );
+      // Verify the topic still exists in Telegram. The bus swallows TG errors
+      // and reports them as `dropped: "error"` with `reason`; we re-throw on
+      // "message thread not found" so the catch below can recreate the topic.
+      const onlineRes = await getMessageBus().send({
+        chatId: this.chatId,
+        threadId: existing.topicId,
+        content: `🟢 <b>${sessionName}</b> online`,
+        format: "html",
+      });
+      if ("dropped" in onlineRes && onlineRes.dropped === "error") {
+        const reason = onlineRes.reason ?? "";
+        if (reason.includes("message thread not found")) {
+          warn(
+            `topic-manager: stale topic ${existing.topicId} for ${sessionName}, recreating`,
+          );
+          removeTopicMapping(sessionName);
+        } else {
+          throw new Error(reason);
+        }
+      } else {
         updateTopicMapping(sessionName, { isOnline: true, sessionId });
         const reusePid = await this.findRelayPid(
           sessionName,
@@ -85,15 +99,6 @@ export class TopicManager {
           `topic-manager: reusing topic ${existing.topicId} for ${sessionName}`,
         );
         return existing.topicId;
-      } catch (err) {
-        if (String(err).includes("message thread not found")) {
-          warn(
-            `topic-manager: stale topic ${existing.topicId} for ${sessionName}, recreating`,
-          );
-          removeTopicMapping(sessionName);
-        } else {
-          throw err;
-        }
       }
     }
 
@@ -134,9 +139,11 @@ export class TopicManager {
         const history = await getRecentHistory(sessionId, 3, sessionDir);
         if (history.length > 0) {
           const formatted = formatHistoryMessage(history);
-          await this.api.sendMessage(this.chatId, formatted, {
-            parse_mode: "HTML",
-            message_thread_id: topicId,
+          await getMessageBus().send({
+            chatId: this.chatId,
+            threadId: topicId,
+            content: formatted,
+            format: "html",
           });
         }
       } catch {

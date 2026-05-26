@@ -15,6 +15,7 @@
 
 import { InputFile } from "grammy";
 import type { Api } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import { info, warn, createOpId, elapsedMs } from "../logger";
 import {
   resolveParseMode,
@@ -40,6 +41,13 @@ export interface OutboundMessage {
    * `disable_notification`). Used by quiet streaming bubbles in watch.ts.
    */
   silent?: boolean;
+  /**
+   * Optional inline keyboard. Grammy's `InlineKeyboard` class is JSON-compatible
+   * with `InlineKeyboardMarkup` (grammy serialises it transparently), so callers
+   * may pass either an `InlineKeyboard` instance or a plain
+   * `{ inline_keyboard: [[...]] }` object.
+   */
+  replyMarkup?: InlineKeyboardMarkup;
   /** Optional caller-provided opId for correlation; bus generates one if absent. */
   opId?: string;
 }
@@ -57,6 +65,8 @@ export interface EditInput {
   threadId?: number;
   content: string;
   format?: FormatHint;
+  /** Optional inline keyboard to replace on edit. */
+  replyMarkup?: InlineKeyboardMarkup;
   opId?: string;
 }
 
@@ -191,6 +201,7 @@ export function createMessageBus(api: Api): MessageBus {
     rawChunk: string,
     formatHint: FormatHint,
     silent: boolean,
+    replyMarkup: InlineKeyboardMarkup | undefined,
   ): Promise<number> {
     const opts: Parameters<Api["sendMessage"]>[2] = {};
     if (parseMode) opts.parse_mode = parseMode;
@@ -199,6 +210,7 @@ export function createMessageBus(api: Api): MessageBus {
     if (replyTo) {
       (opts as any).reply_parameters = { message_id: replyTo.messageId };
     }
+    if (replyMarkup) opts.reply_markup = replyMarkup;
     try {
       const msg = await api.sendMessage(chatId, chunk, opts);
       return msg.message_id;
@@ -214,6 +226,7 @@ export function createMessageBus(api: Api): MessageBus {
             message_id: replyTo.messageId,
           };
         }
+        if (replyMarkup) plainOpts.reply_markup = replyMarkup;
         const msg = await api.sendMessage(chatId, plain, plainOpts);
         return msg.message_id;
       }
@@ -352,6 +365,8 @@ export function createMessageBus(api: Api): MessageBus {
 
         let firstMessageId: number | null = null;
         for (let i = 0; i < formattedChunks.length; i++) {
+          // Reply-markup only on the first chunk (TG would otherwise repeat
+          // the keyboard on every chunk).
           const id = await sendOneText(
             msg.chatId,
             msg.threadId,
@@ -361,6 +376,7 @@ export function createMessageBus(api: Api): MessageBus {
             rawChunks[i] ?? formattedChunks[i]!,
             formatHint,
             msg.silent === true,
+            i === 0 ? msg.replyMarkup : undefined,
           );
           if (firstMessageId === null) firstMessageId = id;
         }
@@ -405,6 +421,7 @@ export function createMessageBus(api: Api): MessageBus {
       try {
         const opts: Parameters<Api["editMessageText"]>[3] = {};
         if (resolved.parse_mode) opts.parse_mode = resolved.parse_mode;
+        if (input.replyMarkup) opts.reply_markup = input.replyMarkup;
         try {
           await api.editMessageText(
             input.chatId,
@@ -415,7 +432,14 @@ export function createMessageBus(api: Api): MessageBus {
         } catch (err) {
           if (resolved.parse_mode && isParseEntityError(err)) {
             const plain = plainFallback(input.content, formatHint);
-            await api.editMessageText(input.chatId, messageId, plain, {});
+            const plainOpts: Parameters<Api["editMessageText"]>[3] = {};
+            if (input.replyMarkup) plainOpts.reply_markup = input.replyMarkup;
+            await api.editMessageText(
+              input.chatId,
+              messageId,
+              plain,
+              plainOpts,
+            );
           } else {
             throw err;
           }

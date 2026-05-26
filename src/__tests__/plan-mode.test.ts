@@ -8,6 +8,18 @@
 import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
 import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
+// Stub the message bus so handlers calling busReply (commands.ts, callback.ts,
+// text.ts) don't blow up during tests. The bus is initialised in bot.ts in
+// production; tests bypass that wiring.
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async () => ({ messageId: 1 }),
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 // Mock config before importing handlers
 const MOCK_ALLOWED_USERS = [123456, 789012];
 

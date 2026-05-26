@@ -56,6 +56,26 @@ import { sendFile, sendPdfReply } from "../relay/display";
 import { getMessageBus } from "../messaging";
 
 /**
+ * Bus-routed reply helper for /watch + /unwatch command handlers. Status-msg
+ * pattern sites (streaming bubbles upstream in this file) still use the bus
+ * directly because they need the returned `messageId` for later edit/delete.
+ */
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: { format?: "plain" | "html" } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+  });
+}
+
+/**
  * Build a minimal grammy `Message`-shaped stub from a bus `messageId`. The
  * watch display state only ever reads `.message_id` (for edits/deletes) and
  * `.chat.id` (for delete targets) — so a stub is sufficient. Centralised here
@@ -1089,12 +1109,13 @@ export async function handleWatch(
   if (!userId || !chatId) return;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (threadId === undefined) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "ℹ️ Watching is per-topic. Use /spawn to create a topic for your session.",
     );
     return;
@@ -1106,7 +1127,7 @@ export async function handleWatch(
   if (sctx?.sessionName) {
     const st = getSessionState(sctx.sessionName);
     if (st.isRunning) {
-      await ctx.reply("A query is in progress. Use /stop first.");
+      await busReply(ctx, "A query is in progress. Use /stop first.");
       return;
     }
   }
@@ -1114,9 +1135,10 @@ export async function handleWatch(
   // Already watching?
   if (watches.has(watchKey(chatId, threadId))) {
     const existing = watches.get(watchKey(chatId, threadId))!;
-    await ctx.reply(
+    await busReply(
+      ctx,
       `Already watching <b>${escapeHtml(existing.sessionName)}</b>. Use /unwatch first.`,
-      { parse_mode: "HTML" },
+      { format: "html" },
     );
     return;
   }
@@ -1131,16 +1153,15 @@ export async function handleWatch(
   if (requestedName) {
     const sessionInfo = getSession(requestedName);
     if (!sessionInfo) {
-      await ctx.reply(
+      await busReply(
+        ctx,
         `Session "${escapeHtml(requestedName)}" not found. Use /list.`,
-        {
-          parse_mode: "HTML",
-        },
+        { format: "html" },
       );
       return;
     }
     if (sessionInfo.source !== "desktop") {
-      await ctx.reply("Can only watch desktop sessions.");
+      await busReply(ctx, "Can only watch desktop sessions.");
       return;
     }
     targetName = requestedName;
@@ -1163,7 +1184,8 @@ export async function handleWatch(
   }
 
   if (!targetName) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "No desktop sessions to watch. Start Claude Code on your desktop first.",
     );
     return;
@@ -1177,7 +1199,7 @@ export async function handleWatch(
     "command",
   );
   if (!started) {
-    await ctx.reply("Could not start watching (no session ID).");
+    await busReply(ctx, "Could not start watching (no session ID).");
   }
 }
 
@@ -1377,13 +1399,14 @@ export async function startWatchingAndNotify(
       lastMsgLine = `\n<blockquote>${parts.join("\n")}</blockquote>`;
   }
 
-  await ctx.reply(
+  await busReply(
+    ctx,
     `👁 Watching <b>${escapeHtml(sessionName)}</b>\n` +
       `📁 <code>${escapeHtml(dir)}</code>${lastMsgLine}\n\n` +
       `Live events will stream here.\n` +
       `Type a message to send via relay.\n` +
       `Use /unwatch to stop.`,
-    { parse_mode: "HTML" },
+    { format: "html" },
   );
   return true;
 }
@@ -1402,23 +1425,22 @@ export async function handleUnwatch(
   if (!userId || !chatId) return;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (threadId === undefined) {
-    await ctx.reply("ℹ️ Unwatching is per-topic.");
+    await busReply(ctx, "ℹ️ Unwatching is per-topic.");
     return;
   }
 
   const state = stopWatching(chatId, threadId, ctx.api, "unwatch");
 
   if (state) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       `Stopped watching <b>${escapeHtml(state.sessionName)}</b>.`,
-      {
-        parse_mode: "HTML",
-      },
+      { format: "html" },
     );
 
     // Restore normal pinned status. Without sctx we have no session to
@@ -1437,7 +1459,7 @@ export async function handleUnwatch(
       branch,
     }).catch(() => {});
   } else {
-    await ctx.reply("Not currently watching any session in this topic.");
+    await busReply(ctx, "Not currently watching any session in this topic.");
   }
 }
 

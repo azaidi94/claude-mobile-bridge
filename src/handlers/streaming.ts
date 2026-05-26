@@ -28,7 +28,11 @@ import { getMessageBus } from "../messaging";
 function busReply(
   ctx: Context,
   content: string,
-  opts: { format?: "plain" | "html"; threadId?: number } = {},
+  opts: {
+    format?: "plain" | "html";
+    threadId?: number;
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
 ): Promise<unknown> {
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return Promise.resolve();
@@ -37,6 +41,7 @@ function busReply(
     threadId: opts.threadId ?? ctx.message?.message_thread_id,
     content,
     format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
   });
 }
 
@@ -287,8 +292,10 @@ export async function checkPendingAskUserQuestionRequests(
     0,
     input.questions.length,
   );
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(questionText, { reply_markup: keyboard, parse_mode: "HTML" });
+  await busReply(ctx, questionText, {
+    format: "html",
+    replyMarkup: keyboard,
+  });
 
   return true;
 }
@@ -320,8 +327,7 @@ export async function checkPendingAskUserRequests(
 
       if (options.length > 0 && requestId) {
         const keyboard = createAskUserKeyboard(requestId, options);
-        // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-        await ctx.reply(`❓ ${question}`, { reply_markup: keyboard });
+        await busReply(ctx, `❓ ${question}`, { replyMarkup: keyboard });
         buttonsSent = true;
 
         // Mark as sent
@@ -372,6 +378,10 @@ export function createStatusCallback(
         const preview =
           content.length > 500 ? content.slice(0, 500) + "..." : content;
         const escaped = escapeHtml(preview);
+        // TODO(phase-2 status-msg): status-msg pattern — the returned Message
+        // is stashed in state.toolMessages for later api.deleteMessage when
+        // the turn completes. Bus.send returns a messageId, not a Message
+        // stub; migrating needs either a bus extension or a stub builder.
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
           message_thread_id: threadId,
@@ -379,6 +389,7 @@ export function createStatusCallback(
         });
         state.toolMessages.push(thinkingMsg);
       } else if (statusType === "tool") {
+        // TODO(phase-2 status-msg): see "thinking" above — same pattern.
         const toolMsg = await ctx.reply(content, {
           parse_mode: "HTML",
           message_thread_id: threadId,
@@ -398,6 +409,10 @@ export function createStatusCallback(
               : content;
           const formatted = convertMarkdownToHtml(display);
           try {
+            // TODO(phase-2 status-msg): the returned Message is stashed in
+            // state.textMessages and edited via api.editMessageText on
+            // subsequent stream chunks. Migrating needs a bus extension that
+            // returns a Message-like stub.
             const msg = await ctx.reply(formatted, {
               parse_mode: "HTML",
               message_thread_id: threadId,
@@ -408,6 +423,7 @@ export function createStatusCallback(
           } catch (htmlError) {
             // HTML parse failed, fall back to plain text
             debug(`html reply fallback: ${htmlError}`);
+            // TODO(phase-2 status-msg): same as above.
             const msg = await ctx.reply(formatted, {
               message_thread_id: threadId,
               disable_notification: true,
@@ -483,22 +499,17 @@ export function createStatusCallback(
             } catch (err) {
               debug(`delete for split: ${err}`);
             }
-            for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
-              const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
-              try {
-                await ctx.reply(chunk, {
-                  parse_mode: "HTML",
-                  message_thread_id: threadId,
-                  disable_notification: true,
-                });
-              } catch (htmlError) {
-                debug(`chunk html fallback: ${htmlError}`);
-                await ctx.reply(chunk, {
-                  message_thread_id: threadId,
-                  disable_notification: true,
-                });
-              }
-            }
+            // Bus chunks at TELEGRAM_SAFE_LIMIT and falls back to plain on
+            // parse-entity errors — we no longer need a manual split loop or
+            // per-chunk html fallback here.
+            const chatId = msg.chat.id;
+            await getMessageBus().send({
+              chatId,
+              threadId,
+              content: formatted,
+              format: "html",
+              silent: true,
+            });
           }
         }
       } else if (statusType === "send_file") {

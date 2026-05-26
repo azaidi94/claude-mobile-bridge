@@ -169,6 +169,13 @@ export async function handleExecute(ctx: Context): Promise<void> {
   }
 
   const { text, keyboard } = buildExecuteMenu(commands);
-  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  if (chatId !== undefined) {
+    await bus.send({
+      chatId,
+      threadId,
+      content: text,
+      format: "html",
+      replyMarkup: keyboard,
+    });
+  }
 }

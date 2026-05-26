@@ -15,6 +15,41 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Stub the message bus — topic-manager (step 6a) sends online/history pings
+// via getMessageBus(). The bus call needs to mirror onto the per-test
+// `api.sendMessage` mock so existing assertions keep working. We route via
+// a per-suite `currentApi` register set by `makeMockApi()`.
+let currentApi: {
+  sendMessage: (
+    chatId: number,
+    text: string,
+    opts?: object,
+  ) => Promise<{ message_id: number }>;
+} | null = null;
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async (msg: {
+      chatId: number;
+      content: string;
+      threadId?: number;
+    }) => {
+      if (!currentApi) return { messageId: 1 };
+      try {
+        const res = await currentApi.sendMessage(msg.chatId, msg.content, {
+          message_thread_id: msg.threadId,
+        });
+        return { messageId: res.message_id };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return { dropped: "error" as const, reason };
+      }
+    },
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 // --- Mock settings ---
 mock.module("../settings", () => ({
   getEnablePinnedStatus: () => true,
@@ -146,7 +181,7 @@ function makeCtx(threadId?: number): Context {
 }
 
 function makeMockApi() {
-  return {
+  const api = {
     createForumTopic: mock((_chatId: number, _name: string, _opts: object) =>
       Promise.resolve({ message_thread_id: 500, name: "test", icon_color: 0 }),
     ),
@@ -163,6 +198,8 @@ function makeMockApi() {
       Promise.resolve(true),
     ),
   };
+  currentApi = api as unknown as typeof currentApi;
+  return api;
 }
 
 // ──────────────────────────────────────────────────────

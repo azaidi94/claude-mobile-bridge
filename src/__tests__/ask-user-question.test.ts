@@ -152,10 +152,12 @@ const mockBusSend = mock(
     threadId?: number;
     content: string;
     format?: string;
+    replyMarkup?: unknown;
   }) => {
     const options: Record<string, unknown> = {};
     if (msg.format === "html") options.parse_mode = "HTML";
     if (msg.threadId !== undefined) options.message_thread_id = msg.threadId;
+    if (msg.replyMarkup !== undefined) options.reply_markup = msg.replyMarkup;
     busSendSink.push({ text: msg.content, options });
     return { messageId: 12345 };
   },
@@ -163,10 +165,17 @@ const mockBusSend = mock(
 const mockBusEdit = mock(
   async (
     _messageId: number,
-    input: { chatId: number; content: string; format?: string },
+    input: {
+      chatId: number;
+      content: string;
+      format?: string;
+      replyMarkup?: unknown;
+    },
   ) => {
     const options: Record<string, unknown> = {};
     if (input.format === "html") options.parse_mode = "HTML";
+    if (input.replyMarkup !== undefined)
+      options.reply_markup = input.replyMarkup;
     busSendSink.push({ text: input.content, options });
     return { ok: true as const };
   },

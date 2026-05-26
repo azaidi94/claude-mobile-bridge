@@ -82,7 +82,10 @@ import { getMessageBus } from "../messaging";
 function busReply(
   ctx: Context,
   content: string,
-  opts: { format?: "plain" | "html" } = {},
+  opts: {
+    format?: "plain" | "html";
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
 ): Promise<unknown> {
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return Promise.resolve();
@@ -91,6 +94,7 @@ function busReply(
     threadId: ctx.callbackQuery?.message?.message_thread_id,
     content,
     format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
   });
 }
 
@@ -488,9 +492,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
       if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-        await ctx.reply("📋 Revised plan ready. Review and approve?", {
-          reply_markup: keyboard,
+        await busReply(ctx, "📋 Revised plan ready. Review and approve?", {
+          replyMarkup: keyboard,
         });
       }
 
@@ -665,8 +668,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
             }
 
             const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-            // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
-            await ctx.reply("Review and approve?", { reply_markup: keyboard });
+            await busReply(ctx, "Review and approve?", {
+              replyMarkup: keyboard,
+            });
           }
         } catch (error) {
           logError("callback: ask-user answer failed", error, {

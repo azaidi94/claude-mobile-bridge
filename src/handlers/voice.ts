@@ -156,6 +156,9 @@ export async function handleVoice(
     await Bun.write(voicePath, buffer);
 
     // 7. Transcribe
+    // TODO(phase-2 status-msg): keep ctx.reply — the returned Message is
+    // edited later via api.editMessageText / deleted via api.deleteMessage,
+    // and the bus does not yet return a Message-like stub.
     const statusMsg = await ctx.reply("🎤 Transcribing...", {
       message_thread_id: threadId,
     });
