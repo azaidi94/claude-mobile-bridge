@@ -96,7 +96,7 @@ export function getThreadId(sessionName: string): number | undefined {
 export function getThreadIdFromCallback(ctx: Context): number | undefined {
   const msg = ctx.callbackQuery?.message;
   if (!msg) return undefined;
-  return (msg as any).message_thread_id ?? undefined;
+  return (msg as { message_thread_id?: number }).message_thread_id ?? undefined;
 }
 
 /**

@@ -169,7 +169,7 @@ export function handleTailEvent(
     }
   }
 
-  // Liveness typing: any tail event means Claude is alive and working —
+  // Liveness typing - every tail event means Claude is alive and working —
   // extend the indicator. Only the explicit end-of-turn markers stop it.
   // Only for watches (threadId present); relay display has no topic context.
   if (threadId !== undefined) {

@@ -109,7 +109,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Ask User MCP server running on stdio");
+  // stdout is reserved for MCP JSON-RPC framing; status goes to stderr.
+  process.stderr.write("Ask User MCP server running on stdio\n");
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  process.stderr.write(`Ask User MCP fatal: ${err}\n`);
+  process.exit(1);
+});

@@ -14,6 +14,18 @@ import type { BridgeResolution } from "./auq-bridge-registry";
 import type { SseEvent } from "../web/sse";
 import { SessionEventBus, globalEventBus } from "../web/sse";
 
+export interface BridgeQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface BridgeQuestion {
+  question: string;
+  header?: string;
+  options: BridgeQuestionOption[];
+  multiSelect?: boolean;
+}
+
 export interface PostTgArgs {
   chatId: number;
   threadId: number;
@@ -128,7 +140,7 @@ export async function runBridge(
     sessionName: string;
     chatId: number;
     threadId: number;
-    questions: any[];
+    questions: BridgeQuestion[];
   },
   deps: BridgeOrchestratorDeps,
 ): Promise<BridgeResolution> {
@@ -137,7 +149,7 @@ export async function runBridge(
   try {
     const answers: Array<{ question: string; answer: string }> = [];
     for (let i = 0; i < state.questions.length; i++) {
-      const q = state.questions[i];
+      const q = state.questions[i]!;
       const askId = askIdFor(state.requestId, i);
       const allowCustom = q.multiSelect !== true;
 
@@ -163,7 +175,7 @@ export async function runBridge(
       const bridge = get(state.requestId);
       if (bridge) bridge.tgMessageIds.set(i, sent.messageId);
 
-      const askOptions = q.options.map((o: any) => ({
+      const askOptions = q.options.map((o) => ({
         label: o.label,
         description: o.description,
       }));

@@ -28,6 +28,7 @@ import {
   statSync,
 } from "fs";
 import { homedir } from "os";
+import { writeJsonLine } from "../../utils/socket-writer";
 import { join } from "path";
 import { STATE_DIR, parseRelayPortFilePid } from "../../paths";
 
@@ -321,15 +322,15 @@ function sendToBot(msg: Record<string, unknown>): boolean {
     );
     return false;
   }
-  try {
-    connectedClient.write(JSON.stringify(msg) + "\n");
-    return true;
-  } catch (err) {
+  // Enqueue via the backpressure-aware writer so a slow bot consumer cannot
+  // grow Node's internal write queue unboundedly. The returned promise is
+  // detached — failure surfaces via the stderr write below.
+  writeJsonLine(connectedClient, msg).catch((err) => {
     process.stderr.write(
       `channel-relay: sendToBot write failed: ${err} (type=${msg.type})\n`,
     );
-    return false;
-  }
+  });
+  return true;
 }
 
 function errorResult(text: string) {

@@ -123,7 +123,14 @@ export function wireRelayDisplay(
 
     botApi
       .setMessageReaction(chatId, messageId, [
-        { type: "emoji", emoji: msg.emoji as any },
+        // Telegram restricts emoji to a fixed allowlist (ReactionTypeEmoji["emoji"]);
+        // we receive an arbitrary string from the relay and let the API reject
+        // invalid values rather than narrow at the boundary.
+        {
+          type: "emoji",
+          emoji:
+            msg.emoji as import("@grammyjs/types").ReactionTypeEmoji["emoji"],
+        },
       ])
       .catch((err) => debug(`relay react: ${err}`));
   };

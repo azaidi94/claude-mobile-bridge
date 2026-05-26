@@ -39,6 +39,9 @@ execute-commands.json
 # Cursor
 .cursor
 
+# VS Code
+.vscode/
+
 # Claude Code user-specific settings
 .claude/settings.local.json
 .claude/settings.json
