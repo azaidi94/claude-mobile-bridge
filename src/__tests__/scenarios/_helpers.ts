@@ -23,23 +23,48 @@ import { join } from "path";
  * Establish an isolated STATE_DIR + minimal env. Call BEFORE any
  * production-code dynamic import (paths.ts reads the env var at module
  * load time).
+ *
+ * Idempotent within a process: scenario tests running in the same Bun
+ * process share one STATE_DIR. `paths.ts` caches `STATE_DIR` as a
+ * `const` evaluated at first module load, so the first scenario file's
+ * dir is the only one production code will ever scan. Returning the
+ * cached dir keeps later files' port-file writes visible to the scan.
  */
+let cachedStateDir: string | null = null;
 export function setupIsolatedStateDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "phase0-state-"));
-  process.env.CLAUDE_TELEGRAM_STATE_DIR = dir;
+  if (cachedStateDir) {
+    process.env.CLAUDE_TELEGRAM_STATE_DIR = cachedStateDir;
+    return cachedStateDir;
+  }
+  cachedStateDir = mkdtempSync(join(tmpdir(), "phase0-state-"));
+  process.env.CLAUDE_TELEGRAM_STATE_DIR = cachedStateDir;
   process.env.TELEGRAM_BOT_TOKEN =
     process.env.TELEGRAM_BOT_TOKEN ?? "test-token";
   process.env.TELEGRAM_ALLOWED_USERS =
     process.env.TELEGRAM_ALLOWED_USERS ?? "12345";
-  return dir;
+  // One-shot cleanup on process exit. All scenario test files share the
+  // same dir (paths.ts caches STATE_DIR at first module load), so we
+  // can't tear it down in any individual file's afterAll — whichever
+  // ran first would rip it out from under siblings. The OS cleans tmp
+  // dirs eventually anyway; this exit hook is just polite.
+  const captured = cachedStateDir;
+  process.on("exit", () => {
+    try {
+      rmSync(captured, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  });
+  return cachedStateDir;
 }
 
-export function teardownStateDir(dir: string): void {
-  try {
-    rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // silently ok: best-effort cleanup
-  }
+/**
+ * No-op when the shared dir is still in use by sibling test files.
+ * See `setupIsolatedStateDir` for the rationale. Cleanup happens on
+ * process exit instead.
+ */
+export function teardownStateDir(_dir: string): void {
+  // intentional no-op — see setupIsolatedStateDir
 }
 
 /* -------------------------------------------------------------------------- */
