@@ -223,7 +223,7 @@ export async function postQuestionToTelegram(
     expiryTimer,
   });
 
-  // Mirror to the Web UI: any open session pane subscribed to this
+  // Mirror to the Web UI - open session panes subscribed to this
   // sessionName's bus key sees the question as an interactive card.
   if (sessionName) {
     globalEventBus.emit(sessionName, {

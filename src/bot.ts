@@ -19,6 +19,7 @@ import {
   updatePinnedStatus,
   getGitBranch,
   resolveSessionContext,
+  type SessionContext,
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { getCurrentModelDisplayName } from "./session";
@@ -154,7 +155,7 @@ export function createBot(options: BotOptions): Bot {
         ctx.chat.type === "supergroup" &&
         options.onForumGroupDetected
       ) {
-        const isForum = (ctx.chat as any).is_forum;
+        const isForum = (ctx.chat as { is_forum?: boolean }).is_forum;
         if (isForum) {
           forumGroupDetected = true;
           options.onForumGroupDetected(ctx.chat.id);
@@ -164,7 +165,7 @@ export function createBot(options: BotOptions): Bot {
           bot.api
             .getChat(ctx.chat.id)
             .then((chat) => {
-              if ((chat as any).is_forum) {
+              if ((chat as { is_forum?: boolean }).is_forum) {
                 options.onForumGroupDetected!(ctx.chat!.id);
               } else {
                 forumGroupDetected = false; // not a forum — allow retry
@@ -235,7 +236,9 @@ export function createBot(options: BotOptions): Bot {
   // /execute, /settings, /app, /run, /watch, /unwatch, /retry, /groupmode,
   // /cleanzombie) keep their original signatures.
   const withSctx =
-    <T extends (ctx: Context, sctx?: any) => Promise<void>>(handler: T) =>
+    <T extends (ctx: Context, sctx?: SessionContext) => Promise<void>>(
+      handler: T,
+    ) =>
     async (ctx: Parameters<T>[0]) =>
       handler(ctx, resolveSessionContext(ctx));
 

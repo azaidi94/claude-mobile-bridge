@@ -61,7 +61,7 @@ export function renderText(
       })
       .then((r) => {
         if (!("messageId" in r)) {
-          debug(`tail text create dropped: ${(r as any).dropped}`);
+          debug(`tail text create dropped: ${r.dropped}`);
           return;
         }
         const stub = busStubMessage(chatId, r.messageId);

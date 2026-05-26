@@ -208,7 +208,7 @@ export function createMessageBus(api: Api): MessageBus {
     if (threadId !== undefined) opts.message_thread_id = threadId;
     if (silent) opts.disable_notification = true;
     if (replyTo) {
-      (opts as any).reply_parameters = { message_id: replyTo.messageId };
+      opts.reply_parameters = { message_id: replyTo.messageId };
     }
     if (replyMarkup) opts.reply_markup = replyMarkup;
     try {
@@ -222,7 +222,7 @@ export function createMessageBus(api: Api): MessageBus {
         if (threadId !== undefined) plainOpts.message_thread_id = threadId;
         if (silent) plainOpts.disable_notification = true;
         if (replyTo) {
-          (plainOpts as any).reply_parameters = {
+          plainOpts.reply_parameters = {
             message_id: replyTo.messageId,
           };
         }
@@ -258,11 +258,23 @@ export function createMessageBus(api: Api): MessageBus {
     try {
       let msg;
       if (kind === "photo") {
-        msg = await api.sendPhoto(chatId, input, baseOpts as any);
+        msg = await api.sendPhoto(
+          chatId,
+          input,
+          baseOpts as Parameters<Api["sendPhoto"]>[2],
+        );
       } else if (kind === "document") {
-        msg = await api.sendDocument(chatId, input, baseOpts as any);
+        msg = await api.sendDocument(
+          chatId,
+          input,
+          baseOpts as Parameters<Api["sendDocument"]>[2],
+        );
       } else {
-        msg = await api.sendVoice(chatId, input, baseOpts as any);
+        msg = await api.sendVoice(
+          chatId,
+          input,
+          baseOpts as Parameters<Api["sendVoice"]>[2],
+        );
       }
       return msg.message_id;
     } catch (err) {
@@ -276,11 +288,23 @@ export function createMessageBus(api: Api): MessageBus {
         const input2 = new InputFile(buf2, name);
         let msg;
         if (kind === "photo") {
-          msg = await api.sendPhoto(chatId, input2, plainOpts as any);
+          msg = await api.sendPhoto(
+            chatId,
+            input2,
+            plainOpts as Parameters<Api["sendPhoto"]>[2],
+          );
         } else if (kind === "document") {
-          msg = await api.sendDocument(chatId, input2, plainOpts as any);
+          msg = await api.sendDocument(
+            chatId,
+            input2,
+            plainOpts as Parameters<Api["sendDocument"]>[2],
+          );
         } else {
-          msg = await api.sendVoice(chatId, input2, plainOpts as any);
+          msg = await api.sendVoice(
+            chatId,
+            input2,
+            plainOpts as Parameters<Api["sendVoice"]>[2],
+          );
         }
         return msg.message_id;
       }

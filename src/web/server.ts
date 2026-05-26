@@ -6,7 +6,7 @@ import { createSystemRouter } from "./routes/system";
 import { createTasksRouter } from "./routes/tasks";
 import { createAuqBridgeRouter } from "./routes/auq-bridge";
 import { WEB_PORT, WEB_URL } from "../config";
-import { info } from "../logger";
+import { info, warn } from "../logger";
 import { resolve, dirname } from "path";
 
 const WEB_DIST = resolve(dirname(import.meta.dir), "..", "web", "dist");
@@ -21,19 +21,15 @@ export function startWebServer(): void {
       WEB_URL.startsWith("http://0.0.0.0");
     if (!isLocal) {
       const line = "═".repeat(70);
-      console.error(`\n${line}`);
-      console.error(
-        "SECURITY WARNING: WEB_AUTH_BYPASS=true with non-local WEB_URL",
+      warn(
+        `\n${line}\n` +
+          "SECURITY WARNING: WEB_AUTH_BYPASS=true with non-local WEB_URL\n" +
+          `  URL: ${WEB_URL}\n` +
+          "  The Mini App API is publicly reachable WITHOUT authentication.\n" +
+          "  Prefer WEB_AUTH_LAN_BYPASS=true (safe behind reverse proxy),\n" +
+          "  or WEB_AUTH_BYPASS=false to enforce Telegram initData.\n" +
+          `${line}`,
       );
-      console.error(`  URL: ${WEB_URL}`);
-      console.error(
-        "  The Mini App API is publicly reachable WITHOUT authentication.",
-      );
-      console.error(
-        "  Prefer WEB_AUTH_LAN_BYPASS=true (safe behind reverse proxy),",
-      );
-      console.error("  or WEB_AUTH_BYPASS=false to enforce Telegram initData.");
-      console.error(`${line}\n`);
     }
   }
 

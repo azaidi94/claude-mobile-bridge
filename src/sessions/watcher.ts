@@ -126,7 +126,7 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
       });
     if (entries.length === 0) return [];
 
-    // Filter out subagents: any process whose parent is also a claude process
+    // Filter out subagents - drop processes whose parent is also a claude process
     const allPids = new Set(entries.map((e) => e.pid));
     const rootEntries = entries.filter((e) => !allPids.has(e.ppid));
 
