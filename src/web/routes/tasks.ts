@@ -31,7 +31,9 @@ export function createTasksRouter(): Hono {
     const unsub = subscribe(getClaudeDir(), (evt) => {
       try {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
-      } catch {}
+      } catch {
+        // silently ok: SSE client disconnected mid-stream
+      }
     });
 
     const ping = setInterval(() => {
@@ -47,7 +49,9 @@ export function createTasksRouter(): Hono {
       clearInterval(ping);
       try {
         controller.close();
-      } catch {}
+      } catch {
+        // silently ok: controller may already be closed
+      }
     });
 
     return new Response(body, {

@@ -84,7 +84,9 @@ function writePortFile(port: number): void {
 function removePortFile(): void {
   try {
     unlinkSync(PORT_FILE);
-  } catch {}
+  } catch {
+    // silently ok: best-effort cleanup; port file may already be gone
+  }
 }
 
 /** Convert a cwd to the Claude projects directory name (slashes → dashes). */

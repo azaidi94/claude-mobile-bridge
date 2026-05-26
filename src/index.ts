@@ -374,7 +374,9 @@ if (existsSync(RESTART_FILE)) {
     warn(`restart msg: ${e}`);
     try {
       unlinkSync(RESTART_FILE);
-    } catch {}
+    } catch {
+      // silently ok: best-effort cleanup of restart marker
+    }
   }
 }
 

@@ -11,6 +11,7 @@
 
 import type { Api } from "grammy";
 import { info, warn } from "../../logger";
+import { safeSync } from "../../utils/safe-async";
 import {
   forceRefresh,
   getSession,
@@ -134,9 +135,11 @@ export async function startAutoWatch(
   // port file reported), sync the registry so other lookups see the
   // canonical id.
   if (resolved.sessionId !== sessionInfo.id) {
-    try {
-      updateSessionId(sessionName, resolved.sessionId);
-    } catch {}
+    safeSync(
+      "watch.update_session_id",
+      () => updateSessionId(sessionName, resolved.sessionId),
+      { severity: "debug" },
+    );
   }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {
@@ -259,9 +262,11 @@ export async function startWatchingSession(
   });
   watchState.speculativeTailerPath = resolved.speculative;
   if (resolved.sessionId !== sessionInfo.id) {
-    try {
-      updateSessionId(targetName, resolved.sessionId);
-    } catch {}
+    safeSync(
+      "auto_watch.update_session_id",
+      () => updateSessionId(targetName, resolved.sessionId),
+      { severity: "debug" },
+    );
   }
   const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {

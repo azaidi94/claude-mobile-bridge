@@ -126,7 +126,9 @@ export function _resetWatchesForTests(): void {
   for (const [, state] of watches) {
     try {
       state.tailer?.stop();
-    } catch {}
+    } catch {
+      // silently ok: test-reset path; tailer may already be stopped
+    }
     state.relayCleanup?.();
     if (state.idCheckInterval) clearInterval(state.idCheckInterval);
     forgetUsage(state.sessionId);

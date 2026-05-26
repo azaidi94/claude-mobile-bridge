@@ -8,6 +8,7 @@
 
 import type { Api } from "grammy";
 import { info } from "../../logger";
+import { safeSync } from "../../utils/safe-async";
 import { escapeHtml } from "../../formatting";
 import { getMessageBus } from "../../messaging";
 import { forceRefresh, getSession, updateSessionId } from "../../sessions";
@@ -235,9 +236,11 @@ export async function rebindTailerPath(
     // Optional belt: keep the watcher registry in sync if the new id isn't
     // already tracked under some other name. updateSessionId is a no-op if
     // the session isn't in cache, so it's safe.
-    try {
-      updateSessionId(watchState.sessionName, newId);
-    } catch {}
+    safeSync(
+      "watch.update_session_id",
+      () => updateSessionId(watchState.sessionName, newId),
+      { severity: "debug" },
+    );
   }
   const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
     if (event.type === "usage" && event.usage) {

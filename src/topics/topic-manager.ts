@@ -13,6 +13,7 @@ import {
   getTopicStore,
 } from "./topic-store";
 import { info, warn, debug } from "../logger";
+import { safeAsync } from "../utils/safe-async";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 import { scanPortFiles, updatePortFile } from "../relay/discovery";
 import { recordTopicCreated, recordTopicDeleted } from "./topic-ledger";
@@ -161,13 +162,18 @@ export class TopicManager {
     const mapping = getTopicBySession(sessionName);
     if (!mapping) return;
 
-    try {
-      await this.api.deleteForumTopic(this.chatId, mapping.topicId);
+    const ok = await safeAsync(
+      "topic.delete",
+      async () => {
+        await this.api.deleteForumTopic(this.chatId, mapping.topicId);
+        return true;
+      },
+      { fields: { session: sessionName, topic_id: mapping.topicId } },
+    );
+    if (ok) {
       info(
         `topic-manager: deleted topic ${mapping.topicId} for ${sessionName}`,
       );
-    } catch (err) {
-      warn(`topic-manager: deleteForumTopic failed for ${sessionName}: ${err}`);
     }
 
     removeTopicMapping(sessionName);
