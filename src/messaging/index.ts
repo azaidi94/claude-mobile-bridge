@@ -1,5 +1,7 @@
 export {
   createMessageBus,
+  setMessageBus,
+  getMessageBus,
   type MessageBus,
   type OutboundMessage,
   type SendResult,

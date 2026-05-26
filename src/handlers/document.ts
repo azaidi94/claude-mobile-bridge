@@ -23,6 +23,22 @@ import {
   info,
   warn,
 } from "../logger";
+import { getMessageBus } from "../messaging";
+
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: { format?: "plain" | "html"; threadId?: number } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+  });
+}
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -238,6 +254,9 @@ async function processArchive(
   const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
+  // Status message; kept as ctx.reply so api.deleteMessage below can target
+  // the returned message_id. TODO(phase-2): refactor status-message
+  // lifecycle to use bus.send + bus.edit.
   const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
     parse_mode: "HTML",
     message_thread_id: threadId,
@@ -324,16 +343,18 @@ async function processArchive(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
   } catch (error) {
@@ -351,9 +372,10 @@ async function processArchive(
     } catch {
       // Ignore
     }
-    await ctx.reply(
+    await busReply(
+      ctx,
       `❌ Failed to process archive: ${String(error).slice(0, 100)}`,
-      { message_thread_id: threadId },
+      { threadId },
     );
   } finally {
     stopProcessing();
@@ -436,16 +458,18 @@ async function processDocuments(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
   } finally {
@@ -496,9 +520,7 @@ async function processDocumentPaths(
   });
 
   if (documents.length === 0) {
-    await ctx.reply("❌ Failed to extract any documents.", {
-      message_thread_id: threadId,
-    });
+    await busReply(ctx, "❌ Failed to extract any documents.", { threadId });
     return;
   }
 
@@ -534,7 +556,7 @@ export async function handleDocument(
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
@@ -544,9 +566,10 @@ export async function handleDocument(
   // for the download. Falling through would silently mis-route to whichever
   // CC session shares the dir.
   if (sctx?.source === "cursor") {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ Documents aren't supported in Cursor topics yet — only text.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -563,8 +586,8 @@ export async function handleDocument(
 
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
-    await ctx.reply("❌ File too large. Maximum size is 10MB.", {
-      message_thread_id: threadId,
+    await busReply(ctx, "❌ File too large. Maximum size is 10MB.", {
+      threadId,
     });
     return;
   }
@@ -593,12 +616,13 @@ export async function handleDocument(
   });
 
   if (!isPdf && !isText && !isArchiveFile) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       `❌ Unsupported file type: ${extension || doc.mime_type}\n\n` +
         `Supported: PDF, archives (${ARCHIVE_EXTENSIONS.join(
           ", ",
         )}), ${TEXT_EXTENSIONS.join(", ")}`,
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -615,10 +639,11 @@ export async function handleDocument(
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -635,9 +660,7 @@ export async function handleDocument(
       userId,
       username,
     });
-    await ctx.reply("❌ Failed to download document.", {
-      message_thread_id: threadId,
-    });
+    await busReply(ctx, "❌ Failed to download document.", { threadId });
     return;
   }
 
@@ -652,9 +675,10 @@ export async function handleDocument(
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
+      await busReply(
+        ctx,
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-        { message_thread_id: threadId },
+        { threadId },
       );
       return;
     }
@@ -686,9 +710,10 @@ export async function handleDocument(
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
+      await busReply(
+        ctx,
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-        { message_thread_id: threadId },
+        { threadId },
       );
       return;
     }
@@ -714,9 +739,10 @@ export async function handleDocument(
         chatId,
         userId,
       });
-      await ctx.reply(
+      await busReply(
+        ctx,
         `❌ Failed to process document: ${String(error).slice(0, 100)}`,
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
     return;

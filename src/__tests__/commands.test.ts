@@ -366,6 +366,48 @@ const mockSessionMethods = {
   }),
 };
 
+// Bus mock — pushes into a per-test array so existing _replies-based
+// assertions keep working. The active array is swapped by createMockContext().
+let busSendSink: Array<{ text: string; options?: Record<string, unknown> }> =
+  [];
+const mockBusSend = mock(
+  async (msg: {
+    chatId: number;
+    threadId?: number;
+    content: string;
+    format?: string;
+    attachment?: { kind: string; path: string };
+  }) => {
+    // Translate bus shape back into the legacy ctx.reply { text, options }
+    // shape that assertions key off. parse_mode comes from `format`.
+    const options: Record<string, unknown> = {};
+    if (msg.format === "html") options.parse_mode = "HTML";
+    else if (msg.format === "markdown") options.parse_mode = "MarkdownV2";
+    if (msg.threadId !== undefined) options.message_thread_id = msg.threadId;
+    if (msg.attachment) options.attachment = msg.attachment;
+    busSendSink.push({ text: msg.content, options });
+    return { messageId: 12345 };
+  },
+);
+const mockBusEdit = mock(
+  async (
+    _messageId: number,
+    input: { chatId: number; content: string; format?: string },
+  ) => {
+    // Treat edits like sends for assertion purposes — tests typically check
+    // text content, not which TG primitive routed it.
+    const options: Record<string, unknown> = {};
+    if (input.format === "html") options.parse_mode = "HTML";
+    busSendSink.push({ text: input.content, options });
+    return { ok: true as const };
+  },
+);
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({ send: mockBusSend, edit: mockBusEdit }),
+  setMessageBus: mock(() => {}),
+  createMessageBus: mock(() => ({ send: mockBusSend, edit: mockBusEdit })),
+}));
+
 mock.module("../session", () => ({
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-6": "Opus 4.6",
@@ -420,6 +462,9 @@ function createMockContext(
 
   const replies: Array<{ text: string; options?: Record<string, unknown> }> =
     [];
+  // Route bus sends into the same array so existing _replies-based assertions
+  // catch bus-routed replies as well as ctx.reply ones.
+  busSendSink = replies;
 
   // Simulate grammy's ctx.match: text after the /command
   const matchResult = messageText.replace(/^\/\S+\s*/, "");
@@ -503,7 +548,7 @@ describe("commands: /start", () => {
 
     await handleStart(ctx as any);
 
-    expect(ctx.reply).toHaveBeenCalled();
+    expect(ctx._replies.length).toBeGreaterThan(0);
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
@@ -513,7 +558,7 @@ describe("commands: /start", () => {
 
     await handleStart(ctx as any);
 
-    expect(ctx.reply).toHaveBeenCalled();
+    expect(ctx._replies.length).toBeGreaterThan(0);
     expect(ctx._replies[0]?.text).toContain("Claude");
     expect(ctx._replies[0]?.options?.parse_mode).toBe("HTML");
   });

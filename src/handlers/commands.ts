@@ -79,6 +79,28 @@ import {
 } from "../logger";
 import type { OfflineSession } from "../sessions/offline";
 import { listOfflineSessions } from "../sessions/offline";
+import { getMessageBus } from "../messaging";
+
+/**
+ * Bus-routed reply helper. Replaces `ctx.reply(text)` /
+ * `ctx.reply(text, { parse_mode: "HTML" })` call sites. Caller must use
+ * `ctx.reply(...)` directly when passing `reply_markup`, `link_preview_options`,
+ * `reply_parameters`, etc.
+ */
+function busReply(
+  ctx: Context,
+  content: string,
+  format: "plain" | "html" = "plain",
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: ctx.message?.message_thread_id,
+    content,
+    format,
+  });
+}
 
 /** Max sessions to render in /sessions to stay under Telegram's keyboard/message caps. */
 const MAX_OFFLINE_SESSIONS = 25;
@@ -120,7 +142,7 @@ async function showSessionPicker(
 
   const sessions = getSessions();
   if (sessions.length === 0) {
-    await ctx.reply("No active sessions.");
+    await busReply(ctx, "No active sessions.");
     return true;
   }
   if (sessions.length === 1) {
@@ -131,6 +153,7 @@ async function showSessionPicker(
   for (const s of sessions) {
     keyboard.text(s.name, `${action}:${s.name}`).row();
   }
+  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
   await ctx.reply("Pick a session:", { reply_markup: keyboard });
   return true;
 }
@@ -347,17 +370,18 @@ export async function handleStart(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
   const sessionName = sctx?.sessionName ?? getSessions()[0]?.name ?? "none";
 
-  await ctx.reply(
+  await busReply(
+    ctx,
     `🤖 <b>Claude Coding Bot</b>\n\n` +
       `Active: <code>${sessionName}</code>\n\n` +
       `Use /help for commands`,
-    { parse_mode: "HTML" },
+    "html",
   );
 }
 
@@ -368,7 +392,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -405,11 +429,12 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "/pin — update pinned status",
       "/restart — restart bot",
     ].join("\n");
-    await ctx.reply(topicHelp, { parse_mode: "HTML" });
+    await busReply(ctx, topicHelp, "html");
     return;
   }
 
-  await ctx.reply(
+  await busReply(
+    ctx,
     `📚 <b>Commands</b>\n\n` +
       `<b>Sessions:</b>\n` +
       `/list - Show all sessions\n` +
@@ -443,7 +468,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `• Say "think" for extended reasoning\n` +
       `• Send voice/photo/files directly\n` +
       `• Use /new to reset conversation`,
-    { parse_mode: "HTML" },
+    "html",
   );
 }
 
@@ -458,8 +483,9 @@ export async function spawnDesktopClaudeSession(
   explicitPath: string,
   userId: number,
 ): Promise<void> {
+  const bus = getMessageBus();
   const claudePath = await assertDesktopSpawnReady((text) =>
-    api.sendMessage(chatId, text, { parse_mode: "HTML" }),
+    bus.send({ chatId, content: text, format: "html" }),
   );
   if (!claudePath) return;
 
@@ -478,13 +504,14 @@ export async function spawnDesktopClaudeSession(
         explicitPath,
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
+      await bus.send({
         chatId,
-        "❌ That project path is missing or not readable on the machine running the bot.\n\n" +
+        content:
+          "❌ That project path is missing or not readable on the machine running the bot.\n\n" +
           `<code>${escapeHtml(explicitPath)}</code>\n\n` +
           "Paths must exist on the Mac where the bot runs.",
-        { parse_mode: "HTML" },
-      );
+        format: "html",
+      });
       return;
     }
 
@@ -539,12 +566,13 @@ export async function spawnDesktopClaudeSession(
         stderr: term.stderr.slice(0, 500),
         durationMs: elapsedMs(spawnStartedAt),
       });
-      await api.sendMessage(
+      await bus.send({
         chatId,
-        "❌ Could not open Terminal.\n\n" +
+        content:
+          "❌ Could not open Terminal.\n\n" +
           `<code>${escapeHtml(term.stderr || "osascript failed")}</code>`,
-        { parse_mode: "HTML" },
-      );
+        format: "html",
+      });
       return;
     }
 
@@ -552,20 +580,23 @@ export async function spawnDesktopClaudeSession(
     // report success even if Terminal silently fails to launch
     // (Accessibility denied, profile issue), so we only commit the dir
     // after a port file confirms a live claude in it.
-    const statusMsg = await api.sendMessage(
+    const statusSend = await bus.send({
       chatId,
-      "⏳ Terminal opened — starting Claude.\n\n" +
+      content:
+        "⏳ Terminal opened — starting Claude.\n\n" +
         "<b>At the Mac:</b> if you see the development-channels menu, choose <b>1</b> (local development) and press Enter.\n\n" +
         "<b>Remote only:</b> set <code>DESKTOP_CLAUDE_COMMAND</code> to <code>…/scripts/claude-relay-launch.sh {dir}</code> (see README) so <code>expect</code> can send that for you.\n\n" +
         `Once the relay connects, <code>/pwd</code> and <code>/ls</code> will switch to this folder.\n\nWaiting for relay…`,
-      { parse_mode: "HTML" },
-    );
-    const editStatus = (text: string): Promise<unknown> =>
-      api
-        .editMessageText(chatId, statusMsg.message_id, text, {
-          parse_mode: "HTML",
-        })
+      format: "html",
+    });
+    const statusMessageId =
+      "messageId" in statusSend ? statusSend.messageId : null;
+    const editStatus = (text: string): Promise<unknown> => {
+      if (statusMessageId === null) return Promise.resolve();
+      return bus
+        .edit(statusMessageId, { chatId, content: text, format: "html" })
         .catch(() => {});
+    };
 
     await Bun.sleep(4000);
 
@@ -698,10 +729,11 @@ export async function spawnDesktopClaudeSession(
       explicitPath,
       durationMs: elapsedMs(spawnStartedAt),
     });
-    await api.sendMessage(
+    await bus.send({
       chatId,
-      `❌ Spawn failed: ${String(err).slice(0, 200)}`,
-    );
+      content: `❌ Spawn failed: ${String(err).slice(0, 200)}`,
+      format: "plain",
+    });
   }
 }
 
@@ -713,15 +745,13 @@ export async function handleNew(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (!chatId) return;
 
-  const ready = await assertDesktopSpawnReady((t) =>
-    ctx.reply(t, { parse_mode: "HTML" }),
-  );
+  const ready = await assertDesktopSpawnReady((t) => busReply(ctx, t, "html"));
   if (!ready) return;
 
   const text = ctx.message?.text || "";
@@ -733,20 +763,19 @@ export async function handleNew(ctx: Context): Promise<void> {
   try {
     const s = await stat(explicitPath);
     if (!s.isDirectory()) {
-      await ctx.reply("❌ Not a directory.");
+      await busReply(ctx, "❌ Not a directory.");
       return;
     }
   } catch {
-    await ctx.reply("❌ Path does not exist.");
+    await busReply(ctx, "❌ Path does not exist.");
     return;
   }
 
   const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
-  await ctx.reply(
+  await busReply(
+    ctx,
     `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
-    {
-      parse_mode: "HTML",
-    },
+    "html",
   );
 
   await spawnDesktopClaudeSession(ctx.api, chatId, explicitPath, userId!);
@@ -762,7 +791,7 @@ export async function handleStop(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -773,11 +802,11 @@ export async function handleStop(
   const result = state ? await state.stop() : false;
 
   if (result === "stopped") {
-    await ctx.reply("🛑 Query stopped.");
+    await busReply(ctx, "🛑 Query stopped.");
   } else if (result === "pending") {
-    await ctx.reply("⏳ Cancelling...");
+    await busReply(ctx, "⏳ Cancelling...");
   } else {
-    await ctx.reply("⏸️ Nothing running.");
+    await busReply(ctx, "⏸️ Nothing running.");
   }
 
   await Bun.sleep(100);
@@ -858,7 +887,7 @@ export async function sendPostKillSessionList(
   const sessions = getSessions();
 
   if (sessions.length === 0) {
-    await ctx.reply("No sessions available. Use /new to start one.");
+    await busReply(ctx, "No sessions available. Use /new to start one.");
     return;
   }
 
@@ -887,6 +916,7 @@ export async function sendPostKillSessionList(
     },
   ]);
 
+  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
   await ctx.reply(lines.join("\n"), {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: buttons },
@@ -904,7 +934,7 @@ export async function handleKill(
   const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -916,9 +946,10 @@ export async function handleKill(
     if (sessionInfo) {
       const { pid } = await killSession(sessionInfo, chatId, ctx.api);
       const pidStr = pid ? ` (PID ${pid})` : "";
-      await ctx.reply(
+      await busReply(
+        ctx,
         `💀 Killed <b>${escapeHtml(sessionInfo.name)}</b>${pidStr}`,
-        { parse_mode: "HTML" },
+        "html",
       );
       return;
     }
@@ -926,7 +957,7 @@ export async function handleKill(
 
   const sessions = getSessions();
   if (sessions.length === 0) {
-    await ctx.reply("No active sessions.");
+    await busReply(ctx, "No active sessions.");
     return;
   }
   await sendPostKillSessionList(ctx, chatId, "kill");
@@ -981,7 +1012,7 @@ export async function handleRespawn(
   const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
   if (!chatId || userId === undefined) return;
@@ -990,7 +1021,7 @@ export async function handleRespawn(
   if (sctx) {
     target = getSession(sctx.sessionName);
     if (!target) {
-      await ctx.reply("Session not found for this topic.");
+      await busReply(ctx, "Session not found for this topic.");
       return;
     }
   } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
@@ -1005,13 +1036,15 @@ export async function handleRespawn(
   }
 
   if (!target) {
-    await ctx.reply("No active session to respawn. Use /new to start one.");
+    await busReply(ctx, "No active session to respawn. Use /new to start one.");
     return;
   }
 
-  await ctx.reply(`♻️ Respawning <b>${escapeHtml(target.name)}</b>...`, {
-    parse_mode: "HTML",
-  });
+  await busReply(
+    ctx,
+    `♻️ Respawning <b>${escapeHtml(target.name)}</b>...`,
+    "html",
+  );
   await respawnSession(ctx.api, chatId, userId, target);
 }
 
@@ -1025,7 +1058,7 @@ export async function handleStatus(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -1036,7 +1069,7 @@ export async function handleStatus(
   const sessionName = sctx?.sessionName ?? state?.sessionName;
 
   if (!sessionName) {
-    await ctx.reply("No session. Use /list or /new.");
+    await busReply(ctx, "No session. Use /list or /new.");
     return;
   }
 
@@ -1116,7 +1149,7 @@ export async function handleStatus(
     lines.push(`\n🔗 <code>claude --resume ${resumeId}</code>`);
   }
 
-  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  await busReply(ctx, lines.join("\n"), "html");
 }
 
 /**
@@ -1129,7 +1162,7 @@ export async function handleModel(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -1146,6 +1179,7 @@ export async function handleModel(
     },
   ]);
 
+  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
   await ctx.reply(`🤖 <b>Model:</b> ${getCurrentModelDisplayName()}`, {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: buttons },
@@ -1159,19 +1193,40 @@ export async function handleRestart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
-  const msg = await ctx.reply("🔄 Restarting...");
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  const bus = getMessageBus();
+  const sent = await bus.send({
+    chatId,
+    threadId: ctx.message?.message_thread_id,
+    content: "🔄 Restarting...",
+    format: "plain",
+  });
+  const messageId = "messageId" in sent ? sent.messageId : null;
 
   try {
     triggerRestart();
-    await ctx.api.editMessageText(msg.chat.id, msg.message_id, "✅ Restarted");
+    if (messageId !== null) {
+      await bus.edit(messageId, {
+        chatId,
+        content: "✅ Restarted",
+        format: "plain",
+      });
+    }
   } catch (e) {
-    await ctx.api
-      .editMessageText(msg.chat.id, msg.message_id, `❌ Restart failed: ${e}`)
-      .catch(() => {});
+    if (messageId !== null) {
+      await bus
+        .edit(messageId, {
+          chatId,
+          content: `❌ Restart failed: ${e}`,
+          format: "plain",
+        })
+        .catch(() => {});
+    }
   }
 }
 
@@ -1185,29 +1240,29 @@ export async function handleRetry(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (!sctx || sctx.source !== "cc") {
-    await ctx.reply("Use /retry in a session topic.");
+    await busReply(ctx, "Use /retry in a session topic.");
     return;
   }
 
   const state = getSessionState(sctx.sessionName);
 
   if (!state.lastMessage) {
-    await ctx.reply("❌ No message to retry.");
+    await busReply(ctx, "❌ No message to retry.");
     return;
   }
 
   if (state.isRunning) {
-    await ctx.reply("⏳ Query running. Use /stop first.");
+    await busReply(ctx, "⏳ Query running. Use /stop first.");
     return;
   }
 
   const message = state.lastMessage;
-  await ctx.reply(`🔄 Retrying...`);
+  await busReply(ctx, `🔄 Retrying...`);
 
   const { handleText } = await import("./text");
 
@@ -1228,14 +1283,15 @@ export async function handleList(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const sessions = getSessions();
 
   if (sessions.length === 0) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "📋 No sessions\n\nStart Claude Code to see sessions here.",
     );
     return;
@@ -1264,7 +1320,7 @@ export async function handleList(ctx: Context): Promise<void> {
       if (branch) lines.push(`  🌿 ${escapeHtml(branch)}`);
       lines.push("");
     }
-    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+    await busReply(ctx, lines.join("\n"), "html");
   } else {
     // v1 behavior: show sessions with Switch buttons. The "active" marker
     // is no longer rendered after task 7g — there is no global active pointer.
@@ -1293,6 +1349,7 @@ export async function handleList(ctx: Context): Promise<void> {
       },
     ]);
 
+    // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
     await ctx.reply(lines.join("\n"), {
       parse_mode: "HTML",
       reply_markup:
@@ -1308,12 +1365,13 @@ export async function handleSwitch(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (isTopicChat(ctx)) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "ℹ️ /switch is not needed with topics. Just open a session topic.",
     );
     return;
@@ -1323,7 +1381,7 @@ export async function handleSwitch(ctx: Context): Promise<void> {
   const name = text.split(/\s+/)[1];
 
   if (!name) {
-    await ctx.reply("Usage: /switch &lt;name&gt;", { parse_mode: "HTML" });
+    await busReply(ctx, "Usage: /switch &lt;name&gt;", "html");
     return;
   }
 
@@ -1336,12 +1394,14 @@ export async function handleSwitch(ctx: Context): Promise<void> {
       const dir = info.dir.replace(/^\/Users\/[^/]+/, "~");
 
       await sendSwitchHistory(ctx, info);
-      await ctx.reply(`✅ <code>${name}</code>\n📁 <code>${dir}</code>`, {
-        parse_mode: "HTML",
-      });
+      await busReply(
+        ctx,
+        `✅ <code>${name}</code>\n📁 <code>${dir}</code>`,
+        "html",
+      );
     }
   } else {
-    await ctx.reply(`❌ "${name}" not found. Use /list.`);
+    await busReply(ctx, `❌ "${name}" not found. Use /list.`);
   }
 }
 
@@ -1352,13 +1412,13 @@ export async function handleRefresh(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   await forceRefresh();
   const sessions = getSessions();
-  await ctx.reply(`🔄 Refreshed. Found ${sessions.length} session(s).`);
+  await busReply(ctx, `🔄 Refreshed. Found ${sessions.length} session(s).`);
 }
 
 /**
@@ -1369,21 +1429,20 @@ export async function handleSessions(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   if (!chatId) return;
 
-  const ready = await assertDesktopSpawnReady((t) =>
-    ctx.reply(t, { parse_mode: "HTML" }),
-  );
+  const ready = await assertDesktopSpawnReady((t) => busReply(ctx, t, "html"));
   if (!ready) return;
 
   const allSessions = await listOfflineSessions();
 
   if (allSessions.length === 0) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "📋 No offline sessions found.\n\nAll sessions are either live or have no history.",
     );
     return;
@@ -1418,6 +1477,7 @@ export async function handleSessions(ctx: Context): Promise<void> {
     },
   ]);
 
+  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
   await ctx.reply(lines.join("\n"), {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: buttons },
@@ -1435,7 +1495,7 @@ export async function handlePin(
   const chatId = ctx.chat?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -1454,7 +1514,7 @@ export async function handlePin(
   };
 
   await updatePinnedStatus(ctx.api, chatId, status);
-  await ctx.reply("📌 Status pinned.");
+  await busReply(ctx, "📌 Status pinned.");
 }
 
 type GroupModeAction = "on" | "off" | "auto";
@@ -1487,7 +1547,7 @@ export async function handleGroupMode(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
@@ -1501,19 +1561,21 @@ export async function handleGroupMode(ctx: Context): Promise<void> {
   if (arg) {
     const action = parseGroupModeAction(arg);
     if (!action) {
-      await ctx.reply("❌ Usage: /groupmode [on|off|auto]");
+      await busReply(ctx, "❌ Usage: /groupmode [on|off|auto]");
       return;
     }
     const next = groupModeActionToSetting(action);
     await saveSetting({ groupMode: next });
-    await ctx.reply(
+    await busReply(
+      ctx,
       `✅ Group mode: <b>${groupModeLabel(next)}</b>. /restart to apply.`,
-      { parse_mode: "HTML" },
+      "html",
     );
     return;
   }
 
   const current = getGroupModeSetting();
+  // TODO(phase-2 keyboards): bus doesn't yet carry inline_keyboard.
   await ctx.reply(renderGroupModeText(current), {
     parse_mode: "HTML",
     reply_markup: buildGroupModeKeyboard(current),
@@ -1554,13 +1616,13 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const store = getTopicStore();
   if (!store.chatId) {
-    await ctx.reply("ℹ️ No forum group registered — nothing to clean.");
+    await busReply(ctx, "ℹ️ No forum group registered — nothing to clean.");
     return;
   }
 
@@ -1653,7 +1715,8 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
     for (let id = 2; id <= upper; id++) {
       if (!live.has(id)) candidates.push(id);
     }
-    await ctx.reply(
+    await busReply(
+      ctx,
       `🧹 Sweeping topic ids 2..${upper} (${candidates.length} to probe). ` +
         `This may take a moment…`,
     );
@@ -1668,15 +1731,17 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
     ].sort((a, b) => a - b);
     if (candidates.length === 0) {
       const prefix = pruneNote ? `🧹 ${pruneNote}\n` : "";
-      await ctx.reply(
+      await busReply(
+        ctx,
         `${prefix}✅ No zombies found. ${store.topics.length} live topic(s).\n` +
           `Try <code>/cleanzombie sweep</code> to probe by id range.`,
-        { parse_mode: "HTML" },
+        "html",
       );
       return;
     }
     const prefix = pruneNote ? `${pruneNote} ` : "";
-    await ctx.reply(
+    await busReply(
+      ctx,
       `🧹 ${prefix}Cleaning ${candidates.length} zombie topic(s)…`,
     );
   }
@@ -1732,7 +1797,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
       .slice(0, 5)
       .join(", ")}`;
   }
-  await ctx.reply(reply);
+  await busReply(ctx, reply);
 }
 
 /** Callback handler for gm:<on|off|auto> — updates the setting and re-renders. */
@@ -1772,22 +1837,20 @@ export async function handlePwd(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const [allowed, retryAfter] = rateLimiter.check(userId!);
   if (!allowed) {
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    await busReply(ctx, `⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
     return;
   }
 
   const state =
     sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   const dir = sctx?.sessionDir || state?.workingDir || getWorkingDir();
-  await ctx.reply(`📁 <code>${escapeHtml(dir)}</code>`, {
-    parse_mode: "HTML",
-  });
+  await busReply(ctx, `📁 <code>${escapeHtml(dir)}</code>`, "html");
 }
 
 /**
@@ -1802,13 +1865,13 @@ export async function handleCd(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const [allowed, retryAfter] = rateLimiter.check(userId!);
   if (!allowed) {
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    await busReply(ctx, `⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
     return;
   }
 
@@ -1817,7 +1880,7 @@ export async function handleCd(
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   if (!rawPath) {
-    await ctx.reply("Usage: /cd &lt;path&gt;", { parse_mode: "HTML" });
+    await busReply(ctx, "Usage: /cd &lt;path&gt;", "html");
     return;
   }
 
@@ -1829,7 +1892,7 @@ export async function handleCd(
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {
-    await ctx.reply("❌ Path not in allowed directories.");
+    await busReply(ctx, "❌ Path not in allowed directories.");
     return;
   }
 
@@ -1837,20 +1900,22 @@ export async function handleCd(
   try {
     const stats = await stat(targetPath);
     if (!stats.isDirectory()) {
-      await ctx.reply("❌ Not a directory.");
+      await busReply(ctx, "❌ Not a directory.");
       return;
     }
   } catch {
-    await ctx.reply("❌ Path does not exist.");
+    await busReply(ctx, "❌ Path does not exist.");
     return;
   }
 
   if (state) state.setWorkingDir(targetPath);
   // No-sctx path: /cd is a per-session concept; without a session we cannot
   // persist the new dir. Surface the path but leave global default unchanged.
-  await ctx.reply(`📂 Now in: <code>${escapeHtml(targetPath)}</code>`, {
-    parse_mode: "HTML",
-  });
+  await busReply(
+    ctx,
+    `📂 Now in: <code>${escapeHtml(targetPath)}</code>`,
+    "html",
+  );
 }
 
 /**
@@ -1865,13 +1930,13 @@ export async function handleLs(
   const userId = ctx.from?.id;
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const [allowed, retryAfter] = rateLimiter.check(userId!);
   if (!allowed) {
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    await busReply(ctx, `⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
     return;
   }
 
@@ -1885,7 +1950,7 @@ export async function handleLs(
 
   // Validate path is allowed
   if (!isPathAllowed(targetPath)) {
-    await ctx.reply("❌ Path not in allowed directories.");
+    await busReply(ctx, "❌ Path not in allowed directories.");
     return;
   }
 
@@ -1893,9 +1958,10 @@ export async function handleLs(
     const entries = await readdir(targetPath, { withFileTypes: true });
 
     if (entries.length === 0) {
-      await ctx.reply(
+      await busReply(
+        ctx,
         `📁 <code>${escapeHtml(targetPath)}</code>\n\n<i>(empty)</i>`,
-        { parse_mode: "HTML" },
+        "html",
       );
       return;
     }
@@ -1929,9 +1995,9 @@ export async function handleLs(
       lines.push(`\n<i>... and ${entries.length - 50} more</i>`);
     }
 
-    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+    await busReply(ctx, lines.join("\n"), "html");
   } catch {
-    await ctx.reply("❌ Cannot read directory.");
+    await busReply(ctx, "❌ Cannot read directory.");
   }
 }
 
@@ -1945,13 +2011,13 @@ export async function handleLs(
 export async function handleApp(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
 
   const [allowed, retryAfter] = rateLimiter.check(userId!);
   if (!allowed) {
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    await busReply(ctx, `⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
     return;
   }
 
@@ -1959,6 +2025,8 @@ export async function handleApp(ctx: Context): Promise<void> {
   const url = WEB_URL;
   const threadId = ctx.message?.message_thread_id;
 
+  // TODO(phase-2 link_preview/keyboards): bus doesn't yet carry
+  // link_preview_options or inline_keyboard.
   if (shortUrl) {
     await ctx.reply(`Open the Mini App:\n${shortUrl}`, {
       message_thread_id: threadId,
@@ -1995,7 +2063,7 @@ export async function handleRun(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await busReply(ctx, "Unauthorized.");
     return;
   }
   if (!chatId) return;
@@ -2004,23 +2072,25 @@ export async function handleRun(ctx: Context): Promise<void> {
   const text = (ctx.message?.text ?? "").replace(/^\/run(?:@\S+)?\s*/, "");
   const prompt = text.trim();
   if (!prompt) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "Usage: <code>/run &lt;prompt&gt;</code>\n\nFires the prompt without waiting for the reply, then pings <b>✅ /run done</b> when the turn ends.",
-      { parse_mode: "HTML", message_thread_id: threadId },
+      "html",
     );
     return;
   }
 
   if (threadId === undefined) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "/run only works inside a session topic — use it where the watch is active.",
     );
     return;
   }
   if (!isWatching(chatId, threadId)) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "/run needs an active watch on this topic. Send a message first to auto-watch, or use /watch.",
-      { message_thread_id: threadId },
     );
     return;
   }
@@ -2032,9 +2102,9 @@ export async function handleRun(ctx: Context): Promise<void> {
   // completion would silently drop the first run's ping.
   const armed = markPendingRunCompletion(chatId, threadId, prompt);
   if (armed === "already-pending") {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "⏳ another /run is still pending in this topic — wait for its ✅ before queuing another.",
-      { message_thread_id: threadId },
     );
     return;
   }
@@ -2045,9 +2115,7 @@ export async function handleRun(ctx: Context): Promise<void> {
       chatId,
       threadId,
     });
-    await ctx.reply("⚠ couldn't arm completion ping (watch lost).", {
-      message_thread_id: threadId,
-    });
+    await busReply(ctx, "⚠ couldn't arm completion ping (watch lost).");
     return;
   }
 
@@ -2055,15 +2123,11 @@ export async function handleRun(ctx: Context): Promise<void> {
   if (!queued) {
     // Roll back the armed state so a retry isn't blocked by "already-pending".
     clearPendingRunCompletion(chatId, threadId);
-    await ctx.reply("❌ relay unavailable — couldn't queue.", {
-      message_thread_id: threadId,
-    });
+    await busReply(ctx, "❌ relay unavailable — couldn't queue.");
     return;
   }
 
-  await ctx.reply("▶ queued — will ping when done.", {
-    message_thread_id: threadId,
-  });
+  await busReply(ctx, "▶ queued — will ping when done.");
   info("run: queued", {
     opId,
     chatId,

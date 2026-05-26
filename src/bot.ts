@@ -9,6 +9,7 @@ import { Bot, type Context } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { installBridgeHealthTransformer } from "./bridge-health";
+import { createMessageBus, setMessageBus } from "./messaging";
 import { ALLOWED_USERS } from "./config";
 import { getGroupModeSetting } from "./settings";
 import {
@@ -69,6 +70,10 @@ export interface BotOptions {
  */
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
+  // Install the global MessageBus singleton. All handlers route outbound
+  // messages through getMessageBus().send/.edit — this is the only
+  // construction site.
+  setMessageBus(createMessageBus(bot.api));
   let forumGroupDetected = false;
 
   // Honor Telegram's retry_after on 429 responses so transient throttling

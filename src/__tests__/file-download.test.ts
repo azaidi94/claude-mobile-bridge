@@ -104,6 +104,43 @@ mock.module("../security", () => ({
   isAuthorized: (userId: number, allowed: number[]) => allowed.includes(userId),
 }));
 
+// Bus mock — translates bus.send(attachment=...) into the photos/documents
+// arrays the existing createMockContext exposes, and plain sends into _replies.
+let busSinks: {
+  replies: Array<{ text: string }>;
+  photos: Array<{ caption?: string }>;
+  documents: Array<{ caption?: string }>;
+} = { replies: [], photos: [], documents: [] };
+type BusSendResult =
+  | { messageId: number }
+  | { dropped: "dedup" | "ratelimit" | "error"; reason?: string };
+const mockBusSend = mock(
+  async (msg: {
+    chatId: number;
+    threadId?: number;
+    content: string;
+    format?: string;
+    attachment?: { kind: "photo" | "document" | "voice"; path: string };
+  }): Promise<BusSendResult> => {
+    if (msg.attachment?.kind === "photo") {
+      busSinks.photos.push({ caption: msg.content });
+      return { messageId: 1 };
+    }
+    if (msg.attachment?.kind === "document") {
+      busSinks.documents.push({ caption: msg.content });
+      return { messageId: 1 };
+    }
+    busSinks.replies.push({ text: msg.content });
+    return { messageId: 1 };
+  },
+);
+const mockBusEdit = mock(async () => ({ ok: true as const }));
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({ send: mockBusSend, edit: mockBusEdit }),
+  setMessageBus: mock(() => {}),
+  createMessageBus: mock(() => ({ send: mockBusSend, edit: mockBusEdit })),
+}));
+
 const TEST_DIR = "/tmp/test-file-download";
 
 beforeEach(async () => {
@@ -118,7 +155,11 @@ describe("file-download: sendFileToTelegram", () => {
     const photos: Array<{ caption?: string }> = [];
     const documents: Array<{ caption?: string }> = [];
 
+    // Route the bus mock's records into these arrays.
+    busSinks = { replies, photos, documents };
+
     return {
+      chat: { id: 123 },
       reply: mock(async (text: string) => {
         replies.push({ text });
         return { chat: { id: 123 }, message_id: replies.length };
@@ -280,20 +321,37 @@ describe("file-download: sendFileToTelegram", () => {
     const { sendFileToTelegram } = await import("../handlers/streaming");
     const ctx = createMockContext();
 
-    // Make replyWithPhoto fail
-    ctx.replyWithPhoto = mock(async () => {
-      throw new Error("Photo too large");
-    }) as any;
+    // Override the bus mock for this test: photo send returns dropped,
+    // document send succeeds. After the test, restore default behaviour.
+    const originalImpl = mockBusSend.getMockImplementation();
+    mockBusSend.mockImplementation(
+      async (msg: {
+        attachment?: { kind: "photo" | "document" | "voice"; path: string };
+        content: string;
+      }) => {
+        if (msg.attachment?.kind === "photo") {
+          return { dropped: "error" as const, reason: "Photo too large" };
+        }
+        if (msg.attachment?.kind === "document") {
+          busSinks.documents.push({ caption: msg.content });
+          return { messageId: 1 };
+        }
+        busSinks.replies.push({ text: msg.content });
+        return { messageId: 1 };
+      },
+    );
 
     const filePath = join(TEST_DIR, "big.jpg");
     await writeFile(filePath, "fake-big-jpeg");
 
-    await sendFileToTelegram(ctx as any, filePath);
-
-    // Should fall back to document
-    expect(ctx._documents.length).toBe(1);
-
-    await unlink(filePath);
+    try {
+      await sendFileToTelegram(ctx as any, filePath);
+      // Should fall back to document
+      expect(ctx._documents.length).toBe(1);
+    } finally {
+      if (originalImpl) mockBusSend.mockImplementation(originalImpl);
+      await unlink(filePath);
+    }
   });
 
   test("resolves path traversal before checking", async () => {
@@ -426,8 +484,11 @@ describe("file-download: createStatusCallback send_file", () => {
   function createMockContext() {
     const replies: Array<{ text: string }> = [];
     const documents: Array<{ caption?: string }> = [];
+    // Route bus into these arrays.
+    busSinks = { replies, photos: [], documents };
 
     return {
+      chat: { id: 123 },
       reply: mock(async (text: string) => {
         replies.push({ text });
         return { chat: { id: 123 }, message_id: replies.length };
@@ -474,22 +535,37 @@ describe("file-download: createStatusCallback send_file", () => {
     const ctx = createMockContext();
     const state = new StreamingState();
 
-    // Make all file operations fail
-    ctx.replyWithDocument = mock(async () => {
-      throw new Error("Internal network error with sensitive details");
-    }) as any;
+    // Make bus.send throw for attachments; the plain-text fallback reply
+    // must succeed so we can assert on its text.
+    const originalImpl = mockBusSend.getMockImplementation();
+    mockBusSend.mockImplementation(
+      async (msg: {
+        attachment?: { kind: string; path: string };
+        content: string;
+      }) => {
+        if (msg.attachment) {
+          throw new Error("Internal network error with sensitive details");
+        }
+        busSinks.replies.push({ text: msg.content });
+        return { messageId: 1 };
+      },
+    );
 
-    const callback = createStatusCallback(ctx as any, state);
-    const filePath = join(TEST_DIR, "fail-test.txt");
-    await writeFile(filePath, "content");
+    try {
+      const callback = createStatusCallback(ctx as any, state);
+      const filePath = join(TEST_DIR, "fail-test.txt");
+      await writeFile(filePath, "content");
 
-    await callback("send_file", filePath);
+      await callback("send_file", filePath);
 
-    // Should get a generic error, not the raw internal error
-    const errorReply = ctx._replies.find((r) => r.text.includes("Failed"));
-    expect(errorReply?.text).toBe("⚠️ Failed to send file.");
-    expect(errorReply?.text).not.toContain("Internal network");
+      // Should get a generic error, not the raw internal error
+      const errorReply = ctx._replies.find((r) => r.text.includes("Failed"));
+      expect(errorReply?.text).toBe("⚠️ Failed to send file.");
+      expect(errorReply?.text).not.toContain("Internal network");
 
-    await unlink(filePath);
+      await unlink(filePath);
+    } finally {
+      if (originalImpl) mockBusSend.mockImplementation(originalImpl);
+    }
   });
 });

@@ -23,6 +23,22 @@ import {
   info,
   warn,
 } from "../logger";
+import { getMessageBus } from "../messaging";
+
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: { format?: "plain" | "html"; threadId?: number } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+  });
+}
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -117,16 +133,18 @@ async function processPhotos(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
   } finally {
@@ -152,7 +170,7 @@ export async function handlePhoto(
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
@@ -164,9 +182,10 @@ export async function handlePhoto(
   // session that happens to share the dir. Cursor doesn't currently accept
   // image attachments through the CDP bridge either.
   if (sctx?.source === "cursor") {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ Photos aren't supported in Cursor topics yet — only text.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -203,10 +222,11 @@ export async function handlePhoto(
     claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -223,14 +243,19 @@ export async function handlePhoto(
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
+      await busReply(
+        ctx,
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-        { message_thread_id: threadId },
+        { threadId },
       );
       return;
     }
 
-    // Show status immediately
+    // Show status immediately. Kept as ctx.reply so the returned
+    // message_id can be used by api.editMessageText/deleteMessage below;
+    // the bus's send/edit pair would also work but requires plumbing
+    // the id back through processPhotos. TODO(phase-2): convert when
+    // the status-message lifecycle is refactored.
     statusMsg = await ctx.reply("📷 Processing image...", {
       message_thread_id: threadId,
     });
@@ -247,26 +272,21 @@ export async function handlePhoto(
       username,
     });
     if (statusMsg) {
-      try {
-        await ctx.api.editMessageText(
-          statusMsg.chat.id,
-          statusMsg.message_id,
-          "❌ Failed to download photo.",
-        );
-      } catch (editError) {
+      const editRes = await getMessageBus().edit(statusMsg.message_id, {
+        chatId: statusMsg.chat.id,
+        content: "❌ Failed to download photo.",
+        format: "plain",
+      });
+      if (!editRes.ok) {
         debug("photo: failed to edit status message", {
           chatId,
           messageId: statusMsg.message_id,
-          err: String(editError),
+          reason: editRes.reason,
         });
-        await ctx.reply("❌ Failed to download photo.", {
-          message_thread_id: threadId,
-        });
+        await busReply(ctx, "❌ Failed to download photo.", { threadId });
       }
     } else {
-      await ctx.reply("❌ Failed to download photo.", {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, "❌ Failed to download photo.", { threadId });
     }
     return;
   }

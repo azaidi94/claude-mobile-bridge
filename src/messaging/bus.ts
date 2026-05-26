@@ -89,6 +89,32 @@ function isMessageMissingError(err: unknown): boolean {
 
 // --- Implementation -------------------------------------------------------
 
+// --- Singleton -----------------------------------------------------------
+
+let _instance: MessageBus | null = null;
+
+/**
+ * Install the global MessageBus instance. Called once in `src/bot.ts`
+ * after the `Bot` is constructed. Tests can override by re-calling.
+ */
+export function setMessageBus(bus: MessageBus): void {
+  _instance = bus;
+}
+
+/**
+ * Get the global MessageBus instance. Throws if uninitialised — that's a
+ * programmer error (the bus must be wired in `bot.ts` before any handler
+ * runs).
+ */
+export function getMessageBus(): MessageBus {
+  if (!_instance) {
+    throw new Error(
+      "MessageBus not initialised — call setMessageBus(createMessageBus(api)) at startup",
+    );
+  }
+  return _instance;
+}
+
 export function createMessageBus(api: Api): MessageBus {
   // dedupKey → expiresAt (ms epoch). Cleanup is lazy.
   const dedupCache = new Map<string, number>();
