@@ -116,7 +116,9 @@ export async function backfillPortFileSessionIds(): Promise<void> {
       );
       if (!id) continue;
       claimed.add(id);
-      updatePortFile(pf.pid, { sessionId: id });
+      // Await the write so the next scan (callers typically do one
+      // immediately) sees the merged sessionId on disk.
+      await updatePortFile(pf.pid, { sessionId: id });
       backfilled++;
       info(
         `backfill: wrote sessionId=${id} into port file for pid=${pf.pid} cwd=${pf.cwd}`,

@@ -152,7 +152,7 @@ const updatePortFileQueue = new Map<number, Promise<void>>();
 export function updatePortFile(
   relayPid: number,
   updates: Partial<PortFileData>,
-): void {
+): Promise<void> {
   const prev = updatePortFileQueue.get(relayPid) ?? Promise.resolve();
   const next = prev.then(() => doUpdatePortFile(relayPid, updates));
   updatePortFileQueue.set(
@@ -163,6 +163,10 @@ export function updatePortFile(
       }
     }),
   );
+  // Returning the queued promise lets startup/test paths (e.g.
+  // backfillPortFileSessionIds) await the write before re-reading
+  // the dir. Production call sites that don't care can ignore it.
+  return next;
 }
 
 function doUpdatePortFile(
