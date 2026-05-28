@@ -15,17 +15,28 @@ import type { Socket } from "net";
 const queues = new WeakMap<Socket, Promise<void>>();
 
 /**
+ * Max time to wait on a single `drain` before giving up. A remote that stops
+ * reading but keeps the TCP connection open never fires `drain`; without this
+ * cap the pending write — and every write queued behind it — would hang
+ * forever, silently wedging the channel. On timeout we tear the socket down so
+ * the relay's close→reconnect path recovers instead.
+ */
+const DRAIN_TIMEOUT_MS = 30_000;
+
+/**
  * Queue a newline-delimited JSON message on `socket`, respecting backpressure.
  *
  * Resolves once the message has been handed to the kernel (write returned
  * true) or the previously-full buffer has drained. Rejects if the socket
- * errors before the write completes.
+ * errors before the write completes, or if `drain` doesn't fire within
+ * `drainTimeoutMs` (in which case the socket is destroyed).
  *
  * Successive calls to the same socket queue in arrival order.
  */
 export function writeJsonLine(
   socket: Socket,
   msg: Record<string, unknown>,
+  drainTimeoutMs: number = DRAIN_TIMEOUT_MS,
 ): Promise<void> {
   const line = JSON.stringify(msg) + "\n";
   const prev = queues.get(socket) ?? Promise.resolve();
@@ -38,12 +49,25 @@ export function writeJsonLine(
           return;
         }
         let settled = false;
-        const onError = (err: Error) => {
+        let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+        function cleanup() {
+          socket.removeListener("error", onError);
+          socket.removeListener("drain", onDrain);
+          if (drainTimer) clearTimeout(drainTimer);
+        }
+        function onError(err: Error) {
           if (settled) return;
           settled = true;
-          socket.removeListener("error", onError);
+          cleanup();
           reject(err);
-        };
+        }
+        function onDrain() {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        }
         socket.once("error", onError);
 
         const ok = socket.write(line, (err) => {
@@ -57,17 +81,24 @@ export function writeJsonLine(
         if (ok) {
           if (!settled) {
             settled = true;
-            socket.removeListener("error", onError);
+            cleanup();
             resolve();
           }
           return;
         }
-        socket.once("drain", () => {
+        // Buffer full: resolve on 'drain', but bound the wait so a stalled
+        // remote can't wedge this socket's whole write queue indefinitely.
+        socket.once("drain", onDrain);
+        drainTimer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          socket.removeListener("error", onError);
-          resolve();
-        });
+          cleanup();
+          socket.destroy();
+          reject(
+            new Error(`socket write drain timeout after ${drainTimeoutMs}ms`),
+          );
+        }, drainTimeoutMs);
+        drainTimer.unref?.();
       }),
   );
   // Swallow rejection from the chain so a single failed write doesn't stall

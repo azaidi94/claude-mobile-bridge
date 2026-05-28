@@ -337,6 +337,15 @@ export function createMessageBus(api: Api): MessageBus {
       const rkey = rateKey(msg.chatId, msg.threadId);
       const got = await waitForToken(rkey);
       if (!got) {
+        // Surfaced at warn (not just the structured info line) so a sustained
+        // burst that outruns the token bucket is visible in ops — the user
+        // sees a silent gap otherwise.
+        warn("bus.send ratelimit drop", {
+          opId,
+          chatId: msg.chatId,
+          threadId: msg.threadId,
+          kind,
+        });
         info("bus.send", {
           opId,
           chatId: msg.chatId,
