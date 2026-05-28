@@ -8,6 +8,18 @@
 import { describe, expect, test, beforeEach, mock, spyOn } from "bun:test";
 import { DESKTOP_SPAWN_CONFIG_MOCK } from "./config-mock-desktop";
 
+// Stub the message bus so handlers calling busReply (commands.ts, callback.ts,
+// text.ts) don't blow up during tests. The bus is initialised in bot.ts in
+// production; tests bypass that wiring.
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async () => ({ messageId: 1 }),
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 // Mock config before importing handlers
 const MOCK_ALLOWED_USERS = [123456, 789012];
 
@@ -70,9 +82,73 @@ let mockActiveSession: {
   info: { dir: string; id?: string; name: string; lastActivity?: number };
 } | null = null;
 
+const stubSessionState = {
+  get sessionId() {
+    return mockSessionState.sessionId;
+  },
+  get sessionName() {
+    return mockSessionState.sessionName;
+  },
+  get workingDir() {
+    return mockSessionState.workingDir;
+  },
+  get lastMessage() {
+    return mockSessionState.lastMessage;
+  },
+  set lastMessage(v: string | null) {
+    mockSessionState.lastMessage = v;
+  },
+  get isRunning() {
+    return mockSessionState.isRunning;
+  },
+  get isActive() {
+    return mockSessionState.isActive;
+  },
+  get isPlanMode() {
+    return mockSessionState.isPlanMode;
+  },
+  get pendingPlanApproval() {
+    return mockSessionState.pendingPlanApproval;
+  },
+  set pendingPlanApproval(v: any) {
+    mockSessionState.pendingPlanApproval = v;
+  },
+  get stop() {
+    return mockSessionMethods.stop;
+  },
+  get clearStopRequested() {
+    return mockSessionMethods.clearStopRequested;
+  },
+  get kill() {
+    return mockSessionMethods.kill;
+  },
+  get setWorkingDir() {
+    return mockSessionMethods.setWorkingDir;
+  },
+  get loadFromRegistry() {
+    return mockSessionMethods.loadFromRegistry;
+  },
+  get startProcessing() {
+    return mockSessionMethods.startProcessing;
+  },
+  get consumeInterruptFlag() {
+    return mockSessionMethods.consumeInterruptFlag;
+  },
+  get clearPendingPlanApproval() {
+    return mockSessionMethods.clearPendingPlanApproval;
+  },
+};
+
+mock.module("../sessions/session-state", () => ({
+  getSessionState: mock(() => stubSessionState),
+  dropSessionState: mock(() => {}),
+  setOnSessionStateCreated: mock(() => {}),
+}));
+
 mock.module("../sessions", () => ({
   getSessions: mock(() => mockSessions),
-  getActiveSession: mock(() => mockActiveSession),
+  getActiveSessionName: mock(() => mockActiveSession?.name ?? null),
+  getSessionState: mock(() => stubSessionState),
   setActiveSession: mock((name: string) => {
     const found = mockSessions.find((s) => s.name === name);
     if (found) {
@@ -101,12 +177,25 @@ mock.module("../sessions", () => ({
   forceRefresh: mock(() => Promise.resolve()),
   updatePinnedStatus: mock(() => Promise.resolve()),
   removeSession: mock(() => true),
+  updateSessionId: mock(() => {}),
   getGitBranch: mock(() => Promise.resolve("main")),
   getSession: mock(() => null),
   getRecentHistory: mock(() => Promise.resolve([])),
   formatHistoryMessage: mock(() => ""),
   sendSwitchHistory: mock(() => Promise.resolve()),
   suppressDirNotifications: mock(() => {}),
+  resolveSessionContext: mock(() => {
+    if (!mockActiveSession) return undefined;
+    return {
+      source: "cc" as const,
+      sessionName: mockActiveSession.name,
+      sessionId: mockActiveSession.info?.id,
+      sessionDir: mockActiveSession.info?.dir,
+      topicId: undefined,
+      chatId: 789,
+    };
+  }),
+  dropSessionState: mock(() => {}),
 }));
 
 // Mock session singleton with plan mode state
@@ -153,63 +242,6 @@ const mockSessionMethods = {
 };
 
 mock.module("../session", () => ({
-  session: {
-    get isRunning() {
-      return mockSessionState.isRunning;
-    },
-    get isActive() {
-      return mockSessionState.isActive;
-    },
-    get sessionId() {
-      return mockSessionState.sessionId;
-    },
-    set sessionId(val: string | null) {
-      mockSessionState.sessionId = val;
-    },
-    get sessionName() {
-      return mockSessionState.sessionName;
-    },
-    get workingDir() {
-      return mockSessionState.workingDir;
-    },
-    get lastMessage() {
-      return mockSessionState.lastMessage;
-    },
-    set lastMessage(val: string | null) {
-      mockSessionState.lastMessage = val;
-    },
-    get lastActivity() {
-      return mockSessionState.lastActivity;
-    },
-    get lastTool() {
-      return mockSessionState.lastTool;
-    },
-    get currentTool() {
-      return mockSessionState.currentTool;
-    },
-    get lastError() {
-      return mockSessionState.lastError;
-    },
-    get lastUsage() {
-      return mockSessionState.lastUsage;
-    },
-    get queryStarted() {
-      return mockSessionState.queryStarted;
-    },
-    get isPlanMode() {
-      return mockSessionState.isPlanMode;
-    },
-    get pendingPlanApproval() {
-      return mockSessionState.pendingPlanApproval;
-    },
-    get model() {
-      return "claude-opus-4-6";
-    },
-    get modelDisplayName() {
-      return "Opus 4.6";
-    },
-    ...mockSessionMethods,
-  },
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-5-20250514": "Opus 4.5",
@@ -217,6 +249,11 @@ mock.module("../session", () => ({
     "claude-haiku-4-5-20250514": "Haiku 4.5",
   },
   getModelDisplayName: (m: string) => m,
+  getCurrentModel: () => "claude-opus-4-6",
+  getCurrentModelDisplayName: () => "Opus 4.6",
+  setCurrentModel: mock(() => {}),
+  runQueryStreaming: mock(async () => "Test response"),
+  runPlanApproval: mock(async () => "Plan response"),
 }));
 
 // Mock security - must include all exports to avoid breaking other tests
@@ -434,6 +471,10 @@ describe("plan-mode: plan callbacks", () => {
       callbackData: "plan:accept:123",
     });
 
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Test plan",
@@ -453,6 +494,10 @@ describe("plan-mode: plan callbacks", () => {
       callbackData: "plan:reject:123",
     });
 
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Test plan",
@@ -474,6 +519,10 @@ describe("plan-mode: plan callbacks", () => {
       chatId: 789,
     });
 
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Test plan",
@@ -494,12 +543,17 @@ describe("plan-mode: plan callbacks", () => {
     expect(pendingPlanFeedback.has(789)).toBe(true);
   });
 
-  test("calls respondToPlanApproval on accept", async () => {
+  test("calls runPlanApproval on accept", async () => {
     const { handleCallback } = await import("../handlers/callback");
+    const sessionMod = (await import("../session")) as any;
     const ctx = createMockContext({
       callbackData: "plan:accept:123",
     });
 
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-123",
       planSummary: "Test plan",
@@ -508,18 +562,20 @@ describe("plan-mode: plan callbacks", () => {
 
     await handleCallback(ctx as any);
 
-    expect(mockSessionMethods.respondToPlanApproval).toHaveBeenCalled();
-    expect(
-      mockSessionMethods.respondToPlanApproval.mock.calls.length,
-    ).toBeGreaterThan(0);
+    expect(sessionMod.runPlanApproval).toHaveBeenCalled();
   });
 
-  test("calls respondToPlanApproval on reject", async () => {
+  test("calls runPlanApproval on reject", async () => {
     const { handleCallback } = await import("../handlers/callback");
+    const sessionMod = (await import("../session")) as any;
     const ctx = createMockContext({
       callbackData: "plan:reject:456",
     });
 
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
     mockSessionState.pendingPlanApproval = {
       toolUseId: "tool-456",
       planSummary: "Test plan",
@@ -528,10 +584,7 @@ describe("plan-mode: plan callbacks", () => {
 
     await handleCallback(ctx as any);
 
-    expect(mockSessionMethods.respondToPlanApproval).toHaveBeenCalled();
-    expect(
-      mockSessionMethods.respondToPlanApproval.mock.calls.length,
-    ).toBeGreaterThan(0);
+    expect(sessionMod.runPlanApproval).toHaveBeenCalled();
   });
 
   test("handles invalid callback data format", async () => {
@@ -698,6 +751,11 @@ describe("plan-mode: integration scenarios", () => {
   test("full flow: ExitPlanMode -> Edit -> feedback", async () => {
     const { handleCallback, pendingPlanFeedback } =
       await import("../handlers/callback");
+
+    mockActiveSession = {
+      name: "plan-session",
+      info: { dir: "/tmp/p", name: "plan-session" },
+    };
 
     // Setup pending plan
     mockSessionState.pendingPlanApproval = {

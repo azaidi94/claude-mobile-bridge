@@ -5,21 +5,24 @@
  * index.ts uses this to create and start the bot.
  */
 
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { installBridgeHealthTransformer } from "./bridge-health";
+import { createMessageBus, setMessageBus } from "./messaging";
 import { ALLOWED_USERS } from "./config";
 import { getGroupModeSetting } from "./settings";
 import {
   registerChatId,
   getChatIds,
-  getActiveSession,
+  getSessions,
   updatePinnedStatus,
   getGitBranch,
+  resolveSessionContext,
+  type SessionContext,
 } from "./sessions";
 import { isAuthorized } from "./security";
-import { session } from "./session";
+import { getCurrentModelDisplayName } from "./session";
 import { error as logError, info, warn } from "./logger";
 import {
   handleStart,
@@ -68,6 +71,10 @@ export interface BotOptions {
  */
 export function createBot(options: BotOptions): Bot {
   const bot = new Bot(options.token);
+  // Install the global MessageBus singleton. All handlers route outbound
+  // messages through getMessageBus().send/.edit — this is the only
+  // construction site.
+  setMessageBus(createMessageBus(bot.api));
   let forumGroupDetected = false;
 
   // Honor Telegram's retry_after on 429 responses so transient throttling
@@ -148,7 +155,7 @@ export function createBot(options: BotOptions): Bot {
         ctx.chat.type === "supergroup" &&
         options.onForumGroupDetected
       ) {
-        const isForum = (ctx.chat as any).is_forum;
+        const isForum = (ctx.chat as { is_forum?: boolean }).is_forum;
         if (isForum) {
           forumGroupDetected = true;
           options.onForumGroupDetected(ctx.chat.id);
@@ -158,7 +165,7 @@ export function createBot(options: BotOptions): Bot {
           bot.api
             .getChat(ctx.chat.id)
             .then((chat) => {
-              if ((chat as any).is_forum) {
+              if ((chat as { is_forum?: boolean }).is_forum) {
                 options.onForumGroupDetected!(ctx.chat!.id);
               } else {
                 forumGroupDetected = false; // not a forum — allow retry
@@ -170,15 +177,23 @@ export function createBot(options: BotOptions): Bot {
         }
       }
 
-      // Create pinned status for new chats
+      // Create pinned status for new chats. Working dir + active-session
+      // name come from the registry (SessionInfo); model is global (R3);
+      // plan mode defaults to false at boot since no SessionState is
+      // warmed yet — the first query will fire a mode_change event that
+      // refreshes the pin.
       if (isNew) {
-        const active = getActiveSession();
-        getGitBranch(session.workingDir)
+        // No global "active" pointer after task 7g. Seed the pinned status
+        // from the most-recently-active session in the registry; mode_change
+        // events on future SessionState creations will refresh the pin.
+        const first = getSessions()[0];
+        const dir = first?.dir ?? process.cwd();
+        getGitBranch(dir)
           .then((branch) =>
             updatePinnedStatus(bot.api, ctx.chat!.id, {
-              sessionName: active?.name || null,
-              isPlanMode: session.isPlanMode,
-              model: session.modelDisplayName,
+              sessionName: first?.name || null,
+              isPlanMode: false,
+              model: getCurrentModelDisplayName(),
               branch,
             }),
           )
@@ -215,29 +230,40 @@ export function createBot(options: BotOptions): Bot {
     await next();
   });
 
-  // Command handlers
-  bot.command("start", handleStart);
+  // Command handlers. Session-aware commands receive the SessionContext
+  // resolved at the bot edge (topic-first). Session-agnostic commands
+  // (/help, /new, /list, /switch, /refresh, /sessions, /restart, /usage,
+  // /execute, /settings, /app, /run, /watch, /unwatch, /retry, /groupmode,
+  // /cleanzombie) keep their original signatures.
+  const withSctx =
+    <T extends (ctx: Context, sctx?: SessionContext) => Promise<void>>(
+      handler: T,
+    ) =>
+    async (ctx: Parameters<T>[0]) =>
+      handler(ctx, resolveSessionContext(ctx));
+
+  bot.command("start", withSctx(handleStart));
   bot.command("help", handleHelp);
   bot.command("new", handleNew);
-  bot.command("respawn", handleRespawn);
-  bot.command("stop", handleStop);
-  bot.command("kill", handleKill);
-  bot.command("status", handleStatus);
-  bot.command("model", handleModel);
+  bot.command("respawn", withSctx(handleRespawn));
+  bot.command("stop", withSctx(handleStop));
+  bot.command("kill", withSctx(handleKill));
+  bot.command("status", withSctx(handleStatus));
+  bot.command("model", withSctx(handleModel));
   bot.command("restart", handleRestart);
-  bot.command("retry", handleRetry);
+  bot.command("retry", withSctx(handleRetry));
   bot.command("list", handleList);
   bot.command("switch", handleSwitch);
   bot.command("refresh", handleRefresh);
-  bot.command("watch", handleWatch);
-  bot.command("unwatch", handleUnwatch);
-  bot.command("pin", handlePin);
+  bot.command("watch", withSctx(handleWatch));
+  bot.command("unwatch", withSctx(handleUnwatch));
+  bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("sessions", handleSessions);
-  bot.command("pwd", handlePwd);
-  bot.command("cd", handleCd);
-  bot.command("ls", handleLs);
+  bot.command("pwd", withSctx(handlePwd));
+  bot.command("cd", withSctx(handleCd));
+  bot.command("ls", withSctx(handleLs));
   bot.command("app", handleApp);
   bot.command("run", handleRun);
   bot.command("usage", handleUsage);
@@ -245,10 +271,18 @@ export function createBot(options: BotOptions): Bot {
   bot.command("settings", handleSettings);
 
   // Message handlers
-  bot.on("message:text", handleText);
-  bot.on("message:voice", handleVoice);
-  bot.on("message:photo", handlePhoto);
-  bot.on("message:document", handleDocument);
+  bot.on("message:text", async (ctx) => {
+    await handleText(ctx, resolveSessionContext(ctx));
+  });
+  bot.on("message:voice", async (ctx) => {
+    await handleVoice(ctx, resolveSessionContext(ctx));
+  });
+  bot.on("message:photo", async (ctx) => {
+    await handlePhoto(ctx, resolveSessionContext(ctx));
+  });
+  bot.on("message:document", async (ctx) => {
+    await handleDocument(ctx, resolveSessionContext(ctx));
+  });
 
   // Callback queries
   bot.on("callback_query:data", handleCallback);

@@ -14,6 +14,7 @@ import { info, warn } from "../logger";
 import { isAuthorized } from "../security";
 import { ALLOWED_USERS } from "../config";
 import { isProcessAlive } from "../relay/discovery";
+import { getMessageBus } from "../messaging";
 
 export interface ExecuteCommand {
   name: string;
@@ -133,8 +134,19 @@ export async function handleExecute(ctx: Context): Promise<void> {
   // callback buttons. The callback path is already auth-gated at
   // callback.ts:65, but rendering the menu leaks command names and script
   // existence to unauthorized users — guard here too.
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  const bus = getMessageBus();
+
   if (!isAuthorized(ctx.from?.id, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    if (chatId !== undefined) {
+      await bus.send({
+        chatId,
+        threadId,
+        content: "Unauthorized.",
+        format: "plain",
+      });
+    }
     return;
   }
 
@@ -142,15 +154,28 @@ export async function handleExecute(ctx: Context): Promise<void> {
 
   if (commands.length === 0) {
     const file = getCommandsFile();
-    await ctx.reply(
-      "No execute commands configured.\n\n" +
-        `Copy <code>execute-commands.example.json</code> → <code>${escapeHtml(file)}</code> and edit:\n` +
-        `<pre>[{"name": "VPN", "script": "/path/to/script.sh"}]</pre>`,
-      { parse_mode: "HTML" },
-    );
+    if (chatId !== undefined) {
+      await bus.send({
+        chatId,
+        threadId,
+        content:
+          "No execute commands configured.\n\n" +
+          `Copy <code>execute-commands.example.json</code> → <code>${escapeHtml(file)}</code> and edit:\n` +
+          `<pre>[{"name": "VPN", "script": "/path/to/script.sh"}]</pre>`,
+        format: "html",
+      });
+    }
     return;
   }
 
   const { text, keyboard } = buildExecuteMenu(commands);
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  if (chatId !== undefined) {
+    await bus.send({
+      chatId,
+      threadId,
+      content: text,
+      format: "html",
+      replyMarkup: keyboard,
+    });
+  }
 }

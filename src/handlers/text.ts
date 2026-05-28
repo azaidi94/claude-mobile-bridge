@@ -3,7 +3,11 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import {
+  runQueryStreaming,
+  runPlanApproval,
+  getCurrentModel,
+} from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
@@ -21,7 +25,8 @@ import {
   pendingAskUserQuestionCustom,
   sendPlanContent,
 } from "./streaming";
-import { getActiveSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
+import type { SessionContext } from "../sessions/context";
 import { pendingPlanFeedback } from "./callback";
 import { tryConsumeCustomTextAnswer } from "./relay-ask";
 import { isWatching, sendWatchRelay } from "./watch";
@@ -42,14 +47,43 @@ import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
 import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
 import { getSession } from "../sessions";
-import type { SessionOverride } from "../sessions/types";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
+import { getMessageBus } from "../messaging";
+
+/**
+ * Bus-routed reply helper. Use for plain or HTML text replies including
+ * thread-routed sends and inline keyboards. Callers stay on grammy directly
+ * when they need link_preview_options or other TG-specific options the bus
+ * doesn't model.
+ */
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: {
+    format?: "plain" | "html";
+    threadId?: number;
+    replyMarkup?: import("grammy/types").InlineKeyboardMarkup;
+  } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+    replyMarkup: opts.replyMarkup,
+  });
+}
 
 /**
  * Handle incoming text messages.
  */
-export async function handleText(ctx: Context): Promise<void> {
+export async function handleText(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -61,7 +95,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
@@ -87,45 +121,42 @@ export async function handleText(ctx: Context): Promise<void> {
     messagePreview: truncate(message, 120),
   });
 
-  // Topic routing — resolve session from topic context
-  let threadId: number | undefined;
-  let sessionOverride: SessionOverride | undefined;
+  // Topic routing — use the explicit SessionContext the caller resolved.
+  // Falls back to the General-topic nudge when no context (private chats,
+  // General topic, or unbound session topic).
+  let threadId: number | undefined = sctx?.topicId;
   let cursorSessionName: string | undefined;
+  // Per-session state resolved from sctx. Undefined for cursor / no-sctx
+  // paths; CC handlers use this in place of the singleton (task 7c).
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
 
-  if (isTopicChat(ctx)) {
-    const topicCtx = isSessionTopic(ctx);
-
-    if (topicCtx) {
-      // In a session topic — load that session
-      threadId = topicCtx.topicId;
-      const si = getSession(topicCtx.sessionName);
-      if (si) {
-        if (si.source === "cursor") {
-          // Cursor sessions don't have a Claude SDK relay; the CursorBridge
-          // delivers via the event bus directly into Cursor's Composer.
-          cursorSessionName = si.name;
-        } else {
-          session.loadFromRegistry(si);
-          sessionOverride = {
-            sessionId: si.id || "",
-            sessionDir: si.dir,
-            sessionPid: si.pid,
-          };
-        }
-      }
-    } else if (isGeneralTopic(ctx)) {
-      // Free text in General — nudge to use a topic
-      // But allow through if there are pending interactive states
-      if (
-        !pendingSettingsInput.has(chatId) &&
-        !pendingPlanFeedback.has(chatId) &&
-        !pendingAskUserQuestionCustom.has(chatId)
-      ) {
-        await ctx.reply(
-          "❌ Send messages in a session topic.\nUse /list to see sessions.",
-        );
-        return;
-      }
+  if (sctx) {
+    if (sctx.source === "cursor") {
+      // Cursor sessions don't have a Claude SDK relay; the CursorBridge
+      // delivers via the event bus directly into Cursor's Composer.
+      cursorSessionName = sctx.sessionName;
+    } else {
+      // CC session — sync the per-session SessionState with the registry so
+      // sessionId/cwd/lastActivity reflect the latest watcher snapshot.
+      const si = getSession(sctx.sessionName);
+      if (si && state) state.loadFromRegistry(si);
+    }
+  } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
+    // Free text in General — nudge to use a topic.
+    // Allow through if there are pending interactive states.
+    if (
+      !pendingSettingsInput.has(chatId) &&
+      !pendingPlanFeedback.has(chatId) &&
+      !pendingAskUserQuestionCustom.has(chatId)
+    ) {
+      await busReply(
+        ctx,
+        "❌ Send messages in a session topic.\nUse /list to see sessions.",
+      );
+      return;
     }
   }
 
@@ -134,37 +165,34 @@ export async function handleText(ctx: Context): Promise<void> {
     const field = pendingSettingsInput.get(chatId)!;
     if (message.trim() === "/cancel") {
       pendingSettingsInput.delete(chatId);
-      await ctx.reply("✖ Cancelled.", { message_thread_id: threadId });
+      await busReply(ctx, "✖ Cancelled.", { threadId });
       return;
     }
     if (field === "workdir") {
       const path = message.trim();
       if (!isAbsolute(path)) {
-        await ctx.reply("❌ Path must be absolute (start with /).", {
-          message_thread_id: threadId,
+        await busReply(ctx, "❌ Path must be absolute (start with /).", {
+          threadId,
         });
         return;
       }
       try {
         const s = await stat(path);
         if (!s.isDirectory()) {
-          await ctx.reply("❌ Not a directory.", {
-            message_thread_id: threadId,
-          });
+          await busReply(ctx, "❌ Not a directory.", { threadId });
           return;
         }
       } catch {
-        await ctx.reply("❌ Path does not exist.", {
-          message_thread_id: threadId,
-        });
+        await busReply(ctx, "❌ Path does not exist.", { threadId });
         return;
       }
       await saveSetting({ workingDir: path });
       pendingSettingsInput.delete(chatId);
-      await ctx.reply(`✅ Working dir set:\n<code>${escapeHtml(path)}</code>`, {
-        parse_mode: "HTML",
-        message_thread_id: threadId,
-      });
+      await busReply(
+        ctx,
+        `✅ Working dir set:\n<code>${escapeHtml(path)}</code>`,
+        { format: "html", threadId },
+      );
       return;
     }
   }
@@ -174,41 +202,41 @@ export async function handleText(ctx: Context): Promise<void> {
     const requestId = pendingPlanFeedback.get(chatId)!;
     pendingPlanFeedback.delete(chatId);
 
-    // Check if there's still a pending plan approval
-    if (!session.pendingPlanApproval) {
-      await ctx.reply("❌ Plan approval expired.", {
-        message_thread_id: threadId,
-      });
+    // Plan-edit replies only make sense against a resolved per-session
+    // SessionState. Without sctx (private DM / General topic) there's no
+    // session to apply the edit to.
+    const pendingApproval = state?.pendingPlanApproval;
+    if (!pendingApproval) {
+      await busReply(ctx, "❌ Plan approval expired.", { threadId });
       return;
     }
 
     // Process feedback
     const typing = startTypingIndicator(ctx);
-    const state = new StreamingState();
-    const statusCallback = createStatusCallback(ctx, state, threadId);
+    const streamState = new StreamingState();
+    const statusCallback = createStatusCallback(ctx, streamState, threadId);
 
     try {
-      const response = await session.respondToPlanApproval(
-        "edit",
-        message,
-        ctx.from?.username || "unknown",
+      const response = await runPlanApproval(state, {
+        action: "edit",
+        feedback: message,
+        username: ctx.from?.username || "unknown",
         userId,
         statusCallback,
         chatId,
         ctx,
-        {
-          opId,
-          requestKind: "plan_edit",
-        },
-      );
+        telemetry: { opId, requestKind: "plan_edit" },
+        model: getCurrentModel(),
+      });
 
       // Check if another plan approval is pending
-      if (session.pendingPlanApproval) {
+      const nextPending = state.pendingPlanApproval;
+      if (nextPending) {
         const newRequestId = `${Date.now()}`;
         const keyboard = createPlanApprovalKeyboard(newRequestId);
-        await ctx.reply("📋 Revised plan ready. Review and approve?", {
-          reply_markup: keyboard,
-          message_thread_id: threadId,
+        await busReply(ctx, "📋 Revised plan ready. Review and approve?", {
+          replyMarkup: keyboard,
+          threadId,
         });
       }
 
@@ -235,8 +263,8 @@ export async function handleText(ctx: Context): Promise<void> {
         userId,
         durationMs: elapsedMs(requestStartedAt),
       });
-      await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
-        message_thread_id: threadId,
+      await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
+        threadId,
       });
     } finally {
       typing.stop();
@@ -251,7 +279,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
     const pending = pendingAskUserQuestions.get(requestId);
     if (!pending) {
-      await ctx.reply("❌ Question expired.", { message_thread_id: threadId });
+      await busReply(ctx, "❌ Question expired.", { threadId });
       return;
     }
 
@@ -272,57 +300,62 @@ export async function handleText(ctx: Context): Promise<void> {
         pending.currentIndex,
         pending.questions.length,
       );
-      await ctx.reply(questionText, {
-        reply_markup: keyboard,
-        parse_mode: "HTML",
-        message_thread_id: threadId,
+      await busReply(ctx, questionText, {
+        replyMarkup: keyboard,
+        format: "html",
+        threadId,
       });
     } else {
       // All questions answered - send to Claude
       const wasPlanMode = pending.isPlanMode;
       pendingAskUserQuestions.delete(requestId);
       const answersText = pending.answers.join(", ");
-      await ctx.reply(`✅ Answered: ${answersText}`, {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, `✅ Answered: ${answersText}`, { threadId });
 
       // Send answers to Claude (preserve plan mode)
       const typing = startTypingIndicator(ctx);
-      const state = new StreamingState();
-      const statusCallback = createStatusCallback(ctx, state, threadId);
+      const streamState = new StreamingState();
+      const statusCallback = createStatusCallback(ctx, streamState, threadId);
 
       try {
         const permissionMode = wasPlanMode ? "plan" : "bypassPermissions";
-        const response = await session.sendMessageStreaming(
-          answersText,
+        if (!state) {
+          await busReply(ctx, "❌ Question expired — no session.", {
+            threadId,
+          });
+          return;
+        }
+        const response = await runQueryStreaming(state, {
+          message: answersText,
           username,
           userId,
           statusCallback,
           chatId,
           ctx,
           permissionMode,
-          {
+          telemetry: {
             opId,
             requestKind: wasPlanMode
               ? "ask_user_custom_plan"
               : "ask_user_custom",
           },
-        );
+          model: getCurrentModel(),
+        });
         await auditLog(userId, username, "AUQ_CUSTOM", message, response);
 
         // Check if plan approval is pending (ExitPlanMode was called)
-        if (session.pendingPlanApproval) {
+        const pendingForKeyboard = state.pendingPlanApproval;
+        if (pendingForKeyboard) {
           const displayContent =
-            session.pendingPlanApproval.planContent ||
-            session.pendingPlanApproval.planSummary;
+            pendingForKeyboard.planContent || pendingForKeyboard.planSummary;
           if (displayContent && displayContent.length > 50) {
             await sendPlanContent(ctx, displayContent);
           }
 
           const keyboard = createPlanApprovalKeyboard(`${Date.now()}`);
-          await ctx.reply("Review and approve?", {
-            reply_markup: keyboard,
-            message_thread_id: threadId,
+          await busReply(ctx, "Review and approve?", {
+            replyMarkup: keyboard,
+            threadId,
           });
         }
         info("request: completed", {
@@ -341,8 +374,8 @@ export async function handleText(ctx: Context): Promise<void> {
           userId,
           durationMs: elapsedMs(requestStartedAt),
         });
-        await ctx.reply(`❌ Error: ${String(err).slice(0, 200)}`, {
-          message_thread_id: threadId,
+        await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
+          threadId,
         });
       } finally {
         typing.stop();
@@ -387,7 +420,7 @@ export async function handleText(ctx: Context): Promise<void> {
       message,
       opId,
       undefined,
-      sessionOverride,
+      sctx,
     );
     if (relayed) {
       const topicCtx = isSessionTopic(ctx);
@@ -420,22 +453,22 @@ export async function handleText(ctx: Context): Promise<void> {
       userId,
       durationMs: elapsedMs(requestStartedAt),
     });
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ Relay failed. Session may be offline.\n" +
         "Use /unwatch and check /list.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
 
-  // 2. Check for interrupt prefix
-  message = await checkInterrupt(message);
+  // 2. Check for interrupt prefix — write/read the flag on this topic's
+  // per-session SessionState when available, else the legacy singleton.
+  message = await checkInterrupt(message, state);
   if (!message.trim()) {
-    await ctx
-      .reply("✖ Empty message after interrupt — nothing to send.", {
-        message_thread_id: threadId,
-      })
-      .catch(() => {});
+    await busReply(ctx, "✖ Empty message after interrupt — nothing to send.", {
+      threadId,
+    }).catch(() => {});
     return;
   }
 
@@ -443,9 +476,10 @@ export async function handleText(ctx: Context): Promise<void> {
   const [allowed, retryAfter] = rateLimiter.check(userId);
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(
+    await busReply(
+      ctx,
       `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -458,8 +492,10 @@ export async function handleText(ctx: Context): Promise<void> {
         updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
       }
     }
-    session.sessionId = null;
-    await ctx.reply("✓ Session cleared", { message_thread_id: threadId });
+    if (state) {
+      state.clearSession();
+    }
+    await busReply(ctx, "✓ Session cleared", { threadId });
     await auditLog(userId, username, "CLEAR", message, "Session cleared");
     info("request: completed", {
       opId,
@@ -472,19 +508,14 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 5. Store message for retry
-  session.lastMessage = message;
+  // 5. Store message for retry on the per-session SessionState (when present).
+  // No-sctx paths have no session to record against — retry won't work there.
+  if (state) {
+    state.lastMessage = message;
+  }
 
   // Debug log incoming message
   debug(`msg: "${truncate(message)}"`);
-
-  // 7. Sync with registry if no session loaded
-  if (!session.sessionName) {
-    const active = await getActiveSession();
-    if (active) {
-      session.loadFromRegistry(active.info);
-    }
-  }
 
   // 7.5. Try relay path — inject into running desktop session
   // Slash commands must run locally via the SDK (for <local-command-stdout> handling),
@@ -498,7 +529,7 @@ export async function handleText(ctx: Context): Promise<void> {
       undefined,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "RELAY", message, "(via relay)");
@@ -521,36 +552,53 @@ export async function handleText(ctx: Context): Promise<void> {
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
     return;
   }
 
-  // 8. Slash command — run locally via SDK so <local-command-stdout> is handled
+  // 8. Slash command — run locally via SDK so <local-command-stdout> is handled.
+  // Task 7c: slash commands require a resolved CC SessionState. With no sctx
+  // (General topic / private DM), reply with "no desktop session" instead of
+  // running locally against the singleton — that fallback was the bug being
+  // fixed by Phase 1.
+  if (!state) {
+    await busReply(
+      ctx,
+      "❌ No desktop session found.\n\n" +
+        "Use /new to spawn one, or /list to find existing sessions.",
+      { threadId },
+    );
+    return;
+  }
+
   const typing = startTypingIndicator(ctx);
-  const state = new StreamingState();
-  const statusCallback = createStatusCallback(ctx, state, threadId);
+  const streamState = new StreamingState();
+  const statusCallback = createStatusCallback(ctx, streamState, threadId);
   try {
-    const response = await session.sendMessageStreaming(
+    const response = await runQueryStreaming(state, {
       message,
       username,
-      userId!,
+      userId: userId!,
       statusCallback,
-      chatId!,
+      chatId: chatId!,
       ctx,
-      "bypassPermissions",
-      { opId, requestKind: "slash_cmd" },
-    );
+      permissionMode: "bypassPermissions",
+      telemetry: { opId, requestKind: "slash_cmd" },
+      model: getCurrentModel(),
+    });
     await auditLog(
       userId,
       username,
@@ -568,9 +616,10 @@ export async function handleText(ctx: Context): Promise<void> {
     });
   } catch (err) {
     logError("slash cmd error", err);
-    await ctx.reply(
+    await busReply(
+      ctx,
       `❌ Error: ${err instanceof Error ? err.message : String(err)}`,
-      { message_thread_id: threadId },
+      { threadId },
     );
   } finally {
     typing.stop();

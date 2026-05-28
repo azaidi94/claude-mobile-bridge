@@ -5,14 +5,16 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
+import { getWorkingDir } from "../settings";
 import { isAuthorized, rateLimiter } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils";
 import { createMediaGroupBuffer } from "./media-group";
 import { sendViaRelay } from "./relay-bridge";
 import { isRelayAvailable } from "../relay";
-import { getActiveSession } from "../sessions";
+import { getSession } from "../sessions";
+import { getSessionState } from "../sessions/session-state";
+import type { SessionContext } from "../sessions/context";
 import {
   createOpId,
   debug,
@@ -21,8 +23,22 @@ import {
   info,
   warn,
 } from "../logger";
-import { loadTopicSession } from "../topics";
-import type { SessionOverride } from "../sessions/types";
+import { getMessageBus } from "../messaging";
+
+function busReply(
+  ctx: Context,
+  content: string,
+  opts: { format?: "plain" | "html"; threadId?: number } = {},
+): Promise<unknown> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return Promise.resolve();
+  return getMessageBus().send({
+    chatId,
+    threadId: opts.threadId ?? ctx.message?.message_thread_id,
+    content,
+    format: opts.format ?? "plain",
+  });
+}
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -69,9 +85,13 @@ async function processPhotos(
   chatId: number,
   opId: string,
   threadId?: number,
-  sessionOverride?: SessionOverride,
+  sctx?: SessionContext,
 ): Promise<void> {
-  const stopProcessing = session.startProcessing();
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  const stopProcessing = state ? state.startProcessing() : () => {};
   const requestStartedAt = Date.now();
 
   try {
@@ -89,7 +109,7 @@ async function processPhotos(
       photoPaths[0],
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
     if (relayResult === "delivered") {
       await auditLog(userId, username, "PHOTO_RELAY", relayText, "(via relay)");
@@ -113,16 +133,18 @@ async function processPhotos(
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "⚠️ Message was sent but the session stopped responding.\n" +
           "It may still be processing. Check /status or try again.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     } else {
-      await ctx.reply(
+      await busReply(
+        ctx,
         "❌ No desktop session found.\n\n" +
           "Use /new to spawn one, or /list to find existing sessions.",
-        { message_thread_id: threadId },
+        { threadId },
       );
     }
   } finally {
@@ -133,7 +155,10 @@ async function processPhotos(
 /**
  * Handle incoming photo messages.
  */
-export async function handlePhoto(ctx: Context): Promise<void> {
+export async function handlePhoto(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
@@ -145,11 +170,36 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
     return;
   }
 
-  const { threadId, sessionOverride } = loadTopicSession(ctx) ?? {};
+  const threadId = sctx?.topicId;
+
+  // Reject early in Cursor topics: the CC relay path can't reach Cursor's
+  // Composer (no port file, no relay process), and sendViaRelay would
+  // otherwise fall back to dir-match and silently route to an unrelated CC
+  // session that happens to share the dir. Cursor doesn't currently accept
+  // image attachments through the CDP bridge either.
+  if (sctx?.source === "cursor") {
+    await busReply(
+      ctx,
+      "❌ Photos aren't supported in Cursor topics yet — only text.",
+      { threadId },
+    );
+    return;
+  }
+
+  // Sync per-session SessionState with the registry (task 7d). The singleton
+  // is no longer warmed here.
+  const state =
+    sctx && sctx.source === "cc"
+      ? getSessionState(sctx.sessionName)
+      : undefined;
+  if (sctx && state) {
+    const si = getSession(sctx.sessionName);
+    if (si) state.loadFromRegistry(si);
+  }
 
   const opId = createOpId(mediaGroupId ? "photo_album" : "photo");
   info("request: started", {
@@ -160,18 +210,23 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     username,
   });
 
-  // 2. Relay preflight — avoid download if no session exists
-  const active = getActiveSession();
+  // 2. Relay preflight — avoid download if no session exists.
+  // Use the topic-resolved sctx when present; otherwise fall back only to
+  // the streaming-SDK singleton's workingDir. We deliberately do NOT
+  // consult getActiveSession() — that chases the most-recent global
+  // session (often a Cursor session whose lastActivity gets bumped on
+  // every CDP nudge) and mis-targeted the preflight.
   const relayUp = await isRelayAvailable({
-    sessionId: active?.info.id,
-    sessionDir: session.workingDir || active?.info.dir,
-    claudePid: active?.info.pid,
+    sessionId: sctx?.sessionId,
+    sessionDir: sctx?.sessionDir || state?.workingDir || getWorkingDir(),
+    claudePid: sctx?.sessionPid,
   });
   if (!relayUp) {
-    await ctx.reply(
+    await busReply(
+      ctx,
       "❌ No desktop session found.\n\n" +
         "Use /new to spawn one, or /list to find existing sessions.",
-      { message_thread_id: threadId },
+      { threadId },
     );
     return;
   }
@@ -188,14 +243,19 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     const [allowed, retryAfter] = rateLimiter.check(userId);
     if (!allowed) {
       await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
+      await busReply(
+        ctx,
         `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`,
-        { message_thread_id: threadId },
+        { threadId },
       );
       return;
     }
 
-    // Show status immediately
+    // Show status immediately. Kept as ctx.reply so the returned
+    // message_id can be used by api.editMessageText/deleteMessage below;
+    // the bus's send/edit pair would also work but requires plumbing
+    // the id back through processPhotos. TODO(phase-2): convert when
+    // the status-message lifecycle is refactored.
     statusMsg = await ctx.reply("📷 Processing image...", {
       message_thread_id: threadId,
     });
@@ -212,26 +272,21 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       username,
     });
     if (statusMsg) {
-      try {
-        await ctx.api.editMessageText(
-          statusMsg.chat.id,
-          statusMsg.message_id,
-          "❌ Failed to download photo.",
-        );
-      } catch (editError) {
+      const editRes = await getMessageBus().edit(statusMsg.message_id, {
+        chatId: statusMsg.chat.id,
+        content: "❌ Failed to download photo.",
+        format: "plain",
+      });
+      if (!editRes.ok) {
         debug("photo: failed to edit status message", {
           chatId,
           messageId: statusMsg.message_id,
-          err: String(editError),
+          reason: editRes.reason,
         });
-        await ctx.reply("❌ Failed to download photo.", {
-          message_thread_id: threadId,
-        });
+        await busReply(ctx, "❌ Failed to download photo.", { threadId });
       }
     } else {
-      await ctx.reply("❌ Failed to download photo.", {
-        message_thread_id: threadId,
-      });
+      await busReply(ctx, "❌ Failed to download photo.", { threadId });
     }
     return;
   }
@@ -247,7 +302,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
       chatId,
       opId,
       threadId,
-      sessionOverride,
+      sctx,
     );
 
     // Clean up status message
@@ -282,7 +337,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
         groupChatId,
         opId,
         threadId,
-        sessionOverride,
+        sctx,
       ),
   );
 }

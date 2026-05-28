@@ -3,11 +3,11 @@
  * In-memory cache with sync reads, async writes.
  */
 
-import { readFile, writeFile, mkdir, rename } from "fs/promises";
+import { readFile, writeFile, mkdir, rename, stat } from "fs/promises";
 import { homedir, tmpdir } from "os";
 import { dirname, join } from "path";
 import type { TopicMapping, TopicStore } from "../types";
-import { debug, info, warn } from "../logger";
+import { debug, warn } from "../logger";
 import { withFileLock } from "./file-lock";
 
 function storePath(): string {
@@ -17,8 +17,8 @@ function storePath(): string {
   );
 }
 
-// Previous default location. Kept for one-time migration on load —
-// tmpdir is pruned by macOS, which silently orphans Telegram topics.
+// Pre-2026 default location. We no longer auto-migrate — if data is still
+// stranded here, refuse to start so the operator can move it deliberately.
 function legacyStorePath(): string {
   return join(tmpdir(), "claude-telegram-topics.json");
 }
@@ -45,34 +45,37 @@ export function setChatId(chatId: number): void {
 
 export async function loadTopicStore(): Promise<void> {
   const primary = storePath();
+  let primaryExists = false;
   try {
     const data = await readFile(primary, "utf-8");
     const parsed = JSON.parse(data) as TopicStore;
     if (parsed && Array.isArray(parsed.topics)) {
       store = parsed;
+      primaryExists = true;
       debug(`topic-store: loaded ${store.topics.length} mapping(s)`);
-      return;
     }
   } catch {
-    // Fall through to legacy check
+    // Primary missing or unreadable — proceed to legacy check below.
   }
 
-  // Migrate from legacy tmpdir location (only when the user hasn't set an
-  // explicit override — otherwise they're pointing at something deliberate).
-  if (!process.env.CLAUDE_TELEGRAM_TOPICS_FILE) {
+  // Refuse to silently auto-migrate. If legacy data is still around and the
+  // primary store has nothing, the operator needs to move it deliberately
+  // (or risk overwriting fresh data on the next save).
+  if (!primaryExists && !process.env.CLAUDE_TELEGRAM_TOPICS_FILE) {
     const legacy = legacyStorePath();
     try {
-      const data = await readFile(legacy, "utf-8");
-      const parsed = JSON.parse(data) as TopicStore;
-      if (parsed && Array.isArray(parsed.topics)) {
-        store = parsed;
-        info(
-          `topic-store: migrated ${store.topics.length} mapping(s) from ${legacy} → ${primary}`,
-        );
-        await saveTopicStore();
+      await stat(legacy);
+      throw new Error(
+        `topic-store: legacy file found at ${legacy} but no primary store ` +
+          `at ${primary}. Auto-migration has been removed. ` +
+          `Run: mv "${legacy}" "${primary}" (creating the parent dir if needed) ` +
+          `and restart.`,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("topic-store:")) {
+        throw err;
       }
-    } catch {
-      // No legacy file either — start empty
+      // Legacy file absent — start empty.
     }
   }
 }

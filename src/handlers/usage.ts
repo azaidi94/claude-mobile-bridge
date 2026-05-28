@@ -4,6 +4,15 @@ import { isAuthorized, rateLimiter } from "../security";
 import { error as logError } from "../logger";
 import { readKeychainToken } from "../lib/keychain";
 import { progressBar } from "../formatting";
+import { getMessageBus } from "../messaging";
+
+function chatThread(
+  ctx: Context,
+): { chatId: number; threadId?: number } | null {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return null;
+  return { chatId, threadId: ctx.message?.message_thread_id };
+}
 
 interface UsageResponse {
   five_hour?: { utilization?: number; resets_at?: string };
@@ -50,14 +59,20 @@ function formatWindow(
 export async function handleUsage(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
+  const ct = chatThread(ctx);
+  if (!ct) return;
+  const bus = getMessageBus();
+  const send = (content: string, format: "plain" | "html" = "plain") =>
+    bus.send({ ...ct, content, format });
+
   if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+    await send("Unauthorized.");
     return;
   }
 
   const [allowed, retryAfter] = rateLimiter.check(userId!);
   if (!allowed) {
-    await ctx.reply(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
+    await send(`⏳ Rate limited. Wait ${retryAfter!.toFixed(1)}s.`);
     return;
   }
 
@@ -67,7 +82,7 @@ export async function handleUsage(ctx: Context): Promise<void> {
   } else {
     const token = await readKeychainToken();
     if (!token) {
-      await ctx.reply("❌ Could not read Claude credentials from keychain.");
+      await send("❌ Could not read Claude credentials from keychain.");
       return;
     }
 
@@ -82,13 +97,13 @@ export async function handleUsage(ctx: Context): Promise<void> {
       });
     } catch (err) {
       logError("usage: fetch failed", err);
-      await ctx.reply("❌ Usage API request failed.");
+      await send("❌ Usage API request failed.");
       return;
     }
 
     if (res.status === 429) {
       await res.body?.cancel();
-      await ctx.reply(
+      await send(
         "⏳ Anthropic usage API is rate-limiting us. Try again in a minute.",
       );
       return;
@@ -96,14 +111,14 @@ export async function handleUsage(ctx: Context): Promise<void> {
 
     if (!res.ok) {
       await res.body?.cancel();
-      await ctx.reply(`❌ Usage API returned ${res.status}.`);
+      await send(`❌ Usage API returned ${res.status}.`);
       return;
     }
 
     try {
       data = (await res.json()) as UsageResponse;
     } catch {
-      await ctx.reply("❌ Could not parse usage response.");
+      await send("❌ Could not parse usage response.");
       return;
     }
     cached = { at: Date.now(), data };
@@ -127,5 +142,5 @@ export async function handleUsage(ctx: Context): Promise<void> {
     "</pre>",
   ];
 
-  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  await send(lines.join("\n"), "html");
 }

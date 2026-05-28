@@ -11,9 +11,9 @@ import { join } from "path";
 import { InlineKeyboard, type Api } from "grammy";
 import type { SessionInfo } from "./types";
 import { info, warn } from "../logger";
-import { getActiveSession } from "./watcher";
 import type { TopicManager } from "../topics";
 import { STATE_DIR } from "../paths";
+import { getMessageBus } from "../messaging";
 
 const CHAT_IDS_FILE = join(STATE_DIR, "chat-ids.json");
 const LEGACY_CHAT_IDS_FILE = join(tmpdir(), "claude-telegram-chat-ids.json");
@@ -243,8 +243,6 @@ export function createNotificationHandler(
         info(`notify: suppressed flap for ${session.name}`);
         continue;
       }
-      const active = getActiveSession();
-      const wasActive = active?.info.dir === session.dir;
       const timer = setTimeout(() => {
         pending.delete(session.dir);
 
@@ -259,8 +257,7 @@ export function createNotificationHandler(
             );
         }
 
-        let msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
-        if (wasActive) msg += "\n⚠️ was active session";
+        const msg = `🔴 <b>${escHtml(session.name)}</b> offline\n<code>${escHtml(session.dir)}</code>`;
         broadcast(botApi, msg);
       }, FLAP_BUFFER_MS);
       pending.set(session.dir, {
@@ -274,24 +271,31 @@ export function createNotificationHandler(
 }
 
 function broadcast(
-  botApi: Api,
+  _botApi: Api,
   html: string,
   replyMarkup?: InlineKeyboard,
 ): void {
+  const bus = getMessageBus();
   for (const chatId of chatIds) {
-    botApi
-      .sendMessage(chatId, html, {
-        parse_mode: "HTML",
-        reply_markup: replyMarkup,
+    bus
+      .send({
+        chatId,
+        content: html,
+        format: "html",
+        replyMarkup: replyMarkup as InlineKeyboard | undefined,
       })
-      .catch((err) => {
-        if (isTelegramChatNotFoundError(err)) {
-          removeChatId(chatId);
-          info(`notify: removed unreachable chat_id=${chatId}`);
-          return;
+      .then((res) => {
+        if ("dropped" in res && res.dropped === "error") {
+          const reason = res.reason ?? "";
+          if (isTelegramChatNotFoundError(new Error(reason))) {
+            removeChatId(chatId);
+            info(`notify: removed unreachable chat_id=${chatId}`);
+            return;
+          }
+          warn(`notify send: ${reason}`);
         }
-        warn(`notify send: ${err}`);
-      });
+      })
+      .catch((err) => warn(`notify send: ${err}`));
   }
 }
 

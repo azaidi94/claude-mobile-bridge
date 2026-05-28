@@ -41,7 +41,8 @@ export interface SseEvent {
     | "hook_summary"
     | "user_message"
     | "ask_remote"
-    | "ask_remote_cleared";
+    | "ask_remote_cleared"
+    | "ask_remote_state";
   content: string;
   source?: "telegram" | "web" | "terminal" | "cursor";
   clientId?: string;
@@ -56,6 +57,12 @@ export interface SseEvent {
   askAllowCustom?: boolean;
   askResolution?: "answered" | "cancelled" | "timeout" | "expired";
   askAnswer?: string;
+  askOpen?: Array<{
+    askId: string;
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+    allowCustom: boolean;
+  }>;
   permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   hook?: {
     hookCount: number;

@@ -343,7 +343,9 @@ export function buildInjectScript(text: string): string {
     try {
       document.execCommand('selectAll', false);
       document.execCommand('delete', false);
-    } catch (e) {}
+    } catch (e) {
+      // silently ok: best-effort clear in browser eval; no logger available in CDP context
+    }
     const dataTransfer = new DataTransfer();
     dataTransfer.setData('text/plain', text);
     el.dispatchEvent(new ClipboardEvent('paste', {

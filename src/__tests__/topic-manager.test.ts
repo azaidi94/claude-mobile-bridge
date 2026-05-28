@@ -52,6 +52,28 @@ afterAll(async () => {
   await rm(_topicStoreTmpDir, { recursive: true, force: true });
 });
 
+// Stub the message bus — topic-manager (step 6a) now sends online/history
+// pings via getMessageBus(). Route bus sends into mockApi.sendMessage so the
+// existing test instrumentation (existing topic detection, error propagation)
+// still works. The bus contract is: error responses become
+// { dropped: "error", reason }, success becomes { messageId }.
+mock.module("../messaging", () => ({
+  getMessageBus: () => ({
+    send: async (msg: { chatId: number; content: string }) => {
+      try {
+        const res = await mockApi.sendMessage(msg.chatId, msg.content);
+        return { messageId: (res as { message_id: number }).message_id };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return { dropped: "error" as const, reason };
+      }
+    },
+    edit: async () => ({ ok: true as const }),
+  }),
+  setMessageBus: () => {},
+  createMessageBus: () => ({}),
+}));
+
 // Mock relay/discovery
 const mockUpdatePortFile = mock((_pid: number, _updates: object) => {});
 

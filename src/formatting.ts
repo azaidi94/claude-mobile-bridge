@@ -18,12 +18,101 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Telegram's allowed HTML tag set. Anything outside this is stripped (escaped)
+ * by sanitizeTelegramHtml. Source: https://core.telegram.org/bots/api#html-style
+ */
+const TELEGRAM_HTML_TAGS = new Set([
+  "b",
+  "strong",
+  "i",
+  "em",
+  "u",
+  "ins",
+  "s",
+  "strike",
+  "del",
+  "tg-spoiler",
+  "code",
+  "pre",
+  "blockquote",
+  "a",
+]);
+
+/**
+ * Heuristic: does this text look like it's already authored as Telegram HTML
+ * (rather than markdown)? We require an opening + matching closing tag from
+ * the allowlist — a single stray `<` in user text won't trigger it.
+ */
+export function looksLikeTelegramHtml(text: string): boolean {
+  for (const tag of TELEGRAM_HTML_TAGS) {
+    // Opening tag (possibly with attributes) followed somewhere by its close.
+    const re = new RegExp(`<${tag}(?:\\s[^>]*)?>[\\s\\S]*?</${tag}>`, "i");
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * Sanitize HTML so it's safe for Telegram's parse_mode=HTML: keep tags from
+ * TELEGRAM_HTML_TAGS verbatim, escape everything else. Used when the caller
+ * has authored Telegram HTML directly (e.g. via the channel-relay reply tool)
+ * — running it through the markdown converter would escape every `<` and emit
+ * the tags as literal text.
+ *
+ * For `<a>` tags we keep `href` only; other attributes are dropped to avoid
+ * unsupported attributes triggering Bad Request: can't parse entities.
+ */
+export function sanitizeTelegramHtml(text: string): string {
+  // Tokenize into tag / non-tag runs. The regex matches a single tag (open,
+  // close, or self-closing) with optional attributes.
+  const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?\s*\/?>/g;
+  let result = "";
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(text)) !== null) {
+    // Escape everything between the previous tag and this one.
+    result += escapeHtml(text.slice(lastIndex, m.index));
+    const tagName = m[1]!.toLowerCase();
+    if (TELEGRAM_HTML_TAGS.has(tagName)) {
+      if (tagName === "a") {
+        // Keep only href; drop other attributes (e.g. target, onclick).
+        const hrefMatch = m[0].match(/\shref\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i);
+        const isClose = m[0].startsWith("</");
+        if (isClose) {
+          result += "</a>";
+        } else {
+          result += hrefMatch ? `<a href=${hrefMatch[1]}>` : escapeHtml(m[0]); // <a> without href is meaningless — escape it.
+        }
+      } else {
+        // Keep the tag with its original attributes — Telegram tolerates them
+        // for the other allowed tags (e.g., <code class="language-ts">).
+        result += m[0];
+      }
+    } else {
+      // Disallowed tag — escape it so it renders as literal text rather than
+      // breaking Telegram's parser.
+      result += escapeHtml(m[0]);
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  result += escapeHtml(text.slice(lastIndex));
+  return result;
+}
+
+/**
  * Convert standard markdown to Telegram-compatible HTML.
  *
  * HTML is more reliable than Telegram's Markdown which breaks on special chars.
  * Telegram HTML supports: <b>, <i>, <code>, <pre>, <a href="">
+ *
+ * If the input already looks like Telegram HTML, route it through the
+ * sanitizer instead of the markdown converter (otherwise the markdown path's
+ * escapeHtml turns `<b>foo</b>` into literal `&lt;b&gt;foo&lt;/b&gt;`).
  */
 export function convertMarkdownToHtml(text: string): string {
+  if (looksLikeTelegramHtml(text)) {
+    return sanitizeTelegramHtml(text);
+  }
   // Store code blocks temporarily to avoid processing their contents
   const codeBlocks: string[] = [];
   const inlineCodes: string[] = [];

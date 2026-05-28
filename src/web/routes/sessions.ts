@@ -1,15 +1,16 @@
 import { Hono } from "hono";
 import {
   getSessions,
-  getActiveSession,
   setActiveSession,
+  getSessionState,
+  getActiveSessionName,
 } from "../../sessions";
 import { listOfflineSessions } from "../../sessions/offline";
 import { globalEventBus } from "../sse";
 import type { SseEvent } from "../sse";
 import { authMiddleware } from "../auth";
 import type { SessionInfo } from "../../sessions/types";
-import { session as claudeSession } from "../../session";
+import { runQueryStreaming, getCurrentModel } from "../../session";
 import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
@@ -19,6 +20,7 @@ import {
   submitAnswerFromWeb,
   cancelAnswerFromWeb,
 } from "../../handlers/relay-ask";
+import { getOpenAsksForSession } from "../../handlers/auq-bridge";
 
 export interface ApiSession {
   id: string;
@@ -33,7 +35,11 @@ export interface ApiSession {
 export function serializeSessions(
   sessions: Map<string, SessionInfo>,
 ): ApiSession[] {
-  const active = getActiveSession();
+  // `active` reflects the v1 picker pointer (the same one /switch + the
+  // web `/activate` route write). After task 7g the bot no longer routes
+  // by it, but the web UI's session picker still needs a "which one is
+  // currently selected" signal so the highlight and ChatPage default work.
+  const activeName = getActiveSessionName();
   return [...sessions.values()]
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .map((s) => ({
@@ -43,7 +49,7 @@ export function serializeSessions(
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: s.name === activeName,
     }));
 }
 
@@ -106,8 +112,8 @@ export function createSessionsRouter(): Hono {
 
   app.get("/", async (c) => {
     const sessions = getSessions();
-    const active = getActiveSession();
     const liveDirs = new Set(sessions.map((s) => s.dir));
+    const activeName = getActiveSessionName();
     const live: ApiSession[] = sessions.map((s) => ({
       id: s.id,
       name: s.name,
@@ -115,7 +121,7 @@ export function createSessionsRouter(): Hono {
       lastActivity: s.lastActivity,
       source: s.source,
       live: true,
-      active: active?.name === s.name,
+      active: s.name === activeName,
     }));
     const offline = await listOfflineSessions();
     const offlineApi: ApiSession[] = offline
@@ -154,13 +160,31 @@ export function createSessionsRouter(): Hono {
       start(ctrl) {
         controller = ctrl;
         ctrl.enqueue(encoder.encode(": connected\n\n"));
+        // Authoritative snapshot of currently-open bridge asks. EventSource
+        // auto-reconnects don't replay missed events, so a client that
+        // disconnected between an `ask_remote` and its `ask_remote_cleared`
+        // would otherwise carry the stale card forever. The snapshot is the
+        // single source of truth — the client reconciles by replacing any
+        // open asks not present here as cleared.
+        const askOpen = getOpenAsksForSession(sessionName);
+        ctrl.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "ask_remote_state",
+              content: "",
+              askOpen,
+            } satisfies SseEvent)}\n\n`,
+          ),
+        );
       },
     });
 
     const unsub = globalEventBus.subscribe(sessionName, (evt) => {
       try {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
-      } catch {}
+      } catch {
+        // silently ok: SSE client disconnected mid-stream
+      }
     });
 
     const ping = setInterval(() => {
@@ -176,7 +200,9 @@ export function createSessionsRouter(): Hono {
       clearInterval(ping);
       try {
         controller.close();
-      } catch {}
+      } catch {
+        // silently ok: controller may already be closed
+      }
     });
 
     return new Response(body, {
@@ -241,11 +267,16 @@ export function createSessionsRouter(): Hono {
     if (found?.source === "desktop") {
       sendWebRelay(found, body.text, emit);
     } else {
-      if (found) claudeSession.loadFromRegistry(found);
+      const state = getSessionState(busKey);
+      if (found) state.loadFromRegistry(found);
       const cb = globalEventBus.makeStatusCallback(busKey);
-      claudeSession
-        .sendMessageStreaming(body.text, "web", 0, cb)
-        .catch(() => emit("done", ""));
+      runQueryStreaming(state, {
+        message: body.text,
+        username: "web",
+        userId: 0,
+        statusCallback: cb,
+        model: getCurrentModel(),
+      }).catch(() => emit("done", ""));
     }
 
     return c.json({ ok: true });
@@ -257,7 +288,7 @@ export function createSessionsRouter(): Hono {
     const found = sessions.find((s) => s.name === name);
     if (!found) return c.json({ error: "session not found" }, 404);
     setActiveSession(name);
-    claudeSession.loadFromRegistry(found);
+    getSessionState(found.name).loadFromRegistry(found);
     return c.json({ ok: true });
   });
 

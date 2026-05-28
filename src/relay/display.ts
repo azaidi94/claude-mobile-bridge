@@ -13,10 +13,9 @@ import type {
   RelayReact,
 } from "./client";
 import type { TailDisplayState } from "../handlers/watch";
-import { convertMarkdownToHtml } from "../formatting";
 import { convertMarkdownToPdf } from "../lib/convert-pdf";
-import { TELEGRAM_SAFE_LIMIT } from "../config";
-import { debug, warn } from "../logger";
+import { debug, info, warn } from "../logger";
+import { getMessageBus } from "../messaging";
 
 export interface RelayDisplayState extends TailDisplayState {
   progressMessages: import("grammy/types").Message[];
@@ -45,6 +44,7 @@ export function cleanupProgressMessages(
   botApi: Api,
   state: RelayDisplayState,
 ): void {
+  // TODO(phase-2 delete): bus doesn't own deletions yet.
   for (const msg of state.progressMessages) {
     botApi.deleteMessage(state.chatId, msg.message_id).catch(() => {});
   }
@@ -78,7 +78,14 @@ export function wireRelayDisplay(
       if (msg.send_as_pdf) {
         sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid);
       } else {
-        sendTextReply(botApi, chatId, msg.text, tid);
+        getMessageBus()
+          .send({
+            chatId,
+            threadId: tid,
+            content: msg.text,
+            format: "auto",
+          })
+          .catch((err) => warn(`relay onReply send: ${err}`));
       }
     }
 
@@ -96,9 +103,16 @@ export function wireRelayDisplay(
     const messageId = Number(msg.message_id);
     if (!messageId) return;
 
-    const formatted = convertMarkdownToHtml(msg.text);
-    botApi
-      .editMessageText(chatId, messageId, formatted, { parse_mode: "HTML" })
+    getMessageBus()
+      .edit(messageId, {
+        chatId,
+        threadId: tid,
+        content: msg.text,
+        format: "auto",
+      })
+      .then((r) => {
+        if (!r.ok) debug(`relay edit not ok: ${r.reason}`);
+      })
       .catch((err) => debug(`relay edit: ${err}`));
   };
 
@@ -109,7 +123,14 @@ export function wireRelayDisplay(
 
     botApi
       .setMessageReaction(chatId, messageId, [
-        { type: "emoji", emoji: msg.emoji as any },
+        // Telegram restricts emoji to a fixed allowlist (ReactionTypeEmoji["emoji"]);
+        // we receive an arbitrary string from the relay and let the API reject
+        // invalid values rather than narrow at the boundary.
+        {
+          type: "emoji",
+          emoji:
+            msg.emoji as import("@grammyjs/types").ReactionTypeEmoji["emoji"],
+        },
       ])
       .catch((err) => debug(`relay react: ${err}`));
   };
@@ -126,27 +147,44 @@ export function wireRelayDisplay(
 }
 
 /** Convert markdown to PDF and send as document; falls back to text on failure. */
-export function sendPdfReply(
+export async function sendPdfReply(
   botApi: Api,
   chatId: number,
   text: string,
   filename?: string,
   threadId?: number,
-): void {
+): Promise<boolean> {
   const pdfName =
     sanitizePdfFilename(filename) || deriveFilenameFromMarkdown(text);
 
-  convertMarkdownToPdf(text)
-    .then((buf) => {
-      const input = new InputFile(buf, pdfName);
-      botApi
-        .sendDocument(chatId, input, { message_thread_id: threadId })
-        .catch((err) => warn(`pdf send: ${err}`));
-    })
-    .catch((err) => {
-      warn(`pdf convert: ${err}`);
-      sendTextReply(botApi, chatId, text, threadId);
+  try {
+    const buf = await convertMarkdownToPdf(text);
+    const input = new InputFile(buf, pdfName);
+    try {
+      const msg = await botApi.sendDocument(chatId, input, {
+        message_thread_id: threadId,
+      });
+      info("relay sendPdfReply ok", {
+        chatId,
+        threadId,
+        messageId: msg.message_id,
+        textLen: text.length,
+      });
+      return true;
+    } catch (err) {
+      warn(`pdf send: ${err}`);
+      return false;
+    }
+  } catch (err) {
+    warn(`pdf convert: ${err}`);
+    const res = await getMessageBus().send({
+      chatId,
+      threadId,
+      content: text,
+      format: "auto",
     });
+    return "messageId" in res;
+  }
 }
 
 function sanitizePdfFilename(name?: string): string | null {
@@ -167,77 +205,6 @@ function deriveFilenameFromMarkdown(text: string): string {
     if (slug) return `${slug}.pdf`;
   }
   return "response.pdf";
-}
-
-function sendHtmlWithPlainFallback(
-  botApi: Api,
-  chatId: number,
-  html: string,
-  plain: string,
-  threadId: number | undefined,
-  label: string,
-): void {
-  botApi
-    .sendMessage(chatId, html, {
-      parse_mode: "HTML",
-      message_thread_id: threadId,
-    })
-    .catch((err) => {
-      warn(`relay sendTextReply ${label}(HTML) failed: ${err}`, {
-        chatId,
-        threadId,
-      });
-      botApi
-        .sendMessage(chatId, plain, { message_thread_id: threadId })
-        .catch((err2) =>
-          warn(`relay sendTextReply ${label}(plain) failed: ${err2}`, {
-            chatId,
-            threadId,
-          }),
-        );
-    });
-}
-
-export function sendTextReply(
-  botApi: Api,
-  chatId: number,
-  text: string,
-  threadId?: number,
-): void {
-  if (!text || !text.trim()) {
-    warn("relay: sendTextReply called with empty text", { chatId, threadId });
-    return;
-  }
-  const formatted = convertMarkdownToHtml(text);
-  if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    sendHtmlWithPlainFallback(botApi, chatId, formatted, text, threadId, "");
-    return;
-  }
-  for (const chunk of splitMessage(text)) {
-    sendHtmlWithPlainFallback(
-      botApi,
-      chatId,
-      convertMarkdownToHtml(chunk),
-      chunk,
-      threadId,
-      "chunk ",
-    );
-  }
-}
-
-function splitMessage(text: string, limit = TELEGRAM_SAFE_LIMIT): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > limit) {
-    const para = rest.lastIndexOf("\n\n", limit);
-    const line = rest.lastIndexOf("\n", limit);
-    const cut = para > limit / 2 ? para : line > limit / 2 ? line : limit;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n+/, "");
-  }
-  if (rest) chunks.push(rest);
-  return chunks;
 }
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);

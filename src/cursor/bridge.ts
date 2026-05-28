@@ -239,6 +239,11 @@ export class CursorBridge {
     info(`cursor-bridge: stopped for session "${this.opts.sessionName}"`);
   }
 
+  /** True while the underlying CDP WebSocket is OPEN. */
+  isAlive(): boolean {
+    return this.opts.cdpClient.isAlive();
+  }
+
   /**
    * Add an observed AI fragment to the buffer with prefix-dedup.
    * Comparison runs on a markdown-stripped lowercased form so a

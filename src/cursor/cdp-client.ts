@@ -126,4 +126,9 @@ export class CdpClient {
   close(): void {
     this.ws.close();
   }
+
+  /** True while the underlying WebSocket is OPEN (readyState === 1). */
+  isAlive(): boolean {
+    return this.ws.readyState === 1;
+  }
 }

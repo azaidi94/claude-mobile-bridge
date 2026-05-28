@@ -6,6 +6,7 @@
 import { Socket } from "net";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { debug, warn } from "../logger";
+import { writeJsonLine } from "../utils/socket-writer";
 
 export interface RelayReply {
   chat_id: string;
@@ -206,13 +207,14 @@ export class RelayClient {
       warn("relay: cannot send, not connected", { type: msg.type });
       return false;
     }
-    try {
-      this.socket.write(JSON.stringify(msg) + "\n");
-      return true;
-    } catch (err) {
+    // Enqueue via the backpressure-aware writer so a slow MCP consumer cannot
+    // grow Node's internal write queue unboundedly. The returned promise is
+    // detached — failure surfaces via the warn() below; callers only need to
+    // know the message was accepted into the in-order queue.
+    writeJsonLine(this.socket, msg).catch((err) => {
       warn("relay: socket write failed", err, { type: msg.type });
-      return false;
-    }
+    });
+    return true;
   }
 
   private handleMessage(msg: { type: string; [key: string]: unknown }): void {

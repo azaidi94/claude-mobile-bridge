@@ -27,10 +27,12 @@ import {
   createNotificationHandler,
   setSessionOfflineCallback,
   setSessionCleanupCallback,
-  getActiveSession,
   getGitBranch,
   getSessions,
+  setOnSessionStateCreated,
+  getSession,
 } from "./sessions";
+import { globalEventBus } from "./web/sse";
 import {
   isWatching,
   notifySessionOffline,
@@ -52,8 +54,9 @@ import {
   TopicManager,
 } from "./topics";
 import { createBot } from "./bot";
-import { session } from "./session";
+import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
+import { backfillPortFileSessionIds } from "./relay/backfill";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -107,24 +110,37 @@ try {
   warn(`topic-ledger: backfill failed: ${err}`);
 }
 
-// Wire up mode change callback to update pinned status
-session.onModeChange = (isPlanMode) => {
-  const active = getActiveSession();
-  const topicId = active ? getThreadId(active.name) : undefined;
-  getGitBranch(session.workingDir)
-    .then((branch) => {
-      const status = {
-        sessionName: active?.name || null,
-        isPlanMode,
-        model: session.modelDisplayName,
-        branch,
-      };
-      for (const chatId of getChatIds()) {
-        updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
-      }
-    })
-    .catch(() => {});
-};
+// Wire up pinned-status updates on plan-mode change. Each newly created
+// SessionState gets a globalEventBus subscriber that updates the pin for
+// that session's topic. The hook is registered before any handler runs, so
+// the first time getSessionState(name) is called for a session, this closure
+// subscribes. The unsubscribe is registered as a state cleanup so a
+// kill→recreate of the same session name detaches the old subscriber instead
+// of stacking a duplicate.
+setOnSessionStateCreated((state) => {
+  const sessionName = state.sessionName;
+  if (!sessionName) return;
+  const unsub = globalEventBus.subscribe(sessionName, (evt) => {
+    if (evt.type !== "mode_change") return;
+    const info = getSession(sessionName);
+    const topicId = getThreadId(sessionName);
+    const dir = info?.dir ?? state.workingDir;
+    getGitBranch(dir)
+      .then((branch) => {
+        const status = {
+          sessionName,
+          isPlanMode: !!evt.isPlanMode,
+          model: getCurrentModelDisplayName(),
+          branch,
+        };
+        for (const chatId of getChatIds()) {
+          updatePinnedStatus(bot.api, chatId, status, topicId).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  });
+  state.registerCleanup(unsub);
+});
 
 // Wire up watch handler's offline callback for resume flow
 setSessionOfflineCallback(notifySessionOffline);
@@ -274,6 +290,11 @@ const notifyHandler = createNotificationHandler(
 );
 await startWatcher(notifyHandler);
 
+// Backfill sessionId on any existing relay port files that lack it (relay
+// processes started before the discovery-loop race fix, or any with a still-
+// undiscovered JSONL at startup). Runs once, idempotent.
+await backfillPortFileSessionIds();
+
 // Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
 // 0/no/off) to skip CDP target polling — useful when Cursor isn't
 // running or the user only wants the Claude Code bridge.
@@ -356,7 +377,9 @@ if (existsSync(RESTART_FILE)) {
     warn(`restart msg: ${e}`);
     try {
       unlinkSync(RESTART_FILE);
-    } catch {}
+    } catch {
+      // silently ok: best-effort cleanup of restart marker
+    }
   }
 }
 

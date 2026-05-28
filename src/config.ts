@@ -328,11 +328,6 @@ export const RELAY_AUQ_SECRET = process.env.RELAY_AUQ_SECRET?.trim() || "";
 export const WEB_AUTH_LAN_BYPASS =
   (process.env.WEB_AUTH_LAN_BYPASS || "false").toLowerCase() === "true";
 
-// ============== TTS ==============
-
-export const TTS_RESPONSE_FORMAT =
-  (process.env.TTS_RESPONSE_FORMAT as "opus" | "mp3" | undefined) || "opus";
-
 // ============== Channel Relay ==============
 
 export const RELAY_PORT_FILE_PREFIX = join(STATE_DIR, "channel-relay-");

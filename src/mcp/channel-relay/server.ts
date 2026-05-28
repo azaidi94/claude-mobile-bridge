@@ -28,6 +28,7 @@ import {
   statSync,
 } from "fs";
 import { homedir } from "os";
+import { writeJsonLine } from "../../utils/socket-writer";
 import { join } from "path";
 import { STATE_DIR, parseRelayPortFilePid } from "../../paths";
 
@@ -84,7 +85,9 @@ function writePortFile(port: number): void {
 function removePortFile(): void {
   try {
     unlinkSync(PORT_FILE);
-  } catch {}
+  } catch {
+    // silently ok: best-effort cleanup; port file may already be gone
+  }
 }
 
 /** Convert a cwd to the Claude projects directory name (slashes → dashes). */
@@ -201,8 +204,17 @@ function runDiscovery(): void {
     currentId = (
       JSON.parse(readFileSync(PORT_FILE, "utf-8")) as { sessionId?: string }
     ).sessionId;
-  } catch {
-    return; // Port file gone — stop
+  } catch (err) {
+    // ENOENT = port file gone, stop. Any other error (transient race with the
+    // bot's updatePortFile rewriting the file, empty mid-write, JSON parse
+    // failure) is recoverable — reschedule. Previously a single race here
+    // killed the loop and sessionId never backfilled.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    process.stderr.write(
+      `channel-relay: port file read failed (${(err as Error)?.message ?? err}), retrying\n`,
+    );
+    scheduleNextDiscovery(5_000);
+    return;
   }
 
   // If we already own a sessionId, only re-discover if:
@@ -310,15 +322,15 @@ function sendToBot(msg: Record<string, unknown>): boolean {
     );
     return false;
   }
-  try {
-    connectedClient.write(JSON.stringify(msg) + "\n");
-    return true;
-  } catch (err) {
+  // Enqueue via the backpressure-aware writer so a slow bot consumer cannot
+  // grow Node's internal write queue unboundedly. The returned promise is
+  // detached — failure surfaces via the stderr write below.
+  writeJsonLine(connectedClient, msg).catch((err) => {
     process.stderr.write(
       `channel-relay: sendToBot write failed: ${err} (type=${msg.type})\n`,
     );
-    return false;
-  }
+  });
+  return true;
 }
 
 function errorResult(text: string) {
