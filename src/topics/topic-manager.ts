@@ -210,13 +210,15 @@ export class TopicManager {
       .map((m) => m.sessionName);
     await Promise.allSettled(staleNames.map((n) => this.deleteTopic(n)));
 
+    // Route every live session through createTopic, which validates an
+    // existing mapping by probing its topic: a healthy topic is reused (and
+    // marked online), a topic deleted in Telegram ("message thread not found")
+    // is dropped and recreated, and a session with no mapping gets a fresh
+    // topic. Trusting existing+online mappings without probing left stale
+    // entries unhealed across restarts (topic deleted mid-run → every send
+    // dropped with "message thread not found").
     await Promise.allSettled(
-      liveSessions.map((s) => {
-        const existing = getTopicBySession(s.name);
-        if (!existing) return this.createTopic(s.name, s.dir, s.id);
-        if (!existing.isOnline) return this.updateTopicStatus(s.name, true);
-        return Promise.resolve();
-      }),
+      liveSessions.map((s) => this.createTopic(s.name, s.dir, s.id)),
     );
 
     info(

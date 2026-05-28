@@ -320,6 +320,39 @@ describe("TopicManager", () => {
     expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 41);
   });
 
+  test("reconcile recreates an existing online mapping whose TG topic was deleted", async () => {
+    // Regression: a topic deleted in Telegram mid-run leaves a stale store
+    // entry with isOnline:true. reconcile used to trust existing+online
+    // mappings without probing, so a restart never healed it — every send hit
+    // "message thread not found" and dropped. reconcile must validate the
+    // topic still exists and recreate it if not.
+    seedMapping("stale-sess", 88, true);
+
+    // The validation probe to the (deleted) topic fails with TG's exact error.
+    mockApi.sendMessage.mockImplementationOnce(() =>
+      Promise.reject(new Error("Bad Request: message thread not found")),
+    );
+
+    const mgr = createManager();
+    await mgr.reconcile([{ name: "stale-sess", dir: "/tmp/x", id: "sid-x" }]);
+
+    expect(mockApi.createForumTopic).toHaveBeenCalled();
+    const mapping = getTopicBySession("stale-sess");
+    expect(mapping).toBeDefined();
+    expect(mapping!.topicId).toBe(42); // freshly created, not the dead 88
+  });
+
+  test("reconcile reuses a healthy existing online topic without recreating", async () => {
+    seedMapping("healthy-sess", 70, true);
+    const mgr = createManager();
+
+    await mgr.reconcile([{ name: "healthy-sess", dir: "/tmp/y", id: "sid-y" }]);
+
+    // Probe succeeds (default mock), so the topic is reused, not recreated.
+    expect(mockApi.createForumTopic).not.toHaveBeenCalled();
+    expect(getTopicBySession("healthy-sess")!.topicId).toBe(70);
+  });
+
   test("reconcile updates offline→online for sessions that came back", async () => {
     seedMapping("comeback", 30, false);
     const mgr = createManager();
