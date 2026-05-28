@@ -1692,10 +1692,13 @@ describe("commands: edge cases", () => {
 
   test("home directory path is abbreviated with ~", async () => {
     const { handleList } = await import("../handlers/commands");
-    const homeDir = process.env.HOME || "/Users/test";
+    // The /list home abbreviation collapses a macOS home (/Users/<name>) to
+    // "~". Use a fixed /Users path so this exercises that regex regardless of
+    // the runner's own $HOME — CI is Linux ($HOME=/home/runner), where the
+    // macOS-only regex would otherwise never match and the assertion would fail.
     mockSessions.push({
       name: "home-project",
-      dir: `${homeDir}/projects/test`,
+      dir: "/Users/testuser/projects/test",
       lastActivity: Date.now(),
     });
     const ctx = createMockContext({ userId: 123456 });
