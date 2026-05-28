@@ -14,7 +14,7 @@ setupBotLogRotation(
 import { run } from "@grammyjs/runner";
 import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir } from "./settings";
+import { getWorkingDir, getAutoWatchOnSpawn } from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -180,6 +180,11 @@ onBridgeChange((online) => {
 // tailer and emits noisy `watch: stopped` logs.
 const AUTO_WATCH_RETRY_MS = 60_000;
 const autoWatchRetryTimer: Timer = setInterval(() => {
+  // Respect the autoWatchOnSpawn setting here too — previously this loop
+  // re-watched every topic unconditionally, so disabling the setting in the
+  // /new spawn path never fully took effect (this loop re-armed the watch
+  // within 60s). Both paths now honour the same toggle.
+  if (!getAutoWatchOnSpawn()) return;
   const tm = topicManager;
   if (!tm) return;
   const chatId = tm.getChatId();
