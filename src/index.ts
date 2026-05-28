@@ -112,13 +112,15 @@ try {
 
 // Wire up pinned-status updates on plan-mode change. Each newly created
 // SessionState gets a globalEventBus subscriber that updates the pin for
-// that session's topic. The hook is registered before any handler runs,
-// so the first time getSessionState(name) is called for a session, this
-// closure subscribes and stays attached for the process lifetime.
+// that session's topic. The hook is registered before any handler runs, so
+// the first time getSessionState(name) is called for a session, this closure
+// subscribes. The unsubscribe is registered as a state cleanup so a
+// kill→recreate of the same session name detaches the old subscriber instead
+// of stacking a duplicate.
 setOnSessionStateCreated((state) => {
   const sessionName = state.sessionName;
   if (!sessionName) return;
-  globalEventBus.subscribe(sessionName, (evt) => {
+  const unsub = globalEventBus.subscribe(sessionName, (evt) => {
     if (evt.type !== "mode_change") return;
     const info = getSession(sessionName);
     const topicId = getThreadId(sessionName);
@@ -137,6 +139,7 @@ setOnSessionStateCreated((state) => {
       })
       .catch(() => {});
   });
+  state.registerCleanup(unsub);
 });
 
 // Wire up watch handler's offline callback for resume flow

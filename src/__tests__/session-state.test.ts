@@ -1,12 +1,13 @@
 process.env.TELEGRAM_BOT_TOKEN ||= "test-token";
 process.env.TELEGRAM_ALLOWED_USERS ||= "1";
 
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import {
   SessionState,
   getSessionState,
   dropSessionState,
   listSessionStates,
+  setOnSessionStateCreated,
   _resetSessionStatesForTests,
 } from "../sessions/session-state";
 import type { SessionInfo } from "../sessions/types";
@@ -147,5 +148,60 @@ describe("SessionState helper methods", () => {
     const s = getSessionState("alpha");
     s.setWorkingDir("/some/path");
     expect(s.workingDir).toBe("/some/path");
+  });
+});
+
+describe("SessionState cleanups (listener-leak guard)", () => {
+  beforeEach(() => {
+    _resetSessionStatesForTests();
+  });
+  afterEach(() => {
+    setOnSessionStateCreated(null);
+    _resetSessionStatesForTests();
+  });
+
+  test("dropSessionState runs registered cleanups once", () => {
+    const s = getSessionState("alpha");
+    let runs = 0;
+    s.registerCleanup(() => runs++);
+    dropSessionState("alpha");
+    expect(runs).toBe(1);
+    // Dropping again must not re-run a cleared cleanup.
+    dropSessionState("alpha");
+    expect(runs).toBe(1);
+  });
+
+  test("a misbehaving cleanup does not block the drop", () => {
+    const s = getSessionState("alpha");
+    let secondRan = false;
+    s.registerCleanup(() => {
+      throw new Error("boom");
+    });
+    s.registerCleanup(() => {
+      secondRan = true;
+    });
+    expect(() => dropSessionState("alpha")).not.toThrow();
+    expect(secondRan).toBe(true);
+  });
+
+  test("kill→recreate does not stack create-hook subscriptions", () => {
+    // Mirrors index.ts: the create hook attaches a per-session listener and
+    // registers its teardown. Each drop must detach it so a recreate of the
+    // same name yields exactly one live listener, not N.
+    let liveListeners = 0;
+    setOnSessionStateCreated((state) => {
+      liveListeners++;
+      state.registerCleanup(() => liveListeners--);
+    });
+
+    getSessionState("alpha");
+    expect(liveListeners).toBe(1);
+
+    for (let i = 0; i < 5; i++) {
+      dropSessionState("alpha");
+      getSessionState("alpha");
+    }
+    // Without the cleanup wiring this would be 6 (one stacked per recreate).
+    expect(liveListeners).toBe(1);
   });
 });

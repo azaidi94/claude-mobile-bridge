@@ -42,9 +42,36 @@ export class SessionState {
   _isProcessing = false;
   _wasInterruptedByNewMessage = false;
 
+  // Teardown callbacks (e.g. event-bus unsubscribes) run when this state is
+  // dropped, so kill→recreate of the same session name doesn't stack listeners.
+  private _cleanups: (() => void)[] = [];
+
   constructor(name: string | null = null) {
     this.sessionName = name;
     this.workingDir = getWorkingDir();
+  }
+
+  /**
+   * Register a teardown fn invoked once when this state is dropped via
+   * `dropSessionState`. Use for resources tied to the state's lifetime —
+   * notably `globalEventBus.subscribe` unsubscribes attached in the
+   * onSessionStateCreated hook.
+   */
+  registerCleanup(fn: () => void): void {
+    this._cleanups.push(fn);
+  }
+
+  /** Run and clear all registered teardown callbacks. */
+  runCleanups(): void {
+    const fns = this._cleanups;
+    this._cleanups = [];
+    for (const fn of fns) {
+      try {
+        fn();
+      } catch {
+        // never let a misbehaving teardown block the drop
+      }
+    }
   }
 
   get isActive(): boolean {
@@ -213,9 +240,12 @@ export function getSessionState(name: string): SessionState {
 }
 
 /**
- * Remove a SessionState from the map. Used by killSession cleanup.
+ * Remove a SessionState from the map. Used by killSession cleanup. Runs the
+ * state's teardown callbacks first so any per-session listeners (e.g. the
+ * pinned-status event-bus subscription) are detached rather than orphaned.
  */
 export function dropSessionState(name: string): void {
+  states.get(name)?.runCleanups();
   states.delete(name);
 }
 
@@ -231,5 +261,6 @@ export function listSessionStates(): SessionState[] {
  * remain meaningful.
  */
 export function _resetSessionStatesForTests(): void {
+  for (const state of states.values()) state.runCleanups();
   states.clear();
 }

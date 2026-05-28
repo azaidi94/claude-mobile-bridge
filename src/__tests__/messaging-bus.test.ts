@@ -246,6 +246,35 @@ describe("MessageBus.send — chunking", () => {
     // First-chunk reply_parameters only on first chunk
     expect(api._sentTexts[0]!.opts.message_thread_id).toBeUndefined();
   });
+
+  test("a long code block never splits an HTML tag across chunks", async () => {
+    // Regression: the bus must chunk the RAW content and convert each chunk,
+    // not chunk already-converted HTML. Chunking the whole HTML would slice
+    // through a <pre> tag (chunk 0 opens it, a later chunk closes it), and TG
+    // rejects both as invalid entities, silently dropping the whole message to
+    // plain text. Per-chunk conversion keeps every chunk's HTML self-contained.
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const line = "const x = " + "y".repeat(60) + ";";
+    const code = Array.from({ length: 120 }, () => line).join("\n");
+    const text = "```js\n" + code + "\n```"; // ~8.6k chars → multiple chunks
+
+    const r = await bus.send({ chatId: 7, content: text, format: "auto" });
+
+    expect("messageId" in r).toBe(true);
+    expect(api._sentTexts.length).toBeGreaterThan(1);
+    // Every chunk that was sent as HTML must have balanced tags — no chunk may
+    // open a tag it doesn't close, or close one it never opened.
+    for (const sent of api._sentTexts) {
+      if (sent.opts.parse_mode !== "HTML") continue;
+      const html = sent.text;
+      for (const tag of ["pre", "b", "i", "code", "s"]) {
+        const open = (html.match(new RegExp(`<${tag}>`, "g")) || []).length;
+        const close = (html.match(new RegExp(`</${tag}>`, "g")) || []).length;
+        expect(open).toBe(close);
+      }
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

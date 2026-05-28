@@ -361,9 +361,9 @@ export function createMessageBus(api: Api): MessageBus {
 
       try {
         const formatHint: FormatHint = msg.format ?? "auto";
-        const resolved = resolveParseMode(msg.content, formatHint);
 
         if (msg.attachment) {
+          const resolved = resolveParseMode(msg.content, formatHint);
           const messageId = await sendAttachment(
             msg.chatId,
             msg.threadId,
@@ -388,25 +388,27 @@ export function createMessageBus(api: Api): MessageBus {
           return { messageId };
         }
 
-        // Text path: chunk on the resolved (post-format) content; we also keep
-        // the raw chunks aligned so plain-fallback has the markdown source.
-        const formattedChunks = chunkContent(resolved.content);
-        const rawChunks =
-          formattedChunks.length === 1
-            ? [msg.content]
-            : chunkContent(msg.content);
+        // Text path: chunk the RAW content, then resolve parse-mode per chunk.
+        // Converting each raw chunk independently (rather than chunking
+        // already-converted HTML) keeps every chunk's HTML self-contained — a
+        // tag can't be sliced across a chunk boundary, which TG would reject —
+        // and keeps the plain-fallback source exactly aligned with what was
+        // sent. Mirrors the old sendTextReply.
+        const rawChunks = chunkContent(msg.content);
 
         let firstMessageId: number | null = null;
-        for (let i = 0; i < formattedChunks.length; i++) {
+        for (let i = 0; i < rawChunks.length; i++) {
+          const rawChunk = rawChunks[i]!;
+          const resolvedChunk = resolveParseMode(rawChunk, formatHint);
           // Reply-markup only on the first chunk (TG would otherwise repeat
           // the keyboard on every chunk).
           const id = await sendOneText(
             msg.chatId,
             msg.threadId,
-            formattedChunks[i]!,
-            resolved.parse_mode,
+            resolvedChunk.content,
+            resolvedChunk.parse_mode,
             i === 0 ? msg.replyTo : undefined,
-            rawChunks[i] ?? formattedChunks[i]!,
+            rawChunk,
             formatHint,
             msg.silent === true,
             i === 0 ? msg.replyMarkup : undefined,
@@ -421,7 +423,7 @@ export function createMessageBus(api: Api): MessageBus {
           durationMs: elapsedMs(startedAt),
           result: "ok",
           dedupKey: msg.dedupKey,
-          chunkCount: formattedChunks.length,
+          chunkCount: rawChunks.length,
         });
         return { messageId: firstMessageId ?? 0 };
       } catch (err) {
