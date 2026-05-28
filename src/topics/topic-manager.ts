@@ -194,9 +194,19 @@ export class TopicManager {
     const store = getTopicStore();
     const liveNames = new Set(liveSessions.map((s) => s.name));
 
-    // Delete topics for sessions that no longer exist
+    // Delete topics for sessions that no longer exist — but ONLY for
+    // CC/desktop sessions, whose liveness `liveSessions` (derived from the
+    // relay port-file scan) authoritatively knows. Cursor topics are NOT
+    // ours to prune here: at startup the cursor-bridge's syncBridges runs
+    // async on a 5s timer and hasn't re-registered its sessions yet, so
+    // every cursor-* topic would look "stale" and get deleted — then
+    // recreated seconds later with a new id. The cursor-bridge owns cursor
+    // topic lifecycle (closed-window cleanup) and /cleanzombie prunes stale
+    // ones with real CDP-liveness info. (Prefix sniff until phase 5 unifies
+    // Session sources.)
     const staleNames = store.topics
       .filter((m) => !liveNames.has(m.sessionName))
+      .filter((m) => !m.sessionName.startsWith("cursor-"))
       .map((m) => m.sessionName);
     await Promise.allSettled(staleNames.map((n) => this.deleteTopic(n)));
 

@@ -303,6 +303,23 @@ describe("TopicManager", () => {
     expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 10);
   });
 
+  test("reconcile does NOT delete cursor topics absent from liveSessions", async () => {
+    // Cursor sessions register asynchronously via the cursor-bridge after
+    // startup, so they're missing from the port-file-derived liveSessions
+    // at reconcile time. They must not be pruned here.
+    seedMapping("cursor-prompt_gen", 40, true);
+    seedMapping("gone-cc", 41, true);
+    const mgr = createManager();
+
+    await mgr.reconcile([{ name: "still-alive-cc", dir: "/tmp/d" }]);
+
+    expect(getTopicBySession("cursor-prompt_gen")).toBeDefined();
+    expect(mockApi.deleteForumTopic).not.toHaveBeenCalledWith(CHAT_ID, 40);
+    // Non-cursor stale topic is still pruned.
+    expect(getTopicBySession("gone-cc")).toBeUndefined();
+    expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 41);
+  });
+
   test("reconcile updates offline→online for sessions that came back", async () => {
     seedMapping("comeback", 30, false);
     const mgr = createManager();
