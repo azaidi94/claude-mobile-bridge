@@ -1006,6 +1006,49 @@ describe("tailer: lifecycle", () => {
     expect(events[0]!.content).toBe("New content");
   });
 
+  test("recovers after the file is truncated/rewritten below the saved offset", async () => {
+    // Regression: readNew()'s `size <= offset` guard used to bail forever once
+    // a watched JSONL shrank below the saved offset (in-place rewrite). The
+    // tailer then went silently dead for that session — assistant output still
+    // arrived via the relay TCP path, masking it, but native terminal input
+    // (tailer-only) vanished. Recovery resyncs the offset to the new EOF and
+    // resumes emitting subsequent appends.
+    const events: TailEvent[] = [];
+
+    // Large initial content so start() seeks to a high offset.
+    const bigLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "x".repeat(2000) }] },
+    });
+    await writeFile(testFile, bigLine + "\n");
+
+    const tailer = new SessionTailer(testFile, (e) => events.push(e));
+    await tailer.start(); // offset == big size
+    try {
+      // Rewrite the file far smaller than the saved offset (simulates a
+      // compaction / in-place rewrite). This is what used to wedge readNew.
+      await writeFile(testFile, "");
+      // Let one poll detect the shrink and resync the offset to the new EOF.
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+
+      // A subsequent append must now be picked up — proving the tailer is
+      // alive again rather than stuck on the stale offset.
+      const { appendFile } = await import("fs/promises");
+      const newLine = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "post-truncation input" },
+      });
+      await appendFile(testFile, newLine + "\n");
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+
+      const userEvt = events.find((e) => e.type === "user");
+      expect(userEvt).toBeDefined();
+      expect(userEvt!.content).toBe("post-truncation input");
+    } finally {
+      tailer.stop();
+    }
+  });
+
   test("starts on a non-existent path and tails it once it appears", async () => {
     const lateFile = join(tmpdir(), `tailer-late-${Date.now()}.jsonl`);
     // Ensure the file does NOT exist when start() is called.

@@ -244,7 +244,22 @@ export class SessionTailer {
     try {
       const file = Bun.file(this.filePath);
       const size = file.size;
-      if (size <= this.offset) return;
+
+      // Truncation / in-place rewrite recovery. If the file shrank below our
+      // saved offset (e.g. Claude Code compacted and rewrote the JSONL), the
+      // old `size <= offset` guard would bail forever — the tailer went
+      // silently dead for that session while fs.watch/poll kept firing. Resync
+      // to the new EOF so subsequent appends are read again. We jump to EOF
+      // (rather than re-reading from 0) to avoid replaying the whole rewritten
+      // file into the surfaces.
+      if (size < this.offset) {
+        warn(
+          `tailer: file shrank (${this.offset} → ${size}), resyncing to EOF: ${this.filePath}`,
+        );
+        this.offset = size;
+        return;
+      }
+      if (size === this.offset) return;
 
       const slice = file.slice(this.offset, size);
       const text = await slice.text();
