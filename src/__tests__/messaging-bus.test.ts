@@ -474,6 +474,17 @@ describe("MessageBus.edit", () => {
 // ---------------------------------------------------------------------------
 
 describe("MessageBus logging", () => {
+  // The per-op `bus.send` schema line is emitted at debug level, so enable
+  // DEBUG around the capture (the logger reads it live).
+  const prevDebug = process.env.DEBUG;
+  beforeEach(() => {
+    process.env.DEBUG = "1";
+  });
+  afterEach(() => {
+    if (prevDebug === undefined) delete process.env.DEBUG;
+    else process.env.DEBUG = prevDebug;
+  });
+
   test("one bus.send log line per send with documented fields", async () => {
     const cap = captureStdout();
     try {
@@ -522,6 +533,25 @@ describe("MessageBus logging", () => {
       const dropLine = lines.find((l) => l.includes("op_d_2"))!;
       expect(dropLine).toBeTruthy();
       expect(dropLine).toContain('result="drop:dedup"');
+    } finally {
+      cap.restore();
+    }
+  });
+
+  test("send line is suppressed at default level (no DEBUG)", async () => {
+    delete process.env.DEBUG;
+    const cap = captureStdout();
+    try {
+      const api = makeApi();
+      const bus = createMessageBus(api as any);
+      await bus.send({
+        chatId: 1,
+        content: "hi",
+        format: "plain",
+        opId: "op_quiet_1",
+      });
+      const lines = cap.lines().filter((l) => l.includes("op_quiet_1"));
+      expect(lines.length).toBe(0);
     } finally {
       cap.restore();
     }
