@@ -24,11 +24,21 @@ import { getMessageBus } from "../../messaging";
 import { busReply, resolveTopicSession } from "./helpers";
 
 /**
- * /stop - Interrupt current generation or cancel queue.
+ * Shared abort path for /stop and /interrupt.
+ *
+ * /interrupt is the gentle version: cancel the current SDK query and let any
+ * pending interactive state (plan approval, ask-user-question, settings
+ * prompt) stay alive so the user can finish what they were in the middle of.
+ *
+ * /stop is the heavy version: cancel the query AND clear pending interactive
+ * state for this chat — fresh slate. Useful when an AUQ/plan-approval is
+ * stuck or no longer wanted.
  */
-export async function handleStop(
+async function abortQuery(
   ctx: Context,
-  sctx?: SessionContext,
+  sctx: SessionContext | undefined,
+  clearPendings: boolean,
+  verbLabel: string,
 ): Promise<void> {
   const userId = ctx.from?.id;
 
@@ -37,22 +47,61 @@ export async function handleStop(
     return;
   }
 
-  if (!sctx && (await resolveTopicSession(ctx, "stop_pick"))) return;
+  if (!sctx && (await resolveTopicSession(ctx, `${verbLabel}_pick`))) return;
 
   const state =
     sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
   const result = state ? await state.stop() : false;
 
+  const chatId = ctx.chat?.id;
+  let clearedNote = "";
+  if (clearPendings && chatId !== undefined) {
+    const cleared: string[] = [];
+    const { pendingPlanFeedback } = await import("../callback");
+    const { pendingAskUserQuestionCustom } = await import("../streaming");
+    const { pendingSettingsInput } = await import("../settings");
+    if (pendingPlanFeedback.delete(chatId)) cleared.push("plan");
+    if (pendingAskUserQuestionCustom.delete(chatId)) cleared.push("question");
+    if (pendingSettingsInput.delete(chatId)) cleared.push("settings");
+    if (state) state.clearPendingPlanApproval();
+    if (cleared.length) clearedNote = ` (cleared: ${cleared.join(", ")})`;
+  }
+
   if (result === "stopped") {
-    await busReply(ctx, "🛑 Query stopped.");
+    await busReply(ctx, `🛑 Query stopped.${clearedNote}`);
   } else if (result === "pending") {
-    await busReply(ctx, "⏳ Cancelling...");
+    await busReply(ctx, `⏳ Cancelling...${clearedNote}`);
+  } else if (clearedNote) {
+    await busReply(ctx, `⏸️ Nothing running${clearedNote}.`);
   } else {
     await busReply(ctx, "⏸️ Nothing running.");
   }
 
   await Bun.sleep(100);
   if (state) state.clearStopRequested();
+}
+
+/**
+ * /stop - Abort current query AND clear any pending interactive state
+ * (plan approval, ask-user-question, settings prompt) for this chat.
+ */
+export async function handleStop(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
+  await abortQuery(ctx, sctx, true, "stop");
+}
+
+/**
+ * /interrupt - Abort the current query but preserve any pending interactive
+ * state. Gentler than /stop — use this to cut a stuck run when you still
+ * want to answer an open plan/question afterwards.
+ */
+export async function handleInterrupt(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
+  await abortQuery(ctx, sctx, false, "interrupt");
 }
 
 /**

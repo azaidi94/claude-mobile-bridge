@@ -47,6 +47,7 @@ export { handleSessions, offlineSessionCache } from "./offline-sessions";
 
 export {
   handleStop,
+  handleInterrupt,
   handleStatus,
   handleModel,
   handleRestart,

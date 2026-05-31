@@ -157,6 +157,9 @@ const stubSessionState = {
   get clearStopRequested() {
     return mockSessionMethods.clearStopRequested;
   },
+  get clearPendingPlanApproval() {
+    return mockSessionMethods.clearPendingPlanApproval;
+  },
   get kill() {
     return mockSessionMethods.kill;
   },
@@ -356,6 +359,7 @@ const mockSessionState = {
 const mockSessionMethods = {
   stop: mock(() => Promise.resolve(false as "stopped" | "pending" | false)),
   clearStopRequested: mock(() => {}),
+  clearPendingPlanApproval: mock(() => {}),
   kill: mock(() => Promise.resolve()),
   setWorkingDir: mock((dir: string) => {
     mockSessionState.workingDir = dir;
