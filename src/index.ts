@@ -366,6 +366,7 @@ await bot.api.setMyCommands([
   { command: "groupmode", description: "Toggle group vs private routing" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
+  { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);

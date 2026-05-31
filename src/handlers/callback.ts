@@ -154,6 +154,48 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // mis-routing to whichever session the singleton last touched.
   const sctx = resolveSessionContext(ctx);
 
+  // Saved-prompt tap: inject the prompt's text into the originating session
+  // as if the user had typed it. Must come before the model branch so a
+  // future button with `prompt:` prefix doesn't shadow.
+  if (callbackData.startsWith("prompt:")) {
+    const id = callbackData.slice(7);
+    const { getById } = await import("../prompts/store");
+    const saved = await getById(id);
+    if (!saved) {
+      await ctx.answerCallbackQuery({ text: "prompt missing" });
+      return;
+    }
+    const preview =
+      saved.text.length > 60 ? saved.text.slice(0, 60) + "…" : saved.text;
+    if (!sctx) {
+      await ctx.answerCallbackQuery({
+        text: "Tap prompts in a session topic",
+      });
+      return;
+    }
+    const username = ctx.from?.username || "telegram";
+    const { sendViaRelay } = await import("./relay-bridge");
+    const result = await sendViaRelay(
+      ctx,
+      saved.text,
+      username,
+      chatId,
+      undefined,
+      undefined,
+      ctx.callbackQuery?.message?.message_thread_id,
+      sctx,
+    );
+    if (result === "delivered") {
+      await ctx.answerCallbackQuery({ text: `▶ ${preview}` });
+      await auditLog(userId, username, "PROMPT_TAP", saved.id, preview);
+    } else {
+      await ctx.answerCallbackQuery({
+        text: `❌ ${result === "unavailable" ? "session offline" : "send failed"}`,
+      });
+    }
+    return;
+  }
+
   // 2. Handle model switch callbacks: model:{model_id}
   if (callbackData.startsWith("model:")) {
     const modelId = callbackData.slice(6) as ModelId; // Remove "model:" prefix

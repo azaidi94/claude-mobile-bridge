@@ -21,6 +21,7 @@ export {
   handleGroupMode,
   handleCleanZombie,
   handleCron,
+  handlePrompts,
   handleSessions,
   offlineSessionCache,
   handlePwd,
