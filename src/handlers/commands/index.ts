@@ -66,3 +66,5 @@ export { handleApp } from "./app";
 export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
 
 export { handleCleanZombie } from "./cleanzombie";
+
+export { handleCron } from "./cron";

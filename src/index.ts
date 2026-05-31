@@ -313,6 +313,13 @@ if (cursorBridgeEnabled) {
   info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
 }
 
+// Cron scheduler runs only when we know which chat to send results to;
+// otherwise a fired job has no destination.
+if (primaryChatId !== undefined) {
+  const { startCronScheduler } = await import("./cron/scheduler");
+  startCronScheduler(bot.api, primaryChatId);
+}
+
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
   await topicManager.reconcile(
@@ -358,6 +365,7 @@ await bot.api.setMyCommands([
   { command: "settings", description: "Persistent settings panel" },
   { command: "groupmode", description: "Toggle group vs private routing" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
+  { command: "cron", description: "Schedule prompts at cron times" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);

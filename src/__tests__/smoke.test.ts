@@ -148,6 +148,7 @@ mock.module("../handlers", () => ({
   handlePin: mock(() => {}),
   handleGroupMode: mock(() => {}),
   handleCleanZombie: mock(() => {}),
+  handleCron: mock(() => {}),
   handleSessions: mock(() => {}),
   handleSkip: mock(() => {}),
   handleQueue: mock(() => {}),

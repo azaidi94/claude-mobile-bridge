@@ -42,6 +42,7 @@ import {
   handlePin,
   handleGroupMode,
   handleCleanZombie,
+  handleCron,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -262,6 +263,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);
+  bot.command("cron", withSctx(handleCron));
   bot.command("sessions", handleSessions);
   bot.command("pwd", withSctx(handlePwd));
   bot.command("cd", withSctx(handleCd));

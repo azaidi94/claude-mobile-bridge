@@ -20,6 +20,7 @@ export {
   handlePin,
   handleGroupMode,
   handleCleanZombie,
+  handleCron,
   handleSessions,
   offlineSessionCache,
   handlePwd,
