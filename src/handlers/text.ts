@@ -50,6 +50,7 @@ import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
+import { markReceived } from "./reactions";
 
 /**
  * Bus-routed reply helper. Use for plain or HTML text replies including
@@ -120,6 +121,15 @@ export async function handleText(
     username,
     messagePreview: truncate(message, 120),
   });
+
+  // Stage-aware reactions — instant 👀 receipt so the user sees the bot
+  // noticed their message. Promoted to 🤔 by event-router on first tool/text
+  // event and to 🎉 on turn_end. If the message bails before reaching CC,
+  // the 👀 honestly stays put.
+  const inboundMessageId = ctx.message?.message_id;
+  if (inboundMessageId !== undefined) {
+    markReceived(ctx.api, chatId, incomingThreadId, inboundMessageId);
+  }
 
   // Topic routing — use the explicit SessionContext the caller resolved.
   // Falls back to the General-topic nudge when no context (private chats,

@@ -39,6 +39,7 @@ import {
 } from "./tool-headers";
 import { renderToolResult } from "./tool-results";
 import { stopWatchTyping, touchWatchTyping } from "./typing";
+import { markWorking, markDone } from "../reactions";
 
 /**
  * Map a TailEvent to an SseEvent and emit it to the session's SSE bus.
@@ -180,6 +181,21 @@ export function handleTailEvent(
       debug("typing.touch", { chatId, threadId, via: event.type });
       touchWatchTyping(botApi, chatId, threadId);
     }
+  }
+
+  // Stage-aware reactions — text.ts marks the inbound user message 👀 on
+  // receipt; we promote to 🤔 on the first Claude-is-working event and to
+  // 🎉 on turn_end / relay_reply. markWorking is a no-op if not in the
+  // "received" state, and markDone is a no-op once cleared, so these
+  // can fire repeatedly without thrashing TG.
+  if (
+    event.type === "text" ||
+    event.type === "tool" ||
+    event.type === "thinking"
+  ) {
+    markWorking(botApi, chatId, threadId);
+  } else if (event.type === "turn_end" || event.type === "relay_reply") {
+    markDone(botApi, chatId, threadId);
   }
 
   switch (event.type) {
