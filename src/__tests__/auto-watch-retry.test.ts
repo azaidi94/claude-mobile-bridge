@@ -18,11 +18,20 @@ let findNewestSessionInDirImpl: (
   dir: string,
   excludeIds?: ReadonlySet<string>,
 ) => Promise<string | null> = async () => null;
+let lastExcludeIds: unknown;
+let scanPortFilesImpl: () => Promise<any[]> = async () => [];
+
+mock.module("../relay", () => ({
+  scanPortFiles: () => scanPortFilesImpl(),
+  getRelayClient: async () => null,
+}));
 
 mock.module("../sessions/tailer", () => ({
   findSessionJsonlPath: (id: string) => findSessionJsonlPathImpl(id),
-  findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) =>
-    findNewestSessionInDirImpl(dir, excludeIds),
+  findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) => {
+    lastExcludeIds = excludeIds;
+    return findNewestSessionInDirImpl(dir, excludeIds);
+  },
   getExpectedJsonlPath: (cwd: string, id: string) =>
     `/expected/${cwd.replace(/[/.]/g, "-")}/${id}.jsonl`,
   SessionTailer: class {
@@ -258,5 +267,214 @@ describe("_resolveLiveJsonlPath (auto-watch path resolver)", () => {
     expect(result.speculative).toBe(true);
     expect(result.sessionId).toBe(SESSION.id);
     expect(result.path).toContain(SESSION.id);
+  });
+
+  test("with a sibling sharing the dir: never adopts the newest-in-dir JSONL", async () => {
+    // The sibling's file IS the newest in the dir, but the freshly-spawned
+    // target's own file hasn't landed yet. allowNewestInDirFallback=false must
+    // keep us speculative on the canonical id rather than binding the sibling.
+    findSessionJsonlPathImpl = async (id) =>
+      id === "sibling-uuid" ? "/proj/sibling-uuid.jsonl" : null;
+    findNewestSessionInDirImpl = async () => "sibling-uuid";
+
+    const { _resolveLiveJsonlPath } = await import("../handlers/watch");
+    const result = await _resolveLiveJsonlPath(SESSION, {
+      timeoutMs: 60,
+      intervalMs: 20,
+      allowNewestInDirFallback: false,
+    });
+
+    expect(result.sessionId).toBe(SESSION.id); // NOT "sibling-uuid"
+    expect(result.speculative).toBe(true);
+    expect(result.path).toContain(SESSION.id);
+  });
+
+  test("forwards excludeIds to the newest-in-dir probe", async () => {
+    lastExcludeIds = undefined;
+    findSessionJsonlPathImpl = async () => null;
+    findNewestSessionInDirImpl = async () => null;
+    const exclude = new Set(["sibling-uuid"]);
+
+    const { _resolveLiveJsonlPath } = await import("../handlers/watch");
+    await _resolveLiveJsonlPath(SESSION, {
+      timeoutMs: 40,
+      intervalMs: 20,
+      excludeIds: exclude,
+    });
+
+    expect(lastExcludeIds).toBe(exclude);
+  });
+});
+
+describe("inspectDirSiblings", () => {
+  beforeEach(async () => {
+    scanPortFilesImpl = async () => [];
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+  });
+
+  test("flags a sibling and collects its id from a co-located port file", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "own-id", sessionName: "a" },
+      { cwd: "/dir", sessionId: "sibling-id", sessionName: "b" },
+      { cwd: "/other", sessionId: "unrelated", sessionName: "c" },
+    ];
+    const { inspectDirSiblings } = await import("../handlers/watch");
+    const { excludeIds, hasSibling } = await inspectDirSiblings(
+      "/dir",
+      "own-id",
+    );
+    expect(hasSibling).toBe(true);
+    expect(excludeIds.has("sibling-id")).toBe(true);
+    expect(excludeIds.has("own-id")).toBe(false);
+    expect(excludeIds.has("unrelated")).toBe(false);
+  });
+
+  test("no sibling when the dir is solo", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "own-id", sessionName: "a" },
+    ];
+    const { inspectDirSiblings } = await import("../handlers/watch");
+    const { hasSibling } = await inspectDirSiblings("/dir", "own-id");
+    expect(hasSibling).toBe(false);
+  });
+});
+
+describe("_recoverMisboundTailer", () => {
+  const fakeBotApi = {} as never;
+
+  const makeWatch = (over: Record<string, unknown>): any => ({
+    chatId: 1,
+    threadId: 2,
+    sessionName: "sess-2",
+    sessionId: "sibling-id",
+    sessionDir: "/dir",
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+    ...over,
+  });
+
+  beforeEach(async () => {
+    scanPortFilesImpl = async () => [];
+    findSessionJsonlPathImpl = async () => null;
+    getSessionImpl = () => null;
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+  });
+
+  test("rebinds a sibling-bound watch to its canonical id once that file exists", async () => {
+    // Our watch is tailing the sibling's JSONL; the sibling owns it per the
+    // port files. The registry knows our real id, and its file is now on disk.
+    getSessionImpl = (name) =>
+      name === "sess-2" ? ({ id: "own-id" } as any) : null;
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "sibling-id", sessionName: "sess-1" },
+      { cwd: "/dir", sessionId: "own-id", sessionName: "sess-2" },
+    ];
+    findSessionJsonlPathImpl = async (id) =>
+      id === "own-id" ? "/proj/own-id.jsonl" : null;
+
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionId: "sibling-id" });
+    mod._registerWatchForTests(ws);
+
+    const recovered = await mod._recoverMisboundTailer(fakeBotApi, ws);
+    expect(recovered).toBe(true);
+    expect(ws.sessionId).toBe("own-id");
+  });
+
+  test("no-op when already bound to the canonical id", async () => {
+    getSessionImpl = () => ({ id: "own-id" }) as any;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionId: "own-id" });
+    mod._registerWatchForTests(ws);
+
+    expect(await mod._recoverMisboundTailer(fakeBotApi, ws)).toBe(false);
+    expect(ws.sessionId).toBe("own-id");
+  });
+
+  test("no-op for a legitimate /clear drift (bound id owned by no sibling)", async () => {
+    // watchState.sessionId is our own fresh-conversation id: no port file or
+    // sibling watch claims it, so it must not be reverted to the stale id.
+    getSessionImpl = () => ({ id: "stale-port-id" }) as any;
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "stale-port-id", sessionName: "sess-2" },
+    ];
+    findSessionJsonlPathImpl = async () => "/proj/stale-port-id.jsonl";
+
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionId: "fresh-clear-id" });
+    mod._registerWatchForTests(ws);
+
+    expect(await mod._recoverMisboundTailer(fakeBotApi, ws)).toBe(false);
+    expect(ws.sessionId).toBe("fresh-clear-id");
+  });
+
+  test("recovers under a full mutual swap (sibling itself mis-bound to our id)", async () => {
+    // Watch X tails id-2; watch Y tails id-1; canonical(X)=id-1, canonical(Y)=id-2.
+    // Y "holds" id-1 (X's target) but is itself mis-bound, so it must not block X.
+    getSessionImpl = (name) =>
+      name === "X"
+        ? ({ id: "id-1" } as any)
+        : name === "Y"
+          ? ({ id: "id-2" } as any)
+          : null;
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "id-1", sessionName: "X" },
+      { cwd: "/dir", sessionId: "id-2", sessionName: "Y" },
+    ];
+    findSessionJsonlPathImpl = async (id) => `/proj/${id}.jsonl`;
+
+    const mod = await import("../handlers/watch");
+    const wx = makeWatch({ sessionName: "X", sessionId: "id-2" });
+    const wy = makeWatch({ sessionName: "Y", sessionId: "id-1", threadId: 3 });
+    mod._registerWatchForTests(wx);
+    mod._registerWatchForTests(wy);
+
+    expect(await mod._recoverMisboundTailer(fakeBotApi, wx)).toBe(true);
+    expect(wx.sessionId).toBe("id-1");
+  });
+
+  test("yields to a sibling watch that legitimately holds the canonical id", async () => {
+    // Y correctly owns id-1 (canonical(Y)=id-1); X must not steal it.
+    getSessionImpl = (name) =>
+      name === "X"
+        ? ({ id: "id-1" } as any)
+        : name === "Y"
+          ? ({ id: "id-1" } as any)
+          : null;
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "id-2", sessionName: "other" },
+    ];
+    findSessionJsonlPathImpl = async (id) => `/proj/${id}.jsonl`;
+
+    const mod = await import("../handlers/watch");
+    const wx = makeWatch({ sessionName: "X", sessionId: "id-2" });
+    const wy = makeWatch({ sessionName: "Y", sessionId: "id-1", threadId: 3 });
+    mod._registerWatchForTests(wx);
+    mod._registerWatchForTests(wy);
+
+    expect(await mod._recoverMisboundTailer(fakeBotApi, wx)).toBe(false);
+    expect(wx.sessionId).toBe("id-2");
+  });
+
+  test("no-op when the canonical file is not yet on disk", async () => {
+    getSessionImpl = () => ({ id: "own-id" }) as any;
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", sessionId: "sibling-id", sessionName: "sess-1" },
+    ];
+    findSessionJsonlPathImpl = async () => null; // own-id file absent
+
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionId: "sibling-id" });
+    mod._registerWatchForTests(ws);
+
+    expect(await mod._recoverMisboundTailer(fakeBotApi, ws)).toBe(false);
+    expect(ws.sessionId).toBe("sibling-id");
   });
 });

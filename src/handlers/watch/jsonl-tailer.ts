@@ -12,6 +12,7 @@ import { safeSync } from "../../utils/safe-async";
 import { escapeHtml } from "../../formatting";
 import { getMessageBus } from "../../messaging";
 import { forceRefresh, getSession, updateSessionId } from "../../sessions";
+import { scanPortFiles } from "../../relay";
 import { forgetUsage } from "../../sessions/context-usage";
 import {
   SessionTailer,
@@ -42,6 +43,21 @@ export async function _resolveLiveJsonlPath(
     timeoutMs?: number;
     /** Per-attempt sleep (default 1s). */
     intervalMs?: number;
+    /**
+     * Ids the newest-in-dir probe must never adopt — sibling sessions' live
+     * JSONLs sharing this directory.
+     */
+    excludeIds?: ReadonlySet<string>;
+    /**
+     * Whether to fall back to `findNewestSessionInDir` when the canonical id's
+     * file never appears. Defaults to true (covers the CC-wrote-a-different-
+     * uuid quirk for a solo session). MUST be false when a sibling session
+     * shares the dir: there the "newest JSONL" is the sibling's (or a stale
+     * pre-existing transcript), never the freshly-spawned target — adopting it
+     * binds the watch to the wrong session. We stay speculative on the
+     * canonical id and let the tailer pick up the real file when it lands.
+     */
+    allowNewestInDirFallback?: boolean;
   },
 ): Promise<{ path: string; sessionId: string; speculative: boolean }> {
   const directHit = await findSessionJsonlPath(sessionInfo.id);
@@ -51,6 +67,7 @@ export async function _resolveLiveJsonlPath(
 
   const timeoutMs = opts?.timeoutMs ?? 10_000;
   const intervalMs = opts?.intervalMs ?? 1_000;
+  const allowFallback = opts?.allowNewestInDirFallback ?? true;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -60,12 +77,17 @@ export async function _resolveLiveJsonlPath(
     if (direct) {
       return { path: direct, sessionId: sessionInfo.id, speculative: false };
     }
-    // Then look for any JSONL the project dir gained.
-    const newestId = await findNewestSessionInDir(sessionInfo.dir);
-    if (newestId) {
-      const newestPath = await findSessionJsonlPath(newestId);
-      if (newestPath) {
-        return { path: newestPath, sessionId: newestId, speculative: false };
+    // Then look for any JSONL the project dir gained — but never a sibling's.
+    if (allowFallback) {
+      const newestId = await findNewestSessionInDir(
+        sessionInfo.dir,
+        opts?.excludeIds,
+      );
+      if (newestId) {
+        const newestPath = await findSessionJsonlPath(newestId);
+        if (newestPath) {
+          return { path: newestPath, sessionId: newestId, speculative: false };
+        }
       }
     }
   }
@@ -75,6 +97,47 @@ export async function _resolveLiveJsonlPath(
     sessionId: sessionInfo.id,
     speculative: true,
   };
+}
+
+/**
+ * Inspect relay port files + active watches for OTHER sessions sharing
+ * `sessionDir`. Returns their session ids (to exclude from the newest-in-dir
+ * probe) and whether any sibling exists at all (used to gate the probe off —
+ * see `allowNewestInDirFallback`). `ownId` is the target's canonical id and is
+ * never treated as a sibling.
+ */
+export async function inspectDirSiblings(
+  sessionDir: string,
+  ownId: string,
+): Promise<{ excludeIds: Set<string>; hasSibling: boolean }> {
+  const excludeIds = new Set<string>();
+  let hasSibling = false;
+
+  try {
+    const ports = await scanPortFiles();
+    for (const pf of ports) {
+      if (pf.cwd !== sessionDir) continue;
+      if (pf.sessionId && pf.sessionId !== ownId) {
+        excludeIds.add(pf.sessionId);
+        hasSibling = true;
+      }
+    }
+  } catch {
+    // Best-effort — a failed scan just means no sibling exclusions this pass.
+  }
+
+  for (const w of watches.values()) {
+    if (w.sessionDir !== sessionDir) continue;
+    if (w.sessionId && w.sessionId !== ownId) {
+      excludeIds.add(w.sessionId);
+      hasSibling = true;
+    }
+  }
+
+  // Recently-killed ids could still be the newest on disk for a moment.
+  for (const id of killedSessionIds.keys()) excludeIds.add(id);
+
+  return { excludeIds, hasSibling };
 }
 
 // Backoff schedule for awaiting a fresh session's first JSONL write.
@@ -120,6 +183,11 @@ export function setupIdDriftDetection(
   const intervalMs = watchState.speculativeTailerPath ? 1_000 : 5_000;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
+    // Recover a mis-seeded watch that adopted a *sibling's* JSONL (its own
+    // file didn't exist yet at spawn). This runs BEFORE the sole-owner guard
+    // below — without it, a sibling sharing the dir would mute recovery
+    // forever and the watch would stream the wrong session indefinitely.
+    if (await _recoverMisboundTailer(botApi, watchState)) return;
     // Only drift when sole owner of the dir. With siblings, the newest
     // JSONL can't be attributed to a specific named session, and toggling
     // sessionId on each mode change would fire spurious "🔄" notices and
@@ -213,6 +281,108 @@ export function setupIdDriftDetection(
       })
       .catch(() => {});
   }, intervalMs);
+}
+
+/**
+ * True when this watch is currently tailing a JSONL that belongs to a *sibling*
+ * session sharing the same dir — i.e. the watch was mis-seeded onto another
+ * session's transcript. Distinguished from a legitimate /clear drift, where
+ * `watchState.sessionId` is this session's own fresh-conversation id that no
+ * sibling port file or watch owns.
+ */
+async function _isBoundToSiblingJsonl(
+  watchState: WatchState,
+): Promise<boolean> {
+  for (const other of watches.values()) {
+    if (other === watchState) continue;
+    if (
+      other.sessionDir === watchState.sessionDir &&
+      other.sessionId === watchState.sessionId
+    ) {
+      return true;
+    }
+  }
+  try {
+    const ports = await scanPortFiles();
+    return ports.some(
+      (pf) =>
+        pf.cwd === watchState.sessionDir &&
+        pf.sessionId === watchState.sessionId &&
+        pf.sessionName !== undefined &&
+        pf.sessionName !== watchState.sessionName,
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Watches with an in-flight recovery. The drift interval callback is async, so
+// setInterval can fire a second tick before the first's awaits resolve. Without
+// this guard two overlapping ticks could both reach rebindTailerPath — and the
+// second's `tailer.stop()` can race the first's `watchState.tailer = …`
+// assignment, leaking a still-running tailer that duplicates every event into
+// the topic. (The existing newest-in-dir drift path avoids this by claiming the
+// id synchronously before its awaits; recovery needs the awaits up front, so it
+// guards with this flag instead.)
+const recoveryInFlight = new WeakSet<WatchState>();
+
+/**
+ * Rebind a mis-seeded watch from a sibling's JSONL onto its OWN canonical id's
+ * file once that file exists on disk. The registry/port-file id for our session
+ * name is authoritative (a freshly-spawned session's port file is never stale,
+ * unlike the /clear case), so we trust it over whatever sibling file the path
+ * resolver fell back to at startup.
+ *
+ * No-ops (returns false) unless: the canonical id differs from what we're
+ * tailing, that id isn't blacklisted, no recovery is already running for this
+ * watch, we're demonstrably bound to a sibling's file, no other live watch
+ * *legitimately* holds the canonical id, and the canonical file is on disk.
+ * Exported as a test seam.
+ */
+export async function _recoverMisboundTailer(
+  botApi: Api,
+  watchState: WatchState,
+): Promise<boolean> {
+  const canonicalId = getSession(watchState.sessionName)?.id;
+  if (!canonicalId) return false;
+  if (canonicalId === watchState.sessionId) return false;
+  if (killedSessionIds.has(canonicalId)) return false;
+  if (recoveryInFlight.has(watchState)) return false;
+
+  recoveryInFlight.add(watchState);
+  try {
+    if (!(await _isBoundToSiblingJsonl(watchState))) return false;
+
+    // Don't steal the canonical id from a sibling watch that *legitimately*
+    // holds it (the id is that watch's own canonical). A sibling that is merely
+    // mis-bound onto our id must NOT block us — otherwise a mutual swap (each
+    // watch holding the other's id) would deadlock, with neither able to
+    // recover because each sees the other "holding" its target id.
+    for (const other of watches.values()) {
+      if (other === watchState) continue;
+      if (other.sessionId !== canonicalId) continue;
+      if (getSession(other.sessionName)?.id === canonicalId) return false;
+    }
+
+    const canonicalPath = await findSessionJsonlPath(canonicalId);
+    if (!canonicalPath) return false;
+
+    const previousId = watchState.sessionId;
+    const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
+    watchState.suppressNextIdChangeNotice = false;
+    await rebindTailerPath(botApi, watchState, canonicalPath, canonicalId);
+    info("watch: recovered mis-bound tailer to canonical id", {
+      chatId: watchState.chatId,
+      threadId: watchState.threadId,
+      sessionName: watchState.sessionName,
+      previousId,
+      canonicalId,
+      wasSpawnSeed,
+    });
+    return true;
+  } finally {
+    recoveryInFlight.delete(watchState);
+  }
 }
 
 /**

@@ -26,7 +26,12 @@ export {
 
 export { _isTypingForTests } from "./typing";
 
-export { _resolveLiveJsonlPath, _awaitSessionId } from "./jsonl-tailer";
+export {
+  _resolveLiveJsonlPath,
+  _awaitSessionId,
+  _recoverMisboundTailer,
+  inspectDirSiblings,
+} from "./jsonl-tailer";
 
 export { setupCrossPostSubscription } from "./cross-post";
 
