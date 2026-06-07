@@ -72,11 +72,23 @@ export function stopCursorBridge(): void {
  * `cursor-vscode-file://vscode-app/applications/cu...` and creates a
  * permanent TG topic for them. Skip attach while the title looks like a
  * URL or is empty — the next sync tick re-evaluates once it settles.
+ *
+ * Also treats a bare "Cursor" workspace segment as unloaded: when opening
+ * a Remote-SSH window, the title shows just "Cursor" until the remote
+ * handshake completes. Attaching then produces a "cursor-cursor[-hash]"
+ * topic that sticks around even after the workspace name resolves.
  */
 export function isUnloadedTitle(title: string): boolean {
   const t = title.trim();
   if (!t) return true;
-  return /^(vscode-file:|https?:|file:|vscode-webview:)/i.test(t);
+  if (/^(vscode-file:|https?:|file:|vscode-webview:)/i.test(t)) return true;
+  const last =
+    t
+      .split(/\s[—–-]\s/)
+      .pop()
+      ?.trim()
+      .toLowerCase() ?? "";
+  return last === "cursor";
 }
 
 /**

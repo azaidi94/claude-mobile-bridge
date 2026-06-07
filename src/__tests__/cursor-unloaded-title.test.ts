@@ -28,4 +28,14 @@ describe("isUnloadedTitle", () => {
     expect(isUnloadedTitle("")).toBe(true);
     expect(isUnloadedTitle("   ")).toBe(true);
   });
+
+  it("treats a bare 'Cursor' (SSH-pending) title as unloaded", () => {
+    expect(isUnloadedTitle("Cursor")).toBe(true);
+    expect(isUnloadedTitle("cursor")).toBe(true);
+    expect(isUnloadedTitle("Welcome — Cursor")).toBe(true);
+  });
+
+  it("still accepts a real workspace named after 'cursor'", () => {
+    expect(isUnloadedTitle("index.ts — cursor-mobile-bridge")).toBe(false);
+  });
 });
