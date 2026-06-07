@@ -7,6 +7,23 @@ import { join } from "path";
 let TMP: string;
 let LOG: string;
 
+/**
+ * Poll until `check()` is true (or timeout). Writes go through an async
+ * WriteStream, so the bytes land on disk a tick or more after the
+ * synchronous `writeToBotLog` call returns. A fixed `sleep(20)` races that
+ * flush on a loaded CI runner (issue #55); polling waits exactly as long as
+ * the flush actually takes and no longer — deterministic, not timing-based.
+ */
+async function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!check()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 beforeEach(async () => {
   TMP = mkdtempSync(join(tmpdir(), "log-rotation-"));
   LOG = join(TMP, "bot.log");
@@ -14,7 +31,13 @@ beforeEach(async () => {
   _resetForTests();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Close the active stream BEFORE deleting its directory. Otherwise the
+  // stream lingers open against a path we then rmSync, and its late async
+  // open/flush errors out — see the openStream 'error' handler for why that
+  // used to fail a random unrelated test on loaded CI.
+  const { _resetForTests } = await import("../log-rotation");
+  _resetForTests();
   rmSync(TMP, { recursive: true, force: true });
 });
 
@@ -48,8 +71,9 @@ describe("log rotation", () => {
     setupBotLogRotation(LOG);
     writeToBotLog("hello\n");
     writeToBotLog("world\n");
-    await new Promise((r) => setTimeout(r, 20));
+    // Byte counter is updated synchronously; the on-disk flush is async.
     expect(_currentBytesForTests()).toBeGreaterThan(0);
+    await waitFor(() => statSync(LOG).size > 0);
     expect(statSync(LOG).size).toBeGreaterThan(0);
   });
 
@@ -79,11 +103,13 @@ describe("log rotation", () => {
       await import("../log-rotation");
     setupBotLogRotation(LOG);
     writeToBotLog("before rotate\n");
-    await new Promise((r) => setTimeout(r, 20));
+    // Wait until "before rotate" is actually on disk, THEN rotate — so the
+    // rename moves a non-empty bot.log to bot.log.1. Rotating before the
+    // flush lands was the race behind the intermittent CI failure.
+    await waitFor(() => existsSync(LOG) && statSync(LOG).size > 0);
     _forceRotateForTests();
     expect(existsSync(`${LOG}.1`)).toBe(true);
-    writeToBotLog("after rotate\n");
-    await new Promise((r) => setTimeout(r, 20));
     expect(statSync(`${LOG}.1`).size).toBeGreaterThan(0);
+    writeToBotLog("after rotate\n");
   });
 });

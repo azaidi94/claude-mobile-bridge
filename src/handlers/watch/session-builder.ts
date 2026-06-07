@@ -31,6 +31,7 @@ import { bridgeTailToSse, handleTailEvent } from "./event-router";
 import {
   _awaitSessionId,
   _resolveLiveJsonlPath,
+  inspectDirSiblings,
   setupIdDriftDetection,
 } from "./jsonl-tailer";
 import { watchKey, watches } from "./registry";
@@ -118,7 +119,16 @@ export async function startAutoWatch(
     return false;
   }
 
-  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  // When a sibling session shares this dir, never let the resolver adopt the
+  // newest-in-dir JSONL — it's the sibling's, not this freshly-spawned one.
+  const { excludeIds, hasSibling } = await inspectDirSiblings(
+    sessionInfo.dir,
+    sessionInfo.id,
+  );
+  const resolved = await _resolveLiveJsonlPath(sessionInfo, {
+    excludeIds,
+    allowNewestInDirFallback: !hasSibling,
+  });
   const jsonlPath = resolved.path;
 
   const watchState: WatchState = buildWatchState({
@@ -244,7 +254,18 @@ export async function startWatchingSession(
   // real path (catches the case where CC writes under a different uuid than
   // the relay port file reported) and falls back to a guessed path that the
   // drift loop will re-resolve.
-  const resolved = await _resolveLiveJsonlPath(sessionInfo);
+  // When a sibling session shares this dir (the common /spawn-second-session
+  // case), gate off the newest-in-dir fallback so we don't seed this watch
+  // with the sibling's live JSONL. Recovery to our own id, if it's still
+  // mis-seeded, comes from _recoverMisboundTailer in the drift loop.
+  const { excludeIds, hasSibling } = await inspectDirSiblings(
+    sessionInfo.dir,
+    sessionInfo.id,
+  );
+  const resolved = await _resolveLiveJsonlPath(sessionInfo, {
+    excludeIds,
+    allowNewestInDirFallback: !hasSibling,
+  });
   const jsonlPath = resolved.path;
 
   // Spawn-initiated watches: the seeded sessionId is almost certainly

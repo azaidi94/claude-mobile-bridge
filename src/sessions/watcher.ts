@@ -20,6 +20,9 @@ import {
 } from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
 import { STATE_DIR } from "../paths";
+// Imported from the leaf module (not the barrel) to avoid a topics→sessions
+// import cycle. Read-only: used to pin session names across restarts.
+import { getTopicStore } from "../topics/topic-store";
 
 const execAsync = promisify(exec);
 
@@ -456,6 +459,28 @@ async function scanSessions(): Promise<{
 }
 
 /**
+ * Seed the sticky sessionId→name map from the persisted topic store, filling
+ * only ids the live in-memory cache didn't already claim (so live truth wins
+ * and the store just covers the cold-start gap). Pins each session's name to
+ * the id its Telegram topic was created with, surviving restarts where the
+ * cache is empty and port-file scan order would otherwise swap sibling names.
+ *
+ * Note: a port file's own `sessionName` is deliberately NOT used as a seed —
+ * the watcher rewrites it every run, so a prior bad assignment would poison
+ * it. The topic store is the user-facing source of truth.
+ */
+export function seedNamesFromTopicStore(
+  priorNameById: Map<string, string>,
+  topics: { sessionId?: string; sessionName: string }[],
+): void {
+  for (const t of topics) {
+    if (t.sessionId && !priorNameById.has(t.sessionId)) {
+      priorNameById.set(t.sessionId, t.sessionName);
+    }
+  }
+}
+
+/**
  * Assign Claude process PIDs to discovered sessions.
  * Matches by session ID when available, uses relay port files as a bridge,
  * then falls back to dir-based heuristic.
@@ -562,6 +587,14 @@ async function refresh(): Promise<SessionDiff> {
       if (s.pid !== undefined) priorNameByPid.set(s.pid, s.name);
     }
   }
+
+  // Cold-start stickiness: after a bot restart `cache.sessions` is empty, so
+  // the in-memory priors above are too. Without a persistent anchor, two
+  // sessions sharing a dir get (re)named in nondeterministic port-file scan
+  // order — swapping which session owns which name, and therefore which
+  // Telegram topic streams which session. Seed from the persisted topic store
+  // so names stay pinned to the ids they were created with.
+  seedNamesFromTopicStore(priorNameById, getTopicStore().topics);
 
   const { sessions: discovered, portFiles } = await scanSessions();
 

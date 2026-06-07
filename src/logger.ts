@@ -18,10 +18,12 @@ const COLORS = {
   reset: "\x1b[0m",
 };
 
-const DEBUG_ENABLED =
-  !!process.env.DEBUG &&
-  process.env.DEBUG !== "0" &&
-  process.env.DEBUG !== "false";
+// Read live (not a load-time constant) so DEBUG can be toggled at runtime —
+// and so tests can flip it around a capture without re-importing the module.
+function debugEnabled(): boolean {
+  const v = process.env.DEBUG;
+  return !!v && v !== "0" && v !== "false";
+}
 const COLORS_ENABLED = Boolean(process.stdout.isTTY || process.stderr.isTTY);
 
 function ts(): string {
@@ -114,7 +116,7 @@ export function log(
   detail?: unknown,
   fields?: LogFields,
 ): void {
-  if (level === "debug" && !DEBUG_ENABLED) return;
+  if (level === "debug" && !debugEnabled()) return;
 
   const mergedFields = normalizeFields(detail, fields);
   const prefix = `${ts()} [${level.toUpperCase()}]`;

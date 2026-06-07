@@ -64,7 +64,18 @@ function openStream(logPath: string): WriteStream {
   if (!existsSync(logPath)) {
     writeFileSync(logPath, "");
   }
-  return createWriteStream(logPath, { flags: "a" });
+  const stream = createWriteStream(logPath, { flags: "a" });
+  // The stream opens (and flushes) asynchronously, so a failure — disk full,
+  // permissions, or the dir disappearing — surfaces as an async 'error' event
+  // that writeToBotLog's synchronous try/catch cannot catch. A logging stream
+  // must never crash the process, so swallow it (consistent with the
+  // best-effort handling throughout this module). Without this listener an
+  // unhandled 'error' tears down the app; in tests it also lands on whatever
+  // test happens to be running when a torn-down temp dir's stream opens late.
+  stream.on("error", () => {
+    // silently ok: the logger cannot log its own pipeline errors
+  });
+  return stream;
 }
 
 export function setupBotLogRotation(logPath: string): void {

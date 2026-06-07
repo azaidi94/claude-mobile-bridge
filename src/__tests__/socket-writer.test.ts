@@ -84,6 +84,49 @@ describe("writeJsonLine backpressure", () => {
     ]);
   });
 
+  test("rejects and destroys the socket when drain never fires", async () => {
+    // Remote stops reading but keeps the connection open: write() returns
+    // false and 'drain' never arrives. The bounded wait must reject and tear
+    // the socket down rather than hang forever.
+    const ee = new EventEmitter() as EventEmitter & Partial<Socket>;
+    let destroyed = false;
+    (ee as unknown as { destroyed: boolean }).destroyed = false;
+    (ee as unknown as { destroy: () => void }).destroy = () => {
+      destroyed = true;
+    };
+    (ee as unknown as { write: (...a: unknown[]) => boolean }).write = (
+      ...args: unknown[]
+    ) => {
+      const cb = args.find((a) => typeof a === "function") as
+        | ((err?: Error) => void)
+        | undefined;
+      if (cb) cb();
+      return false; // buffer full; no 'drain' will ever be emitted
+    };
+    const socket = ee as unknown as Socket;
+
+    await expect(writeJsonLine(socket, { n: 1 }, 20)).rejects.toThrow(
+      /drain timeout/,
+    );
+    expect(destroyed).toBe(true);
+  });
+
+  test("drain before the timeout resolves and does not destroy", async () => {
+    const { socket, writes } = makeMockSocket([false]);
+    let destroyed = false;
+    (socket as unknown as { destroy: () => void }).destroy = () => {
+      destroyed = true;
+    };
+    // Generous timeout; drain arrives well before it.
+    const p = writeJsonLine(socket, { n: 1 }, 10_000);
+    // Yield so the write (queued in a microtask) registers its drain listener.
+    await new Promise((r) => setTimeout(r, 5));
+    (socket as unknown as EventEmitter).emit("drain");
+    await p;
+    expect(writes.map((w) => JSON.parse(w))).toEqual([{ n: 1 }]);
+    expect(destroyed).toBe(false);
+  });
+
   test("rejects when socket is already destroyed", async () => {
     const { socket } = makeMockSocket([true]);
     (socket as unknown as { destroyed: boolean }).destroyed = true;

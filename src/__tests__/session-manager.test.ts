@@ -450,3 +450,34 @@ describe("session-manager: edge cases", () => {
     expect(session.id).toBe("");
   });
 });
+
+describe("session-manager: seedNamesFromTopicStore (restart name stickiness)", () => {
+  test("fills names for ids the live cache hasn't claimed", async () => {
+    const { seedNamesFromTopicStore } = await import("../sessions/watcher");
+    const priors = new Map<string, string>();
+    seedNamesFromTopicStore(priors, [
+      { sessionId: "id-a", sessionName: "shop" },
+      { sessionId: "id-b", sessionName: "shop-2" },
+    ]);
+    expect(priors.get("id-a")).toBe("shop");
+    expect(priors.get("id-b")).toBe("shop-2");
+  });
+
+  test("live cache wins — store never overrides an already-mapped id", async () => {
+    const { seedNamesFromTopicStore } = await import("../sessions/watcher");
+    const priors = new Map<string, string>([["id-a", "live-name"]]);
+    seedNamesFromTopicStore(priors, [
+      { sessionId: "id-a", sessionName: "stale-store-name" },
+      { sessionId: "id-b", sessionName: "shop-2" },
+    ]);
+    expect(priors.get("id-a")).toBe("live-name"); // not overridden
+    expect(priors.get("id-b")).toBe("shop-2"); // gap filled
+  });
+
+  test("skips mappings without a sessionId", async () => {
+    const { seedNamesFromTopicStore } = await import("../sessions/watcher");
+    const priors = new Map<string, string>();
+    seedNamesFromTopicStore(priors, [{ sessionName: "no-id" }]);
+    expect(priors.size).toBe(0);
+  });
+});

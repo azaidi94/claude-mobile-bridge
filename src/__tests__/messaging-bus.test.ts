@@ -246,6 +246,35 @@ describe("MessageBus.send — chunking", () => {
     // First-chunk reply_parameters only on first chunk
     expect(api._sentTexts[0]!.opts.message_thread_id).toBeUndefined();
   });
+
+  test("a long code block never splits an HTML tag across chunks", async () => {
+    // Regression: the bus must chunk the RAW content and convert each chunk,
+    // not chunk already-converted HTML. Chunking the whole HTML would slice
+    // through a <pre> tag (chunk 0 opens it, a later chunk closes it), and TG
+    // rejects both as invalid entities, silently dropping the whole message to
+    // plain text. Per-chunk conversion keeps every chunk's HTML self-contained.
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const line = "const x = " + "y".repeat(60) + ";";
+    const code = Array.from({ length: 120 }, () => line).join("\n");
+    const text = "```js\n" + code + "\n```"; // ~8.6k chars → multiple chunks
+
+    const r = await bus.send({ chatId: 7, content: text, format: "auto" });
+
+    expect("messageId" in r).toBe(true);
+    expect(api._sentTexts.length).toBeGreaterThan(1);
+    // Every chunk that was sent as HTML must have balanced tags — no chunk may
+    // open a tag it doesn't close, or close one it never opened.
+    for (const sent of api._sentTexts) {
+      if (sent.opts.parse_mode !== "HTML") continue;
+      const html = sent.text;
+      for (const tag of ["pre", "b", "i", "code", "s"]) {
+        const open = (html.match(new RegExp(`<${tag}>`, "g")) || []).length;
+        const close = (html.match(new RegExp(`</${tag}>`, "g")) || []).length;
+        expect(open).toBe(close);
+      }
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -445,6 +474,17 @@ describe("MessageBus.edit", () => {
 // ---------------------------------------------------------------------------
 
 describe("MessageBus logging", () => {
+  // The per-op `bus.send` schema line is emitted at debug level, so enable
+  // DEBUG around the capture (the logger reads it live).
+  const prevDebug = process.env.DEBUG;
+  beforeEach(() => {
+    process.env.DEBUG = "1";
+  });
+  afterEach(() => {
+    if (prevDebug === undefined) delete process.env.DEBUG;
+    else process.env.DEBUG = prevDebug;
+  });
+
   test("one bus.send log line per send with documented fields", async () => {
     const cap = captureStdout();
     try {
@@ -493,6 +533,25 @@ describe("MessageBus logging", () => {
       const dropLine = lines.find((l) => l.includes("op_d_2"))!;
       expect(dropLine).toBeTruthy();
       expect(dropLine).toContain('result="drop:dedup"');
+    } finally {
+      cap.restore();
+    }
+  });
+
+  test("send line is suppressed at default level (no DEBUG)", async () => {
+    delete process.env.DEBUG;
+    const cap = captureStdout();
+    try {
+      const api = makeApi();
+      const bus = createMessageBus(api as any);
+      await bus.send({
+        chatId: 1,
+        content: "hi",
+        format: "plain",
+        opId: "op_quiet_1",
+      });
+      const lines = cap.lines().filter((l) => l.includes("op_quiet_1"));
+      expect(lines.length).toBe(0);
     } finally {
       cap.restore();
     }

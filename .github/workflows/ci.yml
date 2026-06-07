@@ -18,13 +18,18 @@ jobs:
       # Third-party actions are pinned by commit SHA (not mutable tags) per
       # GitHub's security-hardening guidance — a compromised tag on the
       # secret-scanner especially could silently exfiltrate secrets.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (Node 24)
         with:
           # Full history so the secret scan can diff the whole PR range.
           fetch-depth: 0
 
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Pin to match the version run locally — an unpinned setup-bun
+          # resolves to whatever's latest, and behavioral drift between Bun
+          # releases can mask or expose flakes (issue #55).
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -36,6 +41,9 @@ jobs:
         run: bun run test
 
       - name: Secret scan
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        # Already pinned to the latest release (v2.3.9). Upstream still ships
+        # this on Node 20 — there is no Node 24 release to bump to yet, so the
+        # Node-20-deprecation warning here is expected until they release one.
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

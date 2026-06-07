@@ -165,6 +165,6 @@ export function cleanupProjectDir(cwd: string): void {
   try {
     rmSync(projectDirFor(cwd), { recursive: true, force: true });
   } catch {
-    // silently ok
+    // silently ok: test teardown; dir may not exist and removal is non-fatal
   }
 }
