@@ -338,6 +338,7 @@ mock.module("../topics", () => ({
   safeSendInThread: mock(async () => ({})),
   TopicManager: class {},
   getTopicStore: mock(() => ({ chatId: 0, topics: [] })),
+  getTopicBySession: mock(() => undefined),
 }));
 
 // Mock session singleton

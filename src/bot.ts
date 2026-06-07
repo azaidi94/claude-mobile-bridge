@@ -112,6 +112,21 @@ export function createBot(options: BotOptions): Bot {
     }),
   );
 
+  // Topic discovery — every inbound thread_id we haven't seen gets recorded as
+  // a `discovered-<id>` ledger entry so `/cleanzombie` can find pre-ledger
+  // orphans the bot lost track of. Fire-and-forget, idempotent.
+  bot.use(async (ctx, next) => {
+    const tid = ctx.message?.message_thread_id;
+    if (tid && tid !== 1) {
+      const { getSessionByTopic, recordTopicDiscovered } =
+        await import("./topics");
+      if (!getSessionByTopic(tid)) {
+        recordTopicDiscovered(tid).catch(() => {});
+      }
+    }
+    await next();
+  });
+
   // Stall detection — warn if a handler runs longer than 30s. Placed after
   // sequentialize so the timer measures handler execution only, not queue wait.
   bot.use(async (ctx, next) => {

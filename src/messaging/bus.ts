@@ -318,6 +318,19 @@ export function createMessageBus(api: Api): MessageBus {
       const startedAt = Date.now();
       const kind: "text" | AttachmentKind = msg.attachment?.kind ?? "text";
 
+      // Outbound topic discovery — if we're sending into a thread the ledger
+      // doesn't know about, record it. Catches code paths that bypass the
+      // snapshot (cursor-bridge, relay, etc). Fire-and-forget.
+      if (msg.threadId && msg.threadId !== 1) {
+        import("../topics")
+          .then(({ getSessionByTopic, recordTopicDiscovered }) => {
+            if (!getSessionByTopic(msg.threadId!)) {
+              return recordTopicDiscovered(msg.threadId!);
+            }
+          })
+          .catch(() => {});
+      }
+
       // Dedup gate.
       if (checkDedup(msg.dedupKey)) {
         info("bus.send", {
