@@ -73,35 +73,3 @@ export async function handleCompact(
 ): Promise<void> {
   await passthrough(ctx, sctx, "/compact");
 }
-
-/** /cost — inject /cost into the target session. */
-export async function handleCost(
-  ctx: Context,
-  sctx?: SessionContext,
-): Promise<void> {
-  await passthrough(ctx, sctx, "/cost");
-}
-
-/** /mcp — inject /mcp into the target session. */
-export async function handleMcp(
-  ctx: Context,
-  sctx?: SessionContext,
-): Promise<void> {
-  await passthrough(ctx, sctx, "/mcp");
-}
-
-/** /init — inject /init into the target session. */
-export async function handleInit(
-  ctx: Context,
-  sctx?: SessionContext,
-): Promise<void> {
-  await passthrough(ctx, sctx, "/init");
-}
-
-/** /login — inject /login into the target session. */
-export async function handleLogin(
-  ctx: Context,
-  sctx?: SessionContext,
-): Promise<void> {
-  await passthrough(ctx, sctx, "/login");
-}

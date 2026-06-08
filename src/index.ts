@@ -372,10 +372,6 @@ await bot.api.setMyCommands([
   { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "clear", description: "Forward /clear to the terminal" },
   { command: "compact", description: "Forward /compact to the terminal" },
-  { command: "cost", description: "Forward /cost to the terminal" },
-  { command: "mcp", description: "Forward /mcp to the terminal" },
-  { command: "init", description: "Forward /init to the terminal" },
-  { command: "login", description: "Forward /login to the terminal" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);
