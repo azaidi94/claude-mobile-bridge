@@ -28,6 +28,7 @@ export { _isTypingForTests } from "./typing";
 
 export {
   _resolveLiveJsonlPath,
+  _resolveDriftTargetId,
   _awaitSessionId,
   _recoverMisboundTailer,
   inspectDirSiblings,

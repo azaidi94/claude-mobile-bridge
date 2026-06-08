@@ -478,3 +478,126 @@ describe("_recoverMisboundTailer", () => {
     expect(ws.sessionId).toBe("sibling-id");
   });
 });
+
+describe("_resolveDriftTargetId", () => {
+  const makeWatch = (over: Record<string, unknown>): any => ({
+    chatId: 7,
+    threadId: 1,
+    sessionName: "sess",
+    sessionId: "cur",
+    sessionDir: "/dir",
+    sessionPid: 100,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+    ...over,
+  });
+
+  beforeEach(async () => {
+    scanPortFilesImpl = async () => [];
+    findNewestSessionInDirImpl = async () => null;
+    getSessionImpl = () => null;
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+  });
+
+  test("sole owner: follows the newest JSONL in the dir", async () => {
+    findNewestSessionInDirImpl = async () => "newest-clear-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({});
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
+  });
+
+  test("shared dir: uses the port file matched by this session's pid (not newest-in-dir)", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 100, sessionId: "my-live-id" },
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-live-id" },
+    ];
+    // newest-in-dir would mis-attribute to the sibling; it must NOT be consulted.
+    findNewestSessionInDirImpl = async () => "sibling-live-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100 });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("my-live-id");
+  });
+
+  test("shared dir: keeps the current id (no flap) when this pid has no port file", async () => {
+    // Relay for this pid is down / scan returned no match. Must NOT drag the
+    // tailer onto a divergent cache id — that flaps and spams "🔄".
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 999, sessionId: "unrelated" },
+    ];
+    getSessionImpl = (name) =>
+      name === "sess" ? ({ id: "divergent-cache-id" } as any) : null;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+
+  test("shared dir: keeps the current id when scanPortFiles throws", async () => {
+    scanPortFilesImpl = async () => {
+      throw new Error("scan boom");
+    };
+    getSessionImpl = () => ({ id: "divergent-cache-id" }) as any;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+
+  test("shared dir with unknown pid: falls back to the cache id", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-live-id" },
+    ];
+    getSessionImpl = () => ({ id: "cache-id" }) as any;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: undefined });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cache-id");
+  });
+
+  test("shared dir with unknown pid and no cache entry: keeps current id", async () => {
+    scanPortFilesImpl = async () => [];
+    getSessionImpl = () => null;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: undefined, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+});
