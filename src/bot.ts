@@ -46,6 +46,10 @@ import {
   handlePrompts,
   handleClear,
   handleCompact,
+  handleCost,
+  handleMcp,
+  handleInit,
+  handleLogin,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -285,6 +289,10 @@ export function createBot(options: BotOptions): Bot {
   bot.command("prompts", withSctx(handlePrompts));
   bot.command("clear", withSctx(handleClear));
   bot.command("compact", withSctx(handleCompact));
+  bot.command("cost", withSctx(handleCost));
+  bot.command("mcp", withSctx(handleMcp));
+  bot.command("init", withSctx(handleInit));
+  bot.command("login", withSctx(handleLogin));
   bot.command("sessions", handleSessions);
   bot.command("pwd", withSctx(handlePwd));
   bot.command("cd", withSctx(handleCd));

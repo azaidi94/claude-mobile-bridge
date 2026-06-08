@@ -71,4 +71,11 @@ export { handleCron } from "./cron";
 
 export { handlePrompts } from "./prompts";
 
-export { handleClear, handleCompact } from "./passthrough";
+export {
+  handleClear,
+  handleCompact,
+  handleCost,
+  handleMcp,
+  handleInit,
+  handleLogin,
+} from "./passthrough";
