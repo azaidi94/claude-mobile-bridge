@@ -370,6 +370,8 @@ await bot.api.setMyCommands([
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
   { command: "prompts", description: "Tappable saved-prompt menu" },
+  { command: "clear", description: "Forward /clear to the terminal" },
+  { command: "compact", description: "Forward /compact to the terminal" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);
