@@ -70,5 +70,3 @@ export { handleCleanZombie } from "./cleanzombie";
 export { handleCron } from "./cron";
 
 export { handlePrompts } from "./prompts";
-
-export { handleClear, handleCompact } from "./passthrough";

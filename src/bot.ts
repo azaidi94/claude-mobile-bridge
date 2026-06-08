@@ -44,8 +44,6 @@ import {
   handleCleanZombie,
   handleCron,
   handlePrompts,
-  handleClear,
-  handleCompact,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -283,8 +281,6 @@ export function createBot(options: BotOptions): Bot {
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("cron", withSctx(handleCron));
   bot.command("prompts", withSctx(handlePrompts));
-  bot.command("clear", withSctx(handleClear));
-  bot.command("compact", withSctx(handleCompact));
   bot.command("sessions", handleSessions);
   bot.command("pwd", withSctx(handlePwd));
   bot.command("cd", withSctx(handleCd));
