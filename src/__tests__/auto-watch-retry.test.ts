@@ -7,6 +7,9 @@
 
 import "./ensure-test-env";
 import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { mkdtempSync, utimesSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { SessionInfo } from "../sessions/types";
 
 let getSessionImpl: (name: string) => SessionInfo | null = () => null;
@@ -476,5 +479,169 @@ describe("_recoverMisboundTailer", () => {
 
     expect(await mod._recoverMisboundTailer(fakeBotApi, ws)).toBe(false);
     expect(ws.sessionId).toBe("sibling-id");
+  });
+});
+
+describe("_resolveDriftTargetId", () => {
+  const makeWatch = (over: Record<string, unknown>): any => ({
+    chatId: 7,
+    threadId: 1,
+    sessionName: "sess",
+    sessionId: "cur",
+    sessionDir: "/dir",
+    sessionPid: 100,
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+    ...over,
+  });
+
+  beforeEach(async () => {
+    scanPortFilesImpl = async () => [];
+    findNewestSessionInDirImpl = async () => null;
+    getSessionImpl = () => null;
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+  });
+
+  test("sole owner: follows the newest JSONL in the dir", async () => {
+    findNewestSessionInDirImpl = async () => "newest-clear-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({});
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
+  });
+
+  test("shared dir: uses the port file matched by this session's pid (not newest-in-dir)", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 100, sessionId: "my-live-id" },
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-live-id" },
+    ];
+    // newest-in-dir would mis-attribute to the sibling; it must NOT be consulted.
+    findNewestSessionInDirImpl = async () => "sibling-live-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100 });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("my-live-id");
+  });
+
+  test("shared dir: keeps the current id (no flap) when this pid has no port file", async () => {
+    // Relay for this pid is down / scan returned no match. Must NOT drag the
+    // tailer onto a divergent cache id — that flaps and spams "🔄".
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 999, sessionId: "unrelated" },
+    ];
+    getSessionImpl = (name) =>
+      name === "sess" ? ({ id: "divergent-cache-id" } as any) : null;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+
+  test("shared dir: keeps the current id when scanPortFiles throws", async () => {
+    scanPortFilesImpl = async () => {
+      throw new Error("scan boom");
+    };
+    getSessionImpl = () => ({ id: "divergent-cache-id" }) as any;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+
+  test("shared dir with unknown pid: falls back to the cache id", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-live-id" },
+    ];
+    getSessionImpl = () => ({ id: "cache-id" }) as any;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: undefined });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cache-id");
+  });
+
+  test("shared dir with unknown pid and no cache entry: keeps current id", async () => {
+    scanPortFilesImpl = async () => [];
+    getSessionImpl = () => null;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: undefined, sessionId: "cur" });
+    const sibling = makeWatch({
+      threadId: 2,
+      sessionName: "sess2",
+      sessionPid: 200,
+    });
+    mod._registerWatchForTests(ws);
+    mod._registerWatchForTests(sibling);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+});
+
+describe("_isBackwardDriftTarget (anti-flap guard)", () => {
+  // Regression: an old relay's discovery loop oscillated its port file's
+  // sessionId between two stale transcripts every 15s; the drift loop followed
+  // each flip and spammed "🔄 started a new conversation" into the topic.
+  // Rolling onto a JSONL whose last activity predates the tailed one must be
+  // refused.
+  const dir = mkdtempSync(join(tmpdir(), "drift-mtime-"));
+  const stalePath = join(dir, "stale.jsonl");
+  const freshPath = join(dir, "fresh.jsonl");
+  writeFileSync(stalePath, "{}\n");
+  writeFileSync(freshPath, "{}\n");
+  utimesSync(stalePath, new Date(1_000_000), new Date(1_000_000));
+  utimesSync(freshPath, new Date(2_000_000), new Date(2_000_000));
+
+  test("true when the drift target is staler than the tailed JSONL (flap back)", async () => {
+    findSessionJsonlPathImpl = async (id) => (id === "prev" ? freshPath : null);
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(stalePath, "prev")).toBe(true);
+  });
+
+  test("false for a genuine forward roll", async () => {
+    findSessionJsonlPathImpl = async (id) => (id === "prev" ? stalePath : null);
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(freshPath, "prev")).toBe(false);
+  });
+
+  test("false when the previous path is unknown (speculative tailer)", async () => {
+    findSessionJsonlPathImpl = async () => null;
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(stalePath, "prev")).toBe(false);
+  });
+
+  test("false when the target can't be statted — only a proven backward roll skips", async () => {
+    findSessionJsonlPathImpl = async () => freshPath;
+    const mod = await import("../handlers/watch");
+    expect(
+      await mod._isBackwardDriftTarget(join(dir, "missing.jsonl"), "prev"),
+    ).toBe(false);
   });
 });

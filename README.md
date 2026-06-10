@@ -102,6 +102,37 @@ Requirements:
 - tmux (mobile-injected answers use `tmux send-keys` to type into the local TUI pane)
 - The bot must be running on the same host as Claude Code (the hook calls `localhost`)
 
+### Exact `/clear` follow for sessions sharing a directory (optional)
+
+When two Claude sessions run in the **same directory**, the relay can only guess (by file mtime/birthtime, with a ≤15s poll) which transcript belongs to which topic after a `/clear`. The `SessionStart` hook removes the guessing: it fires inside each Claude process, so each self-reports its own `session_id` into its own relay port file — exact and instant. It's additive; without it the poll heuristic still works (just slower, and best-effort across siblings).
+
+**1. Install the hook scripts** (same step as the AUQ bridge — symlinks `hooks/*` into `~/.claude/hooks/`):
+
+```bash
+bun run install-hooks
+```
+
+**2. Register the `SessionStart` hook** in `~/.claude/settings.json` (replace `<your-username>`):
+
+```json
+"SessionStart": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "command": "/Users/<your-username>/.claude/hooks/claude-remote-session-id.ts"
+      }
+    ]
+  }
+]
+```
+
+Drop this inside the existing `"hooks": { ... }` object alongside `PreToolUse`. Covers every session — hand-started and `/new`-launched. Sessions launched via `scripts/claude-relay-launch.sh` (remote `/new`) also get it auto-injected via `--settings`, so this manual step is only needed for hand-started desktop sessions.
+
+> **No hot-reload**: after installing/editing the hook, restart your Claude sessions so they load it. The bot reloads on its own (`bun --watch`).
+
+The hook writes nothing to stdout (SessionStart stdout is injected into Claude's context) and always exits 0. Diagnostics go to `~/.claude/logs/session-id-hook.log`.
+
 ## Logs
 
 - `~/Library/Logs/claude-mobile-bridge/bot.log` — primary log, written by the bot itself. Rotates automatically:

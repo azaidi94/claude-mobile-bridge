@@ -6,6 +6,7 @@
  * speculative path.
  */
 
+import { stat } from "fs/promises";
 import type { Api } from "grammy";
 import { info } from "../../logger";
 import { safeSync } from "../../utils/safe-async";
@@ -167,6 +168,83 @@ export async function _awaitSessionId(
 }
 
 /**
+ * Read the live sessionId for a specific Claude PID from its relay port file.
+ * This is the only signal that attributes a transcript to one of several
+ * sessions sharing a directory: the relay runs as a child of the Claude process
+ * (port file `ppid`) and keeps its `sessionId` current across /clear. Returns
+ * undefined when the pid is unknown or no matching port file exists.
+ */
+async function liveSessionIdForPid(
+  sessionDir: string,
+  claudePid: number | undefined,
+): Promise<string | undefined> {
+  if (claudePid === undefined) return undefined;
+  try {
+    const ports = await scanPortFiles();
+    const pf = ports.find(
+      (p) => p.cwd === sessionDir && p.ppid === claudePid && p.sessionId,
+    );
+    return pf?.sessionId;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the conversation id this watch should currently be tailing — the
+ * input to the drift loop's /clear follow.
+ *
+ * Sole owner of the dir: the newest JSONL by mtime is unambiguously this
+ * session's (excluding recently-killed ids). Shared dir: mtime can't attribute
+ * a transcript to a specific session, so trust the relay port file keyed by
+ * this session's Claude PID (kept current across /clear by the relay's
+ * discovery loop), falling back to the PID-pinned watcher cache id.
+ *
+ * Exported as a test seam.
+ */
+export async function _resolveDriftTargetId(
+  watchState: WatchState,
+): Promise<string | undefined> {
+  let sharesDir = false;
+  for (const other of watches.values()) {
+    if (other === watchState) continue;
+    if (other.sessionDir === watchState.sessionDir) {
+      sharesDir = true;
+      break;
+    }
+  }
+
+  if (sharesDir) {
+    // Attribute by this session's Claude PID via its relay port file — the only
+    // signal that maps a transcript to one of several sessions in a shared dir.
+    if (watchState.sessionPid !== undefined) {
+      const byPid = await liveSessionIdForPid(
+        watchState.sessionDir,
+        watchState.sessionPid,
+      );
+      // No match (relay down, or port-file scan threw): KEEP the current id.
+      // Falling back to a possibly-divergent cache id here would drag the
+      // tailer back and re-fire "🔄 new conversation" on every transient miss
+      // — the flapping the old sole-owner guard existed to prevent.
+      return byPid ?? watchState.sessionId;
+    }
+    // No pid to attribute by: best-effort cache id (also PID-pinned via the
+    // watcher's priorNameByPid), else keep current.
+    return getSession(watchState.sessionName)?.id ?? watchState.sessionId;
+  }
+
+  const excludeIds =
+    killedSessionIds.size > 0
+      ? new Set<string>(killedSessionIds.keys())
+      : undefined;
+  const newestJsonl = await findNewestSessionInDir(
+    watchState.sessionDir,
+    excludeIds,
+  );
+  return newestJsonl ?? getSession(watchState.sessionName)?.id ?? undefined;
+}
+
+/**
  * Poll for new-conversation detection: when the desktop session starts a new
  * conversation (new JSONL, same dir), restart the tailer against the new file.
  * /clear doesn't rewrite the relay port file, so without this the tailer stays
@@ -188,23 +266,12 @@ export function setupIdDriftDetection(
     // below — without it, a sibling sharing the dir would mute recovery
     // forever and the watch would stream the wrong session indefinitely.
     if (await _recoverMisboundTailer(botApi, watchState)) return;
-    // Only drift when sole owner of the dir. With siblings, the newest
-    // JSONL can't be attributed to a specific named session, and toggling
-    // sessionId on each mode change would fire spurious "🔄" notices and
-    // revert /clear recovery earned while solo.
-    for (const other of watches.values()) {
-      if (other === watchState) continue;
-      if (other.sessionDir === watchState.sessionDir) return;
-    }
-    const excludeIds =
-      killedSessionIds.size > 0
-        ? new Set<string>(killedSessionIds.keys())
-        : undefined;
-    const newestJsonl = await findNewestSessionInDir(
-      watchState.sessionDir,
-      excludeIds,
-    );
-    const newId = newestJsonl ?? getSession(sessionName)?.id;
+    // Where does this watch's conversation currently live? Sole owner: newest
+    // JSONL by mtime. Shared dir: the relay port file keyed by this session's
+    // Claude PID (mtime can't attribute a transcript when a sibling shares the
+    // dir). This restores shared-dir /clear follow that 3c97a8d's blanket
+    // sole-owner guard disabled — attribution is now by PID, not "newest file".
+    const newId = await _resolveDriftTargetId(watchState);
 
     if (!newId) return;
     if (killedSessionIds.has(newId)) return;
@@ -246,6 +313,10 @@ export function setupIdDriftDetection(
       watchState.sessionId = previousId;
       return;
     }
+    if (await _isBackwardDriftTarget(newPath, previousId)) {
+      watchState.sessionId = previousId;
+      return;
+    }
     watchState.tailer?.stop();
     forgetUsage(previousId);
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
@@ -281,6 +352,31 @@ export function setupIdDriftDetection(
       })
       .catch(() => {});
   }, intervalMs);
+}
+
+/**
+ * True when a drift target's JSONL was last modified BEFORE the one currently
+ * tailed — i.e. the "roll" would move the watch backward onto a staler
+ * transcript. A genuine /clear or resume target is always at least as fresh as
+ * what we're tailing, so a backward target can only come from a bogus external
+ * signal — e.g. an old relay (pre-fix; the relay doesn't hot-reload) whose
+ * discovery loop oscillates the port file's sessionId between two stale
+ * transcripts every 15s. Following each flip would bounce the tailer — and
+ * post "🔄 new conversation" to the topic — forever. False whenever either
+ * side can't be statted (speculative path, file gone): only a *proven*
+ * backward roll is skipped. Exported as a test seam.
+ */
+export async function _isBackwardDriftTarget(
+  newPath: string,
+  previousId: string,
+): Promise<boolean> {
+  const previousPath = await findSessionJsonlPath(previousId);
+  if (!previousPath) return false;
+  const [newStat, prevStat] = await Promise.all([
+    stat(newPath).catch(() => null),
+    stat(previousPath).catch(() => null),
+  ]);
+  return !!newStat && !!prevStat && newStat.mtimeMs < prevStat.mtimeMs;
 }
 
 /**

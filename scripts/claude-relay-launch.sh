@@ -39,10 +39,38 @@ fi
 #   alone is sufficient to both approve and listen on the channel.
 RELAY_ARGS="${CLAUDE_RELAY_ARGS:---dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay}"
 
+# Single EXIT cleanup for both temp files (the --settings fragment below + the
+# expect script created later). Registered BEFORE the fragment mktemp so an
+# early exit can't leak it, and each rm is guarded so an unset/empty var never
+# becomes `rm -f ""`. EXPECT_SCRIPT is read lazily at EXIT (set further down).
+SETTINGS_FRAGMENT=""
+cleanup_tmp() {
+  [[ -n "${EXPECT_SCRIPT:-}" ]] && rm -f "$EXPECT_SCRIPT"
+  [[ -n "${SETTINGS_FRAGMENT:-}" ]] && rm -f "$SETTINGS_FRAGMENT"
+  return 0
+}
+trap cleanup_tmp EXIT
+
+# Auto-inject the SessionStart session-id hook so remote-/new sessions get exact
+# /clear follow (when sharing a dir) without a manual settings.json edit. The
+# hook writes each Claude process's live session_id into its own relay port file.
+# `--settings` LOADS ADDITIONAL settings (it MERGES — confirmed via `claude
+# --help`: "load additional settings from"), so this only ADDS the hook and
+# never replaces the user's settings. Skipped silently if the hook isn't
+# installed (run `bun run install-hooks`).
+SETTINGS_ARG=""
+SESSION_ID_HOOK="${HOME}/.claude/hooks/claude-remote-session-id.ts"
+if [[ -x "$SESSION_ID_HOOK" ]]; then
+  SETTINGS_FRAGMENT=$(mktemp /tmp/claude-relay-settings-XXXXXX)
+  printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"%s"}]}]}}' \
+    "$SESSION_ID_HOOK" > "$SETTINGS_FRAGMENT"
+  SETTINGS_ARG="--settings $(printf %q "$SETTINGS_FRAGMENT")"
+fi
+
 QUOTE_DIR=$(printf %q "$DIR")
 QUOTE_BIN=$(printf %q "$CLAUDE_BIN")
 # shellcheck disable=SC2086
-SPAWNCMD="cd ${QUOTE_DIR} && exec ${QUOTE_BIN} ${RELAY_ARGS}"
+SPAWNCMD="cd ${QUOTE_DIR} && exec ${QUOTE_BIN} ${RELAY_ARGS} ${SETTINGS_ARG}"
 export SPAWNCMD
 
 if [[ ! -x /usr/bin/expect ]]; then
@@ -57,7 +85,7 @@ fi
 # end of the template — a `.exp` suffix makes mktemp create a literal
 # `XXXXXX.exp` file, which collides on the second run. Keep X's at the end.
 EXPECT_SCRIPT=$(mktemp /tmp/claude-relay-XXXXXX)
-trap 'rm -f "$EXPECT_SCRIPT"' EXIT
+# Cleanup handled by the cleanup_tmp EXIT trap registered above.
 
 cat > "$EXPECT_SCRIPT" <<'EXPECT'
 # Claude prints ANSI; match stable substrings. Trust prompt appears first when the

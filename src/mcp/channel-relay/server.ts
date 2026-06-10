@@ -31,6 +31,7 @@ import { homedir } from "os";
 import { writeJsonLine } from "../../utils/socket-writer";
 import { join } from "path";
 import { STATE_DIR, parseRelayPortFilePid } from "../../paths";
+import { pickRolledSessionId, type JsonlCandidate } from "./session-discovery";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
@@ -118,6 +119,32 @@ function claimedSessionIds(): Set<string> {
   return claimed;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Stat every valid-UUID JSONL in a project dir as discovery candidates. */
+function collectJsonlCandidates(projectDir: string): JsonlCandidate[] {
+  const out: JsonlCandidate[] = [];
+  let files: string[];
+  try {
+    files = readdirSync(projectDir);
+  } catch {
+    return out; // projectDir not yet created
+  }
+  for (const file of files) {
+    if (!file.endsWith(".jsonl")) continue;
+    const id = file.slice(0, -6);
+    if (!UUID_RE.test(id)) continue;
+    try {
+      const s = statSync(join(projectDir, file));
+      out.push({ id, birthtimeMs: s.birthtimeMs, mtimeMs: s.mtimeMs });
+    } catch {
+      // stat failed — skip
+    }
+  }
+  return out;
+}
+
 /**
  * Scan ~/.claude/projects/<cwd-with-slashes-as-dashes>/ for a JSONL whose birthtime is closest
  * to serverStartedAtMs and not already claimed by another relay instance.
@@ -136,12 +163,7 @@ function discoverSessionId(): string | undefined {
     for (const file of files) {
       if (!file.endsWith(".jsonl")) continue;
       const id = file.slice(0, -6);
-      if (
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          id,
-        )
-      )
-        continue;
+      if (!UUID_RE.test(id)) continue;
       if (claimed.has(id)) continue;
       try {
         const s = statSync(join(projectDir, file));
@@ -188,6 +210,11 @@ function updateOwnPortFile(updates: Record<string, unknown>): void {
 
 const DISCOVERY_RETRY_DELAYS_MS = [3_000, 5_000, 10_000, 20_000, 30_000];
 
+// Steady-state re-check cadence once a session id is established. Lower than the
+// old 60s so a /clear (a fresh JSONL in the same dir, same process) is reflected
+// in the port file — and therefore the bot's watch — within ~15s, not a minute.
+const REDISCOVERY_POLL_MS = 15_000;
+
 let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryIndex = 0;
 
@@ -217,76 +244,63 @@ function runDiscovery(): void {
     return;
   }
 
-  // If we already own a sessionId, only re-discover if:
-  // 1. The JSONL was deleted (/clear or /respawn), OR
-  // 2. A newer JSONL exists that was written after the relay started — this
-  //    means the conversation moved to a new session (e.g. Claude started a
-  //    new conversation in the same process without /clear).
+  // If we already own a sessionId and its JSONL still exists, the only thing to
+  // check is whether the conversation rolled forward (/clear, or a new
+  // conversation started in the same process). pickRolledSessionId adopts the
+  // newest *unclaimed* newer transcript — newest-by-mtime so it moves past the
+  // launch file, unclaimed so two relays sharing a dir pick distinct sessions.
+  // Critically this must update on a roll: the bot's watch follows the port
+  // file's sessionId, and for shared dirs it has no other way to track /clear.
   if (currentId) {
     const projectDir = claudeProjectDir(cwd);
+    let currentStat;
     try {
-      const currentStat = statSync(join(projectDir, `${currentId}.jsonl`));
-      // Check if a newer unclaimed JSONL exists for this dir.
-      const claimed = claimedSessionIds();
-      let newerExists = false;
-      try {
-        const files = readdirSync(projectDir);
-        for (const file of files) {
-          if (!file.endsWith(".jsonl")) continue;
-          const id = file.slice(0, -6);
-          if (
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-              id,
-            )
-          )
-            continue;
-          if (id === currentId || claimed.has(id)) continue;
-          try {
-            const s = statSync(join(projectDir, file));
-            // Case 1: born after current AND written after relay start (new conversation).
-            // Case 2: this file's mtime is significantly more recent than current's
-            //   (handles resumed older conversations where birthtime ordering is inverted —
-            //   e.g. user resumes a session born before the currently-tracked one).
-            const RECENCY_ADVANTAGE_MS = 60 * 60 * 1000; // 1 hour
-            if (
-              (s.birthtimeMs > currentStat.birthtimeMs &&
-                s.mtimeMs >= serverStartedAtMs) ||
-              s.mtimeMs > currentStat.mtimeMs + RECENCY_ADVANTAGE_MS
-            ) {
-              newerExists = true;
-              break;
-            }
-          } catch {
-            // skip
-          }
-        }
-      } catch {
-        // projectDir unreadable — keep current
-      }
-      if (!newerExists) {
-        // JSONL still exists and no newer session — keep current sessionId
-        scheduleNextDiscovery(60_000);
-        return;
-      }
-      // Newer session found — fall through to re-discover
+      currentStat = statSync(join(projectDir, `${currentId}.jsonl`));
     } catch {
-      // JSONL gone — fall through to re-discover
+      currentStat = undefined; // JSONL gone (/respawn, manual delete)
+      // Re-arm the fast backoff so we bind the replacement transcript within
+      // seconds instead of waiting a steady-state interval for it to appear.
+      retryIndex = 0;
     }
+    if (currentStat) {
+      const rolled = pickRolledSessionId(
+        collectJsonlCandidates(projectDir),
+        {
+          id: currentId,
+          birthtimeMs: currentStat.birthtimeMs,
+          mtimeMs: currentStat.mtimeMs,
+        },
+        claimedSessionIds(),
+        serverStartedAtMs,
+      );
+      if (rolled) {
+        updateOwnPortFile({ sessionId: rolled });
+        process.stderr.write(
+          `channel-relay: re-discovered sessionId=${rolled} (was ${currentId})\n`,
+        );
+      }
+      scheduleNextDiscovery(REDISCOVERY_POLL_MS);
+      return;
+    }
+    // currentStat undefined: JSONL gone — fall through to full re-discover.
   }
 
+  // Reached only on first discovery (no currentId yet) or when the current
+  // JSONL vanished. Once an id is established, steady-state roll checks happen
+  // via the currentId branch above on REDISCOVERY_POLL_MS, not this ramp.
   const id = discoverSessionId();
   if (id) {
     if (id !== currentId) {
       updateOwnPortFile({ sessionId: id });
       process.stderr.write(`channel-relay: discovered sessionId=${id}\n`);
     }
-    retryIndex = DISCOVERY_RETRY_DELAYS_MS.length; // switch to 60s steady-state polling
+    retryIndex = DISCOVERY_RETRY_DELAYS_MS.length; // initial ramp done
   }
 
   const delay =
     retryIndex < DISCOVERY_RETRY_DELAYS_MS.length
       ? DISCOVERY_RETRY_DELAYS_MS[retryIndex++]!
-      : 60_000;
+      : REDISCOVERY_POLL_MS;
   scheduleNextDiscovery(delay);
 }
 
