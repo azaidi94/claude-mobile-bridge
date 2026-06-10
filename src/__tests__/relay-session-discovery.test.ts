@@ -94,4 +94,29 @@ describe("pickRolledSessionId", () => {
       pickRolledSessionId([current], current, new Set(), SERVER_START),
     ).toBeUndefined();
   });
+
+  test("never oscillates: contradictory birth/mtime orderings settle on the newest-mtime transcript", () => {
+    // Regression: A born before relay start but last-active recently, B born
+    // after relay start but idle for hours. The birthtime branch said B is
+    // newer than A while the recency branch said A is newer than B, so the
+    // 15s loop flipped the port file A→B→A forever — and the bot's watch
+    // spammed "🔄 new conversation" into the topic on every flip.
+    const serverStart = 10_000_000;
+    const a: JsonlCandidate = {
+      id: "a",
+      birthtimeMs: 5_000_000, // born before relay start
+      mtimeMs: 60_000_000, // most recent activity
+    };
+    const b: JsonlCandidate = {
+      id: "b",
+      birthtimeMs: 20_000_000, // born after relay start
+      mtimeMs: 30_000_000, // idle since long before a's last write
+    };
+    // Holding a: b's last activity is OLDER — no roll backward.
+    expect(
+      pickRolledSessionId([a, b], a, new Set(), serverStart),
+    ).toBeUndefined();
+    // Holding b: a was modified far more recently — one forward roll, stable.
+    expect(pickRolledSessionId([a, b], b, new Set(), serverStart)).toBe("a");
+  });
 });

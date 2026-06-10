@@ -30,6 +30,7 @@ export {
   _resolveLiveJsonlPath,
   _resolveDriftTargetId,
   _awaitSessionId,
+  _isBackwardDriftTarget,
   _recoverMisboundTailer,
   inspectDirSiblings,
 } from "./jsonl-tailer";

@@ -6,6 +6,7 @@
  * speculative path.
  */
 
+import { stat } from "fs/promises";
 import type { Api } from "grammy";
 import { info } from "../../logger";
 import { safeSync } from "../../utils/safe-async";
@@ -312,6 +313,10 @@ export function setupIdDriftDetection(
       watchState.sessionId = previousId;
       return;
     }
+    if (await _isBackwardDriftTarget(newPath, previousId)) {
+      watchState.sessionId = previousId;
+      return;
+    }
     watchState.tailer?.stop();
     forgetUsage(previousId);
     const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
@@ -347,6 +352,31 @@ export function setupIdDriftDetection(
       })
       .catch(() => {});
   }, intervalMs);
+}
+
+/**
+ * True when a drift target's JSONL was last modified BEFORE the one currently
+ * tailed — i.e. the "roll" would move the watch backward onto a staler
+ * transcript. A genuine /clear or resume target is always at least as fresh as
+ * what we're tailing, so a backward target can only come from a bogus external
+ * signal — e.g. an old relay (pre-fix; the relay doesn't hot-reload) whose
+ * discovery loop oscillates the port file's sessionId between two stale
+ * transcripts every 15s. Following each flip would bounce the tailer — and
+ * post "🔄 new conversation" to the topic — forever. False whenever either
+ * side can't be statted (speculative path, file gone): only a *proven*
+ * backward roll is skipped. Exported as a test seam.
+ */
+export async function _isBackwardDriftTarget(
+  newPath: string,
+  previousId: string,
+): Promise<boolean> {
+  const previousPath = await findSessionJsonlPath(previousId);
+  if (!previousPath) return false;
+  const [newStat, prevStat] = await Promise.all([
+    stat(newPath).catch(() => null),
+    stat(previousPath).catch(() => null),
+  ]);
+  return !!newStat && !!prevStat && newStat.mtimeMs < prevStat.mtimeMs;
 }
 
 /**

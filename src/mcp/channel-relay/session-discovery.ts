@@ -43,6 +43,15 @@ export interface JsonlCandidate {
  * gets its OWN process's transcript. Exact per-process attribution needs a
  * signal this pure function doesn't have (e.g. a Claude hook reporting pid →
  * live session id).
+ *
+ * Every roll requires STRICT mtime progress (`c.mtimeMs > current.mtimeMs`).
+ * Without it the two `isNewer` branches can contradict each other — A "newer"
+ * than B by birthtime while B is "newer" than A by the recency-advantage mtime
+ * branch — and the 15s loop oscillates A→B→A forever, flapping the port file's
+ * sessionId and spamming the bot's watch with "new conversation" rebinds. With
+ * it, "newer" is a strict order on mtime, so no cycle is possible. A genuine
+ * roll always has mtime progress: a fresh /clear JSONL is written after the old
+ * transcript's last line, and a resumed transcript is written on resume.
  */
 export function pickRolledSessionId(
   candidates: readonly JsonlCandidate[],
@@ -54,6 +63,7 @@ export function pickRolledSessionId(
   for (const c of candidates) {
     if (c.id === current.id) continue;
     if (claimed.has(c.id)) continue;
+    if (c.mtimeMs <= current.mtimeMs) continue;
     const isNewer =
       (c.birthtimeMs > current.birthtimeMs && c.mtimeMs >= serverStartedAtMs) ||
       c.mtimeMs > current.mtimeMs + RECENCY_ADVANTAGE_MS;

@@ -7,6 +7,9 @@
 
 import "./ensure-test-env";
 import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { mkdtempSync, utimesSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { SessionInfo } from "../sessions/types";
 
 let getSessionImpl: (name: string) => SessionInfo | null = () => null;
@@ -599,5 +602,46 @@ describe("_resolveDriftTargetId", () => {
     mod._registerWatchForTests(ws);
     mod._registerWatchForTests(sibling);
     expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+});
+
+describe("_isBackwardDriftTarget (anti-flap guard)", () => {
+  // Regression: an old relay's discovery loop oscillated its port file's
+  // sessionId between two stale transcripts every 15s; the drift loop followed
+  // each flip and spammed "🔄 started a new conversation" into the topic.
+  // Rolling onto a JSONL whose last activity predates the tailed one must be
+  // refused.
+  const dir = mkdtempSync(join(tmpdir(), "drift-mtime-"));
+  const stalePath = join(dir, "stale.jsonl");
+  const freshPath = join(dir, "fresh.jsonl");
+  writeFileSync(stalePath, "{}\n");
+  writeFileSync(freshPath, "{}\n");
+  utimesSync(stalePath, new Date(1_000_000), new Date(1_000_000));
+  utimesSync(freshPath, new Date(2_000_000), new Date(2_000_000));
+
+  test("true when the drift target is staler than the tailed JSONL (flap back)", async () => {
+    findSessionJsonlPathImpl = async (id) => (id === "prev" ? freshPath : null);
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(stalePath, "prev")).toBe(true);
+  });
+
+  test("false for a genuine forward roll", async () => {
+    findSessionJsonlPathImpl = async (id) => (id === "prev" ? stalePath : null);
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(freshPath, "prev")).toBe(false);
+  });
+
+  test("false when the previous path is unknown (speculative tailer)", async () => {
+    findSessionJsonlPathImpl = async () => null;
+    const mod = await import("../handlers/watch");
+    expect(await mod._isBackwardDriftTarget(stalePath, "prev")).toBe(false);
+  });
+
+  test("false when the target can't be statted — only a proven backward roll skips", async () => {
+    findSessionJsonlPathImpl = async () => freshPath;
+    const mod = await import("../handlers/watch");
+    expect(
+      await mod._isBackwardDriftTarget(join(dir, "missing.jsonl"), "prev"),
+    ).toBe(false);
   });
 });
