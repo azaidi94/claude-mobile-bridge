@@ -51,6 +51,7 @@ export function cleanupProgressMessages(
   state.progressMessages = [];
   state.currentToolMsg = null;
   state.currentTextMsg = null;
+  state.textMsgPending = false;
   state.currentTextContent = "";
   state.segmentDone = true;
 }

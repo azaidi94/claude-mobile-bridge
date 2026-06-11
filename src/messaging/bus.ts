@@ -97,6 +97,11 @@ function isParseEntityError(err: unknown): boolean {
   return /can't parse entities|can not parse entities|parse_mode/i.test(msg);
 }
 
+function isMessageTooLongError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /message is too long/i.test(msg);
+}
+
 function isMessageMissingError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /message to edit not found|message_id_invalid|MESSAGE_ID_INVALID/i.test(
@@ -184,13 +189,74 @@ export function createMessageBus(api: Api): MessageBus {
     }
   }
 
-  function checkDedup(key: string | undefined): boolean {
+  function isDedup(key: string | undefined): boolean {
     if (!key) return false;
     cleanupDedup();
     const exp = dedupCache.get(key);
-    if (exp && exp > Date.now()) return true;
+    return exp !== undefined && exp > Date.now();
+  }
+
+  function recordDedup(key: string | undefined): void {
+    if (!key) return;
     dedupCache.set(key, Date.now() + DEDUP_TTL_MS);
-    return false;
+  }
+
+  function deleteDedup(key: string | undefined): void {
+    if (!key) return;
+    dedupCache.delete(key);
+  }
+
+  // --- HTML-aware chunk resolution -----------------------------------------
+
+  interface SendChunk {
+    content: string; // converted, ready for Telegram
+    parseMode: ResolvedParseMode | undefined;
+    rawChunk: string; // raw source for plain-fallback alignment
+  }
+
+  /**
+   * Resolve a raw chunk to one or more send-ready chunks, splitting recursively
+   * if the converted (HTML) form exceeds Telegram's 4096-character hard cap.
+   *
+   * Splitting the RAW content then re-converting each half keeps every chunk's
+   * HTML self-contained — we never slice through a tag or entity, which TG would
+   * reject. Mirrors the existing invariant that per-chunk conversion is safe.
+   */
+  function resolveChunks(
+    rawChunk: string,
+    formatHint: FormatHint,
+  ): SendChunk[] {
+    const resolved = resolveParseMode(rawChunk, formatHint);
+    if (resolved.content.length <= 4096) {
+      return [
+        {
+          content: resolved.content,
+          parseMode: resolved.parse_mode,
+          rawChunk,
+        },
+      ];
+    }
+    // Split the raw content at a newline near the midpoint; fall back to a hard
+    // midpoint split if the chunk has no newlines (e.g. a giant code block).
+    const mid = Math.floor(rawChunk.length / 2);
+    const nlIdx = rawChunk.lastIndexOf("\n", mid);
+    const splitPoint = nlIdx > mid / 2 ? nlIdx + 1 : mid;
+    // Guard: if the raw chunk is tiny but still overflows after conversion
+    // (extreme entity-expansion edge case), truncate the converted output
+    // rather than recurring infinitely.
+    if (rawChunk.length < 100) {
+      return [
+        {
+          content: resolved.content.slice(0, 4093) + "…",
+          parseMode: resolved.parse_mode,
+          rawChunk,
+        },
+      ];
+    }
+    return [
+      ...resolveChunks(rawChunk.slice(0, splitPoint), formatHint),
+      ...resolveChunks(rawChunk.slice(splitPoint), formatHint),
+    ];
   }
 
   /** Send one chunk of text. Returns messageId on success, throws otherwise. */
@@ -220,6 +286,35 @@ export function createMessageBus(api: Api): MessageBus {
       if (parseMode && isParseEntityError(err)) {
         // Plain fallback.
         const plain = plainFallback(rawChunk, formatHint);
+        const plainOpts: Parameters<Api["sendMessage"]>[2] = {};
+        if (threadId !== undefined) plainOpts.message_thread_id = threadId;
+        if (silent) plainOpts.disable_notification = true;
+        if (replyTo) {
+          plainOpts.reply_parameters = {
+            message_id: replyTo.messageId,
+          };
+        }
+        if (replyMarkup) plainOpts.reply_markup = replyMarkup;
+        const msg = await api.sendMessage(chatId, plain, plainOpts);
+        return msg.message_id;
+      }
+      // Backstop: if rechunking missed an edge case and the converted HTML
+      // still exceeds 4096, retry without parse_mode (plain text strips tags).
+      if (parseMode && isMessageTooLongError(err)) {
+        const plain = plainFallback(rawChunk, formatHint);
+        if (plain.length > 4096) {
+          // Last resort: truncate to fit.
+          const truncated = plain.slice(0, 4093) + "…";
+          const msg = await api.sendMessage(chatId, truncated, {
+            ...(threadId !== undefined && { message_thread_id: threadId }),
+            ...(silent && { disable_notification: true }),
+            ...(replyTo && {
+              reply_parameters: { message_id: replyTo.messageId },
+            }),
+            ...(replyMarkup && { reply_markup: replyMarkup }),
+          } as Parameters<Api["sendMessage"]>[2]);
+          return msg.message_id;
+        }
         const plainOpts: Parameters<Api["sendMessage"]>[2] = {};
         if (threadId !== undefined) plainOpts.message_thread_id = threadId;
         if (silent) plainOpts.disable_notification = true;
@@ -333,8 +428,8 @@ export function createMessageBus(api: Api): MessageBus {
           .catch(() => {});
       }
 
-      // Dedup gate.
-      if (checkDedup(msg.dedupKey)) {
+      // Dedup gate (check only — record after successful send).
+      if (isDedup(msg.dedupKey)) {
         debug("bus.send", {
           opId,
           chatId: msg.chatId,
@@ -390,6 +485,7 @@ export function createMessageBus(api: Api): MessageBus {
             formatHint,
             msg.silent === true,
           );
+          recordDedup(msg.dedupKey);
           debug("bus.send", {
             opId,
             chatId: msg.chatId,
@@ -403,33 +499,55 @@ export function createMessageBus(api: Api): MessageBus {
           return { messageId };
         }
 
-        // Text path: chunk the RAW content, then resolve parse-mode per chunk.
+        // Text path: chunk the RAW content, then resolve parse-mode per chunk
+        // with HTML-aware rechunking (if converted form exceeds 4096).
         // Converting each raw chunk independently (rather than chunking
         // already-converted HTML) keeps every chunk's HTML self-contained — a
         // tag can't be sliced across a chunk boundary, which TG would reject —
         // and keeps the plain-fallback source exactly aligned with what was
-        // sent. Mirrors the old sendTextReply.
+        // sent.
         const rawChunks = chunkContent(msg.content);
+        const sendChunks = rawChunks.flatMap((raw) =>
+          resolveChunks(raw, formatHint),
+        );
 
         let firstMessageId: number | null = null;
-        for (let i = 0; i < rawChunks.length; i++) {
-          const rawChunk = rawChunks[i]!;
-          const resolvedChunk = resolveParseMode(rawChunk, formatHint);
+        for (let i = 0; i < sendChunks.length; i++) {
+          // Consume a rate token per chunk (chunks after the first).
+          if (i > 0) {
+            const chunkToken = await waitForToken(rkey);
+            if (!chunkToken) {
+              warn("bus.send chunk ratelimit skip", {
+                opId,
+                chatId: msg.chatId,
+                threadId: msg.threadId,
+                chunkIndex: i,
+                totalChunks: sendChunks.length,
+              });
+              continue; // skip this chunk; partial delivery better than silent drop
+            }
+          }
+
+          const sc = sendChunks[i]!;
           // Reply-markup only on the first chunk (TG would otherwise repeat
           // the keyboard on every chunk).
           const id = await sendOneText(
             msg.chatId,
             msg.threadId,
-            resolvedChunk.content,
-            resolvedChunk.parse_mode,
+            sc.content,
+            sc.parseMode,
             i === 0 ? msg.replyTo : undefined,
-            rawChunk,
+            sc.rawChunk,
             formatHint,
             msg.silent === true,
             i === 0 ? msg.replyMarkup : undefined,
           );
           if (firstMessageId === null) firstMessageId = id;
         }
+
+        // Record dedup key only after successful send (no dedup poisoning).
+        recordDedup(msg.dedupKey);
+
         debug("bus.send", {
           opId,
           chatId: msg.chatId,
@@ -438,11 +556,13 @@ export function createMessageBus(api: Api): MessageBus {
           durationMs: elapsedMs(startedAt),
           result: "ok",
           dedupKey: msg.dedupKey,
-          chunkCount: rawChunks.length,
+          chunkCount: sendChunks.length,
         });
         return { messageId: firstMessageId ?? 0 };
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
+        // Ensure a failed send does not poison the dedup cache.
+        deleteDedup(msg.dedupKey);
         warn("bus.send error", {
           opId,
           chatId: msg.chatId,
@@ -468,20 +588,32 @@ export function createMessageBus(api: Api): MessageBus {
       const startedAt = Date.now();
       const formatHint: FormatHint = input.format ?? "auto";
       const resolved = resolveParseMode(input.content, formatHint);
+
+      // Edits can't be chunked across multiple messages, so truncate oversized
+      // content to the 4096-char hard cap.
+      let editContent = resolved.content;
+      if (editContent.length > 4096) {
+        editContent = editContent.slice(0, 4093) + "…";
+        warn("bus.send edit truncated", {
+          opId,
+          chatId: input.chatId,
+          threadId: input.threadId,
+          originalLen: resolved.content.length,
+        });
+      }
+
       try {
         const opts: Parameters<Api["editMessageText"]>[3] = {};
         if (resolved.parse_mode) opts.parse_mode = resolved.parse_mode;
         if (input.replyMarkup) opts.reply_markup = input.replyMarkup;
         try {
-          await api.editMessageText(
-            input.chatId,
-            messageId,
-            resolved.content,
-            opts,
-          );
+          await api.editMessageText(input.chatId, messageId, editContent, opts);
         } catch (err) {
           if (resolved.parse_mode && isParseEntityError(err)) {
-            const plain = plainFallback(input.content, formatHint);
+            let plain = plainFallback(input.content, formatHint);
+            if (plain.length > 4096) {
+              plain = plain.slice(0, 4093) + "…";
+            }
             const plainOpts: Parameters<Api["editMessageText"]>[3] = {};
             if (input.replyMarkup) plainOpts.reply_markup = input.replyMarkup;
             await api.editMessageText(

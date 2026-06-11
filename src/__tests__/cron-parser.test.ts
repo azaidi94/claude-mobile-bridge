@@ -80,4 +80,55 @@ describe("parseCron", () => {
     expect(matchesAt(e, utc(2026, 5, 31, 12, 33))).toBe(true);
     expect(matchesAt(e, utc(2026, 5, 31, 12, 4))).toBe(false);
   });
+
+  it("POSIX DOM/DOW OR: both restricted → matches on either", () => {
+    // 0 9 1 * 1 = 09:00 UTC on the 1st of month OR Monday
+    const e = parseCron("0 9 1 * 1");
+    // 2026-06-01 is a Monday (both dom=1 and dow=1) → should match
+    expect(matchesAt(e, utc(2026, 6, 1, 9, 0))).toBe(true);
+    // 2026-07-01 is a Wednesday (dom=1, dow=3) → should match via dom
+    expect(matchesAt(e, utc(2026, 7, 1, 9, 0))).toBe(true);
+    // 2026-06-08 is a Monday (dom=8, dow=1) → should match via dow
+    expect(matchesAt(e, utc(2026, 6, 8, 9, 0))).toBe(true);
+    // 2026-06-09 is a Tuesday, not the 1st → should NOT match
+    expect(matchesAt(e, utc(2026, 6, 9, 9, 0))).toBe(false);
+    // Wrong hour → should NOT match
+    expect(matchesAt(e, utc(2026, 6, 1, 10, 0))).toBe(false);
+  });
+
+  it("DOM/DOW: both unrestricted (dom=* dow=*) → matches any day", () => {
+    const e = parseCron("0 9 * * *");
+    expect(matchesAt(e, utc(2026, 6, 1, 9, 0))).toBe(true);
+    expect(matchesAt(e, utc(2026, 6, 9, 9, 0))).toBe(true);
+    expect(matchesAt(e, utc(2026, 7, 15, 9, 0))).toBe(true);
+  });
+
+  it("DOM/DOW: only dom restricted (dow=*) → AND filters by dom", () => {
+    // Only the 15th of any month
+    const e = parseCron("0 9 15 * *");
+    expect(matchesAt(e, utc(2026, 6, 15, 9, 0))).toBe(true);
+    expect(matchesAt(e, utc(2026, 6, 14, 9, 0))).toBe(false);
+    // 2026-06-15 is a Monday, but dow=* so any day-of-week is fine
+  });
+
+  it("DOM/DOW: only dow restricted (dom=*) → AND filters by dow", () => {
+    // Every Monday
+    const e = parseCron("0 9 * * 1");
+    // 2026-06-01, 06-08, 06-15 are Mondays
+    expect(matchesAt(e, utc(2026, 6, 1, 9, 0))).toBe(true);
+    expect(matchesAt(e, utc(2026, 6, 8, 9, 0))).toBe(true);
+    expect(matchesAt(e, utc(2026, 6, 2, 9, 0))).toBe(false);
+  });
+
+  it("rejects reversed range", () => {
+    expect(() => parseCron("5-2 * * * *")).toThrow(/reversed range/);
+    expect(() => parseCron("* 23-5 * * *")).toThrow(/reversed range/);
+    expect(() => parseCron("* * 31-1 * *")).toThrow(/reversed range/);
+  });
+
+  it("rejects field expanding to empty set", () => {
+    // step that starts beyond the range and never enters the loop
+    // e.g. minute=60/5 starts at 60, hi=59 → empty
+    expect(() => parseCron("60/5 * * * *")).toThrow(/empty set/);
+  });
 });

@@ -103,13 +103,6 @@ function formatFields(fields: LogFields): string {
   );
 }
 
-function writeLine(level: Level, line: string): void {
-  const stream =
-    level === "warn" || level === "error" ? process.stderr : process.stdout;
-  stream.write(`${line}\n`);
-  writeToBotLog(`${line}\n`);
-}
-
 export function log(
   level: Level,
   msg: string,
@@ -120,17 +113,19 @@ export function log(
 
   const mergedFields = normalizeFields(detail, fields);
   const prefix = `${ts()} [${level.toUpperCase()}]`;
-  const line = `${prefix} ${msg}${formatFields(mergedFields)}`;
+  const fieldStr = formatFields(mergedFields);
 
-  if (!COLORS_ENABLED) {
-    writeLine(level, line);
-    return;
-  }
+  // Console line (may include ANSI color). File line is always uncolored.
+  const consoleLine = COLORS_ENABLED
+    ? `${COLORS[level]}${prefix}${COLORS.reset} ${msg}${fieldStr}`
+    : `${prefix} ${msg}${fieldStr}`;
 
-  writeLine(
-    level,
-    `${COLORS[level]}${prefix}${COLORS.reset} ${msg}${formatFields(mergedFields)}`,
-  );
+  const stream =
+    level === "warn" || level === "error" ? process.stderr : process.stdout;
+  stream.write(`${consoleLine}\n`);
+
+  // File always gets the uncolored version so bot.log stays ANSI-free.
+  writeToBotLog(`${prefix} ${msg}${fieldStr}\n`);
 }
 
 export const info = (msg: string, fields?: LogFields) =>

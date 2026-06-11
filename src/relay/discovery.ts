@@ -4,7 +4,7 @@
  */
 
 import { readFile, readdir, unlink } from "fs/promises";
-import { readFileSync, writeFileSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, renameSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { createHash } from "crypto";
@@ -40,6 +40,11 @@ const clientCache = new Map<
   string,
   { client: RelayClient; port: number; dir: string }
 >();
+
+// In-flight connects keyed by the same cache keys. Concurrent callers for the
+// same target join the existing promise instead of creating duplicate
+// connections. Entry is removed in finally() once the promise settles.
+const inFlightConnects = new Map<string, Promise<RelayClient | null>>();
 
 // TTL cache for port file scan results (avoids STATE_DIR readdir on every message)
 const SCAN_TTL_MS = 5_000;
@@ -119,9 +124,17 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
         const data = JSON.parse(content) as PortFileData;
         if (data.port && data.pid && data.cwd && isRelayProcess(data.pid)) {
           results.push(data);
-        } else if (data.pid && !isRelayProcess(data.pid)) {
-          // Clean up stale port file (dead or PID-reused process)
+        } else if (data.pid && !isProcessAlive(data.pid)) {
+          // PID confirmed dead — safe to clean up stale port file.
           unlink(filePath).catch(() => {});
+        } else if (data.pid) {
+          // PID is alive but not recognized as a channel-relay process.
+          // Don't delete — the relay may have restarted with a different
+          // command line, or ps may have failed transiently.
+          debug("relay: alive pid not recognized as channel-relay, skipping", {
+            pid: data.pid,
+            file: file,
+          });
         }
       } catch {
         // Skip malformed files
@@ -191,7 +204,9 @@ function doUpdatePortFile(
     const raw = readFileSync(targetFile, "utf-8");
     const current = JSON.parse(raw) as PortFileData;
     const merged = { ...current, ...updates };
-    writeFileSync(targetFile, JSON.stringify(merged, null, 2));
+    const tmpFile = `${targetFile}.tmp`;
+    writeFileSync(tmpFile, JSON.stringify(merged, null, 2));
+    renameSync(tmpFile, targetFile);
     invalidateScanCache();
   } catch {
     // Malformed file or race — silently skip
@@ -248,49 +263,79 @@ export async function getRelayClient(
     }
   }
 
+  // In-flight guard: if another caller is already connecting to this target,
+  // join its promise instead of creating a duplicate connection.
+  if (targetKey) {
+    const inFlight = inFlightConnects.get(targetKey);
+    if (inFlight) return inFlight;
+  }
+
   // Connect
-  const client = new RelayClient();
-  try {
-    await client.connect(target.port);
-    // Stamp session metadata on the client so listeners (relay-ask) can
-    // route bus events by sessionName without a roundtrip lookup.
-    client.sessionDir = target.cwd;
+  const connectPromise = (async (): Promise<RelayClient | null> => {
+    const client = new RelayClient();
     try {
-      const { getSessions } = await import("../sessions");
-      const match = getSessions().find(
-        (s) => s.dir === target.cwd && (!target.ppid || s.pid === target.ppid),
-      );
-      client.sessionName = match?.name;
-    } catch {
-      // Sessions module may not be initialized in tests — best-effort lookup.
-    }
-    if (targetKey) {
-      clientCache.set(targetKey, {
-        client,
-        port: target.port,
-        dir: target.cwd,
+      await client.connect(target.port);
+      // Stamp session metadata on the client so listeners (relay-ask) can
+      // route bus events by sessionName without a roundtrip lookup.
+      client.sessionDir = target.cwd;
+      try {
+        const { getSessions } = await import("../sessions");
+        const match = getSessions().find(
+          (s) =>
+            s.dir === target.cwd && (!target.ppid || s.pid === target.ppid),
+        );
+        client.sessionName = match?.name;
+      } catch {
+        // Sessions module may not be initialized in tests — best-effort lookup.
+      }
+      if (targetKey) {
+        // Disconnect any existing cached entry before replacing it (defense
+        // in depth — the in-flight guard should prevent concurrent
+        // overwrites, but cache entries can also be replaced when a relay
+        // restarts on a different port).
+        const old = clientCache.get(targetKey);
+        if (old) {
+          old.client.disconnect();
+        }
+        clientCache.set(targetKey, {
+          client,
+          port: target.port,
+          dir: target.cwd,
+        });
+      }
+      // Subscribe the global ask_remote handler if the bot has registered
+      // itself (initRelayAsk has been called). Safe to call before init:
+      // it no-ops.
+      attachAskRemoteToRelay(client);
+      info("relay: connected", {
+        cwd: target.cwd,
+        relayPort: target.port,
+        relayPid: target.pid,
+        claudePid: target.ppid,
+        sessionId: target.sessionId,
       });
+      return client;
+    } catch (err) {
+      warn("relay: connect failed", err, {
+        cwd: target.cwd,
+        relayPort: target.port,
+        relayPid: target.pid,
+        claudePid: target.ppid,
+        sessionId: target.sessionId,
+      });
+      return null;
     }
-    // Subscribe the global ask_remote handler if the bot has registered itself
-    // (initRelayAsk has been called). Safe to call before init: it no-ops.
-    attachAskRemoteToRelay(client);
-    info("relay: connected", {
-      cwd: target.cwd,
-      relayPort: target.port,
-      relayPid: target.pid,
-      claudePid: target.ppid,
-      sessionId: target.sessionId,
-    });
-    return client;
-  } catch (err) {
-    warn("relay: connect failed", err, {
-      cwd: target.cwd,
-      relayPort: target.port,
-      relayPid: target.pid,
-      claudePid: target.ppid,
-      sessionId: target.sessionId,
-    });
-    return null;
+  })();
+
+  if (targetKey) {
+    inFlightConnects.set(targetKey, connectPromise);
+  }
+  try {
+    return await connectPromise;
+  } finally {
+    if (targetKey && inFlightConnects.get(targetKey) === connectPromise) {
+      inFlightConnects.delete(targetKey);
+    }
   }
 }
 

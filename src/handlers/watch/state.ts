@@ -32,8 +32,21 @@ export interface TailDisplayState {
   toolUseRegistry?: Map<string, string>;
   /** Watch-only: last permission mode emitted (for dedup). */
   lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
-  /** Watch-only: suppress the next relay_reply text (PDF replaces it). */
-  suppressRelayReplyText?: boolean;
+  /**
+   * Per-turn delivery claims for the relay→tailer dedup protocol.
+   * Key: turnClaimKey(reply text). Value: expiry timestamp (ms).
+   * The TCP path claims a turn synchronously before its send; the tailer
+   * skips any turn whose key is present and unexpired. On TCP send failure
+   * the claim is released so the tailer can still deliver.
+   * See turn-claims.ts for the full protocol.
+   */
+  relayReplyClaims?: Map<string, number>;
+  /**
+   * True while a new text-bubble send is in flight (bus.send not yet
+   * resolved). Guards renderText against opening a second bubble while
+   * the first send is still queued on the bus rate-limiter.
+   */
+  textMsgPending?: boolean;
 }
 
 // ============== Watch State ==============

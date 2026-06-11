@@ -58,11 +58,16 @@ async function abortQuery(
   if (clearPendings && chatId !== undefined) {
     const cleared: string[] = [];
     const { pendingPlanFeedback } = await import("../callback");
-    const { pendingAskUserQuestionCustom } = await import("../streaming");
+    const { pendingAskUserQuestionCustom, pendingKey } =
+      await import("../streaming");
     const { pendingSettingsInput } = await import("../settings");
-    if (pendingPlanFeedback.delete(chatId)) cleared.push("plan");
-    if (pendingAskUserQuestionCustom.delete(chatId)) cleared.push("question");
-    if (pendingSettingsInput.delete(chatId)) cleared.push("settings");
+    // Pending-input maps are keyed by (chatId, threadId) so a prompt in one
+    // forum topic can't be cleared/consumed from another. Stop runs inside the
+    // same topic, so clear that topic's slot.
+    const pk = pendingKey(chatId, ctx.message?.message_thread_id);
+    if (pendingPlanFeedback.delete(pk)) cleared.push("plan");
+    if (pendingAskUserQuestionCustom.delete(pk)) cleared.push("question");
+    if (pendingSettingsInput.delete(pk)) cleared.push("settings");
     if (state) state.clearPendingPlanApproval();
     if (cleared.length) clearedNote = ` (cleared: ${cleared.join(", ")})`;
   }
@@ -321,12 +326,7 @@ export async function handleRetry(
 
   const { handleText } = await import("../text");
 
-  const fakeCtx = {
-    ...ctx,
-    message: { ...ctx.message, text: message },
-  } as Context;
-
-  await handleText(fakeCtx, sctx);
+  await handleText(ctx, sctx, message);
 }
 
 /**

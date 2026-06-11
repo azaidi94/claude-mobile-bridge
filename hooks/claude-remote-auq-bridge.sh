@@ -15,7 +15,7 @@ emit_allow() {
 JSON
 }
 
-TOOL=$(printf '%s' "$INPUT" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+TOOL=$(printf '%s' "$INPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tool_name",""))' 2>/dev/null || true)
 
 if [ "$TOOL" != "AskUserQuestion" ]; then
   emit_allow

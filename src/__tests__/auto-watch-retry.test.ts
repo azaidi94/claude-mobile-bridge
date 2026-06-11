@@ -37,6 +37,7 @@ mock.module("../sessions/tailer", () => ({
   },
   getExpectedJsonlPath: (cwd: string, id: string) =>
     `/expected/${cwd.replace(/[/.]/g, "-")}/${id}.jsonl`,
+  encodeProjectPath: (cwd: string) => cwd.replace(/[/.]/g, "-"),
   SessionTailer: class {
     constructor(
       public path: string,

@@ -1,7 +1,11 @@
 import "./ensure-test-env";
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createHmac } from "crypto";
-import { validateInitData, authMiddleware } from "../web/auth";
+import {
+  validateInitData,
+  authMiddleware,
+  timingSafeCompare,
+} from "../web/auth";
 import { Hono } from "hono";
 
 function makeInitData(
@@ -174,5 +178,107 @@ describe("validateInitData", () => {
     const ts = Math.floor(Date.now() / 1000) - 60;
     const initData = makeInitData("test-token", 42, ts);
     expect(validateInitData(initData, "test-token", 300)).toBe(true);
+  });
+});
+
+// Derive ids from the live config: bun auto-loads .env, so the allowlist may
+// be the developer's real TELEGRAM_ALLOWED_USERS rather than ensure-test-env's
+// fallback ("1"). ALLOWED_USERS is frozen at config import, so read it back.
+describe("authMiddleware allowlist", () => {
+  let savedToken: string | undefined;
+  let savedAuthBypass: string | undefined;
+  let savedLanBypass: string | undefined;
+
+  beforeEach(() => {
+    savedToken = process.env.TELEGRAM_BOT_TOKEN;
+    savedAuthBypass = process.env.WEB_AUTH_BYPASS;
+    savedLanBypass = process.env.WEB_AUTH_LAN_BYPASS;
+    process.env.TELEGRAM_BOT_TOKEN = "test-placeholder-token";
+    delete process.env.WEB_AUTH_BYPASS;
+    delete process.env.WEB_AUTH_LAN_BYPASS;
+  });
+
+  afterEach(() => {
+    if (savedToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = savedToken;
+    if (savedAuthBypass === undefined) delete process.env.WEB_AUTH_BYPASS;
+    else process.env.WEB_AUTH_BYPASS = savedAuthBypass;
+    if (savedLanBypass === undefined) delete process.env.WEB_AUTH_LAN_BYPASS;
+    else process.env.WEB_AUTH_LAN_BYPASS = savedLanBypass;
+  });
+
+  function buildInitDataApp() {
+    const app = new Hono<{ Bindings: { remoteAddr: string | null } }>();
+    app.use("*", authMiddleware);
+    app.get("/ok", (c) => c.json({ ok: true }));
+    return app;
+  }
+
+  async function fetchWithInitData(initData: string): Promise<Response> {
+    const app = buildInitDataApp();
+    return app.fetch(
+      new Request(`http://local/ok?initData=${encodeURIComponent(initData)}`),
+      { remoteAddr: "203.0.113.5" },
+    );
+  }
+
+  test("allows user in ALLOWED_USERS", async () => {
+    const { ALLOWED_USERS } = await import("../config");
+    const initData = makeInitData("test-placeholder-token", ALLOWED_USERS[0]!);
+    const res = await fetchWithInitData(initData);
+    expect(res.status).toBe(200);
+  });
+
+  test("rejects user NOT in ALLOWED_USERS", async () => {
+    const { ALLOWED_USERS } = await import("../config");
+    const outsider = Math.max(...ALLOWED_USERS, 0) + 1;
+    const initData = makeInitData("test-placeholder-token", outsider);
+    const res = await fetchWithInitData(initData);
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects initData with missing user field", async () => {
+    // Build initData without a user param
+    const ts = Math.floor(Date.now() / 1000);
+    const pairs = [`auth_date=${ts}`].sort();
+    const dataCheckString = pairs.join("\n");
+    const secretKey = createHmac("sha256", "WebAppData")
+      .update("test-placeholder-token")
+      .digest();
+    const hash = createHmac("sha256", secretKey)
+      .update(dataCheckString)
+      .digest("hex");
+    const initData = `${pairs.join("&")}&hash=${hash}`;
+    const res = await fetchWithInitData(initData);
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects initData with malformed user JSON", async () => {
+    const ts = Math.floor(Date.now() / 1000);
+    const pairs = [`auth_date=${ts}`, `user=not-valid-json`].sort();
+    const dataCheckString = pairs.join("\n");
+    const secretKey = createHmac("sha256", "WebAppData")
+      .update("test-placeholder-token")
+      .digest();
+    const hash = createHmac("sha256", secretKey)
+      .update(dataCheckString)
+      .digest("hex");
+    const initData = `${pairs.join("&")}&hash=${hash}`;
+    const res = await fetchWithInitData(initData);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("timingSafeCompare", () => {
+  test("returns true for equal strings", () => {
+    expect(timingSafeCompare("hello", "hello")).toBe(true);
+  });
+
+  test("returns false for different strings", () => {
+    expect(timingSafeCompare("hello", "world")).toBe(false);
+  });
+
+  test("returns false for strings of different lengths", () => {
+    expect(timingSafeCompare("short", "much-longer-string")).toBe(false);
   });
 });

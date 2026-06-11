@@ -18,6 +18,7 @@
 
 import { Hono } from "hono";
 import { WEBHOOK_SECRET } from "../../config";
+import { timingSafeCompare } from "../auth";
 import { getTopicBySession, getTopicStore } from "../../topics";
 import { getMessageBus } from "../../messaging";
 import { escapeHtml } from "../../formatting";
@@ -40,7 +41,7 @@ export function createWebhookRouter(): Hono {
 
     const auth = c.req.header("Authorization") ?? "";
     const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (provided !== WEBHOOK_SECRET) {
+    if (!timingSafeCompare(provided, WEBHOOK_SECRET)) {
       return c.json({ ok: false, error: "unauthorized" }, 401);
     }
 
@@ -78,7 +79,9 @@ export function createWebhookRouter(): Hono {
 
     const source = (body.source ?? "").trim();
     const header = source ? `🪝 <b>${escapeHtml(source)}:</b>\n` : "";
-    const content = header + text;
+    // When source is set the message is sent as HTML; escape user text to avoid
+    // Telegram rejecting or misinterpreting stray <, >, & characters.
+    const content = header + (source ? escapeHtml(text) : text);
 
     try {
       await getMessageBus().send({

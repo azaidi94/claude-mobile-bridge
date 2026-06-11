@@ -28,7 +28,7 @@ import { getMessageBus } from "../messaging";
  * Map of chat IDs awaiting a text reply for a settings field.
  * Consumed by text.ts before its normal routing.
  */
-export const pendingSettingsInput = new Map<number, "workdir">();
+export const pendingSettingsInput = new Map<string, "workdir">(); // pendingKey -> field
 
 export const TERMINAL_LABELS: Record<string, string> = {
   terminal: "Terminal.app",

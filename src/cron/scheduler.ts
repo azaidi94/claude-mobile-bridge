@@ -19,10 +19,12 @@ import { getJobs, markRun, type CronJob } from "./store";
 import { getTopicBySession } from "../topics";
 import { getMessageBus } from "../messaging";
 import { getRelayClient } from "../relay/discovery";
+import { escapeHtml } from "../formatting";
 import { info, warn, debug } from "../logger";
 
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
+let lastEvaluatedMinute = 0;
 
 /** Round a Date down to the start of its minute. */
 function toMinuteBoundary(d: Date): Date {
@@ -47,8 +49,8 @@ async function fireJob(
   const threadId = topic?.topicId;
 
   const headerLines = [
-    `⏰ <b>cron</b> <code>${job.schedule}</code>`,
-    `<i>${job.prompt}</i>`,
+    `⏰ <b>cron</b> <code>${escapeHtml(job.schedule)}</code>`,
+    `<i>${escapeHtml(job.prompt)}</i>`,
   ];
 
   let relayed = false;
@@ -116,6 +118,34 @@ export async function tick(api: Api, chatId: number, now: Date): Promise<void> {
   }
 }
 
+/**
+ * Evaluate all cron jobs for each minute boundary between lastMinute+1
+ * and nowMinute (capped at MAX_CATCHUP). Returns the new last evaluated
+ * minute. Exported for testability so tests can inject fake clock values.
+ */
+export async function evaluateMissedMinutes(
+  api: Api,
+  chatId: number,
+  nowMinute: number,
+  lastMinute: number,
+): Promise<number> {
+  const MAX_CATCHUP = 5;
+  for (
+    let m = lastMinute + 1;
+    m <= Math.min(nowMinute, lastMinute + MAX_CATCHUP);
+    m++
+  ) {
+    const minuteDate = new Date(m * 60_000);
+    await tick(api, chatId, minuteDate);
+  }
+  if (nowMinute > lastMinute + MAX_CATCHUP) {
+    warn(
+      `cron: ${nowMinute - lastMinute} minutes elapsed; skipping ${nowMinute - lastMinute - MAX_CATCHUP} missed minutes`,
+    );
+  }
+  return nowMinute;
+}
+
 /** Sleep until the next minute boundary, then run the supplied tick. */
 function msUntilNextMinute(now: Date = new Date()): number {
   return 60_000 - (now.getTime() % 60_000);
@@ -124,16 +154,26 @@ function msUntilNextMinute(now: Date = new Date()): number {
 export function startCronScheduler(api: Api, chatId: number): void {
   if (tickTimer) return;
   stopped = false;
+  lastEvaluatedMinute = Math.floor(Date.now() / 60_000);
   const schedule = () => {
     if (stopped) return;
-    tickTimer = setTimeout(async () => {
-      try {
-        await tick(api, chatId, new Date());
-      } catch (err) {
-        warn(`cron: tick failed: ${err}`);
-      }
-      schedule();
-    }, msUntilNextMinute());
+    tickTimer = setTimeout(
+      async () => {
+        try {
+          const nowMinute = Math.floor(Date.now() / 60_000);
+          lastEvaluatedMinute = await evaluateMissedMinutes(
+            api,
+            chatId,
+            nowMinute,
+            lastEvaluatedMinute,
+          );
+        } catch (err) {
+          warn(`cron: tick failed: ${err}`);
+        }
+        schedule();
+      },
+      Math.max(0, msUntilNextMinute()),
+    );
   };
   info(`cron: scheduler started (chatId=${chatId})`);
   schedule();

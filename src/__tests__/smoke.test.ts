@@ -87,6 +87,7 @@ mock.module("../security", () => ({
   rateLimiter: { check: () => [true] },
   isPathAllowed: mock(() => true),
   checkCommandSafety: mock(() => [true, ""]),
+  enforceToolSafety: async () => ({}),
 }));
 
 // Mock session module

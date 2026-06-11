@@ -23,6 +23,7 @@ import { STATE_DIR } from "../paths";
 // Imported from the leaf module (not the barrel) to avoid a topics→sessions
 // import cycle. Read-only: used to pin session names across restarts.
 import { getTopicStore } from "../topics/topic-store";
+import { dropSessionState } from "./session-state";
 
 const execAsync = promisify(exec);
 
@@ -53,6 +54,27 @@ let onChangeCallback: ((diff: SessionDiff) => void) | null = null;
 let watcherStarted = false;
 let debounceTimer: Timer | null = null;
 const DEBOUNCE_MS = 500;
+
+// Serialization state for refresh()
+let refreshInFlight: Promise<SessionDiff> | null = null;
+let refreshDirty = false;
+let refreshFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Test seam: override the real doRefresh() body for unit testing coalesce logic.
+let _doRefreshOverride: (() => Promise<SessionDiff>) | null = null;
+export function _setDoRefreshForTest(
+  fn: (() => Promise<SessionDiff>) | null,
+): void {
+  _doRefreshOverride = fn;
+  // Reset coalesce state so tests start clean, and cancel any pending follow-up
+  // timer left over from a previous test run.
+  if (refreshFollowUpTimer !== null) {
+    clearTimeout(refreshFollowUpTimer);
+    refreshFollowUpTimer = null;
+  }
+  refreshInFlight = null;
+  refreshDirty = false;
+}
 
 /**
  * Save active session name to disk for persistence across restarts.
@@ -326,6 +348,11 @@ async function scanSessions(): Promise<{
 
         const mtime = fileStat.mtime?.getTime() || 0;
 
+        // Cheap pre-filter: if there are no port files at all, stale JSONLs
+        // can be skipped without parsing (portBacked check needs parsed.cwd,
+        // but if portDirs is empty it would always be false anyway).
+        if (Date.now() - mtime > MAX_AGE_MS && portDirs.size === 0) continue;
+
         // Parse first so we can check the cwd against the port-file index;
         // an active port file is authoritative proof the session is alive,
         // even if its JSONL has been quiet for > MAX_AGE_MS (idle session).
@@ -560,9 +587,10 @@ export function assignPidsToSessions(
 }
 
 /**
- * Refresh the session cache. Returns diff of desktop sessions.
+ * Inner refresh implementation. Contains the real scan + cache-update logic.
+ * Call via the serialized `refresh()` wrapper — do not call directly.
  */
-async function refresh(): Promise<SessionDiff> {
+async function doRefresh(): Promise<SessionDiff> {
   // Snapshot current desktop sessions by name (unique). Capture id/pid so a
   // port-backed re-injection (below) can preserve them rather than blanking
   // them out — downstream code uses `session.id` as a lookup key.
@@ -738,6 +766,38 @@ async function refresh(): Promise<SessionDiff> {
 }
 
 /**
+ * Serialized refresh wrapper. Ensures only one doRefresh() runs at a time.
+ * Concurrent callers coalesce onto the in-flight promise. If a new call arrives
+ * while one is running, a single follow-up run is scheduled via a dirty flag.
+ */
+async function refresh(): Promise<SessionDiff> {
+  if (refreshInFlight) {
+    refreshDirty = true;
+    return refreshInFlight;
+  }
+  const doRun = async (): Promise<SessionDiff> => {
+    try {
+      const fn = _doRefreshOverride ?? doRefresh;
+      return await fn();
+    } finally {
+      refreshInFlight = null;
+      if (refreshDirty) {
+        refreshDirty = false;
+        // Defer so callers awaiting the current run get their result first
+        // before the follow-up scan starts (keeps scanCount assertions clean
+        // and avoids re-entering synchronously during the finally block).
+        refreshFollowUpTimer = setTimeout(() => {
+          refreshFollowUpTimer = null;
+          refresh().catch(() => {});
+        }, 0);
+      }
+    }
+  };
+  refreshInFlight = doRun();
+  return refreshInFlight;
+}
+
+/**
  * Start watching for session changes.
  */
 export async function startWatcher(
@@ -814,14 +874,25 @@ export function stopWatcher(): void {
     clearInterval(pollInterval);
     pollInterval = null;
   }
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  // A coalesced refresh may have scheduled a 0ms follow-up scan — cancel it
+  // so nothing mutates the session cache after stop.
+  if (refreshFollowUpTimer !== null) {
+    clearTimeout(refreshFollowUpTimer);
+    refreshFollowUpTimer = null;
+  }
+  refreshDirty = false;
   watcherStarted = false;
 }
 
 /**
  * Force immediate refresh.
  */
-export async function forceRefresh(): Promise<void> {
-  await refresh();
+export async function forceRefresh(): Promise<SessionDiff> {
+  return refresh();
 }
 
 /**
@@ -947,12 +1018,17 @@ export function updateSessionActivity(name: string): void {
 
 /**
  * Remove a session from the cache.
+ * Also drops the associated SessionState so recycled names don't inherit
+ * stale sessionId / pendingPlanApproval / listeners.
  */
 export function removeSession(name: string): boolean {
   const deleted = cache.sessions.delete(name);
-  if (deleted && cache.active === name) {
-    cache.active = null;
-    saveActiveSession();
+  if (deleted) {
+    dropSessionState(name);
+    if (cache.active === name) {
+      cache.active = null;
+      saveActiveSession();
+    }
   }
   return deleted;
 }

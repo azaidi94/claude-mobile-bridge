@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { timingSafeCompare } from "../auth";
 import {
   register,
   waitFor,
@@ -29,7 +30,7 @@ function checkAuth(c: {
   const secret = process.env.RELAY_AUQ_SECRET?.trim() || "";
   if (!secret) return false;
   const h = c.req.header("Authorization") ?? "";
-  return h === `Bearer ${secret}`;
+  return timingSafeCompare(h, `Bearer ${secret}`);
 }
 
 export function createAuqBridgeRouter(): Hono {

@@ -180,8 +180,10 @@ export async function checkInterrupt(
     info("interrupt: stopping active query");
     state.markInterrupt();
     await state.stop();
-    await Bun.sleep(100);
-    // Clear stopRequested so the new message can proceed
+    // Clear stopRequested immediately so the new message can proceed.
+    // The catch in runQueryStreaming suppresses the resulting AbortError
+    // via signal.aborted rather than the stopRequested flag, so there is
+    // no race between clearing here and the catch firing later.
     state.clearStopRequested();
   }
 

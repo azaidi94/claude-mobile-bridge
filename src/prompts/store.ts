@@ -57,7 +57,7 @@ async function load(): Promise<void> {
 function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    void persist();
+    persist().catch((err) => warn(`prompt-store: persist failed`, err));
   }, 250);
 }
 
@@ -66,6 +66,15 @@ async function persist(): Promise<void> {
   const tmp = `${storePath()}.tmp`;
   await writeFile(tmp, JSON.stringify(cache, null, 2));
   await rename(tmp, storePath());
+}
+
+/** Cancel pending debounced save and persist immediately. */
+export async function flush(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  await persist();
 }
 
 /** Return prompts visible in `scope`: unscoped + ones matching `scope`. */

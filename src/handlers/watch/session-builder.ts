@@ -305,7 +305,7 @@ export async function startWatchingSession(
 
   // Wire relay client for replies. The JSONL tailer normally handles text
   // display, but if the tailer is stale (e.g. after /clear) the TCP path
-  // is the only way the reply reaches us. suppressRelayReplyText prevents
+  // is the only way the reply reaches us. The turn-claim protocol prevents
   // the tailer from duplicating text that TCP already delivered.
   const relayClient = await getRelayClient({
     sessionId: sessionInfo.id,

@@ -9,9 +9,11 @@
  *   <a>,<b>,<c>     — comma-separated list (any of the above)
  *
  * Day-of-week: 0 = Sunday … 6 = Saturday (7 normalises to 0).
- * Month and DOW are evaluated as OR — matches if EITHER applies — only when
- * BOTH are unrestricted (the standard POSIX behaviour); when one is `*` we
- * just AND across all fields (less surprising for casual users).
+ *
+ * DOM/DOW follows POSIX semantics: when both the day-of-month and day-of-week
+ * fields are restricted (neither is a bare `*`), a time matches if EITHER
+ * field matches. When one or both is `*`, the usual AND across all fields
+ * applies.
  */
 
 export interface CronExpr {
@@ -20,6 +22,10 @@ export interface CronExpr {
   dom: Set<number>;
   month: Set<number>;
   dow: Set<number>;
+  /** True when the raw dom field was a literal `*`. */
+  domStar: boolean;
+  /** True when the raw dow field was a literal `*`. */
+  dowStar: boolean;
 }
 
 const RANGES = {
@@ -53,6 +59,9 @@ function expandField(
       if (!Number.isFinite(a) || !Number.isFinite(b)) {
         throw new Error(`cron: bad range "${rangePart}"`);
       }
+      if ((a as number) > (b as number)) {
+        throw new Error(`cron: reversed range "${rangePart}" (${a} > ${b})`);
+      }
       start = a as number;
       end = b as number;
     } else {
@@ -76,6 +85,9 @@ function expandField(
       out.add(normalised);
     }
   }
+  if (out.size === 0) {
+    throw new Error(`cron: field "${field}" expands to empty set`);
+  }
   return out;
 }
 
@@ -84,22 +96,33 @@ export function parseCron(spec: string): CronExpr {
   if (parts.length !== 5) {
     throw new Error(`cron: expected 5 fields, got ${parts.length}`);
   }
+  const domField = parts[2]!;
+  const dowField = parts[4]!;
   return {
     minute: expandField(parts[0]!, RANGES.minute),
     hour: expandField(parts[1]!, RANGES.hour),
-    dom: expandField(parts[2]!, RANGES.dom),
+    dom: expandField(domField, RANGES.dom),
     month: expandField(parts[3]!, RANGES.month),
-    dow: expandField(parts[4]!, RANGES.dow, true),
+    dow: expandField(dowField, RANGES.dow, true),
+    domStar: domField === "*",
+    dowStar: dowField === "*",
   };
 }
 
 /** True iff the cron expression matches the given Date (uses UTC fields). */
 export function matchesAt(expr: CronExpr, when: Date): boolean {
-  return (
-    expr.minute.has(when.getUTCMinutes()) &&
-    expr.hour.has(when.getUTCHours()) &&
-    expr.dom.has(when.getUTCDate()) &&
-    expr.month.has(when.getUTCMonth() + 1) &&
-    expr.dow.has(when.getUTCDay())
-  );
+  const minuteOk = expr.minute.has(when.getUTCMinutes());
+  const hourOk = expr.hour.has(when.getUTCHours());
+  const monthOk = expr.month.has(when.getUTCMonth() + 1);
+
+  if (!minuteOk || !hourOk || !monthOk) return false;
+
+  // POSIX: when both dom and dow are restricted (neither field was a bare
+  // `*`), a time matches if EITHER field matches.
+  if (!expr.domStar && !expr.dowStar) {
+    return expr.dom.has(when.getUTCDate()) || expr.dow.has(when.getUTCDay());
+  }
+
+  // Otherwise AND across both — any `*` field is trivially satisfied.
+  return expr.dom.has(when.getUTCDate()) && expr.dow.has(when.getUTCDay());
 }

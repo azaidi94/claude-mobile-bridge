@@ -132,4 +132,65 @@ describe("cron scheduler tick", () => {
     expect(relayCalls).toHaveLength(0);
     expect(busCalls).toHaveLength(0);
   });
+
+  it("escapes HTML in schedule and prompt headers", async () => {
+    const store = await freshStore();
+    await store.addJob({
+      schedule: "* * * * *",
+      sessionName: "proj",
+      prompt: "<script>alert(1)</script>",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick(
+      {} as import("grammy").Api,
+      -100,
+      new Date("2026-05-31T00:00:00Z"),
+    );
+    expect(busCalls).toHaveLength(1);
+    const content = busCalls[0]?.content ?? "";
+    expect(content).not.toContain("<script>");
+    expect(content).toContain("&lt;script&gt;");
+    expect(content).toContain("&lt;/script&gt;");
+  });
+});
+
+describe("evaluateMissedMinutes", () => {
+  it("ticks each missed minute up to the cap", async () => {
+    const store = await freshStore();
+    await store.addJob({
+      schedule: "* * * * *", // every minute
+      sessionName: "proj",
+      prompt: "ping",
+      enabled: true,
+    });
+    const { evaluateMissedMinutes } = await import("../cron/scheduler");
+    const fakeApi = {} as import("grammy").Api;
+
+    // Gap of 3 minutes: last=0, now=3
+    const result = await evaluateMissedMinutes(fakeApi, -100, 3, 0);
+    expect(result).toBe(3);
+    // Should have fired 3 times (once for minute 1, 2, 3)
+    expect(relayCalls).toHaveLength(3);
+    expect(busCalls).toHaveLength(3);
+  });
+
+  it("caps catch-up at 5 and returns current minute", async () => {
+    const store = await freshStore();
+    await store.addJob({
+      schedule: "* * * * *",
+      sessionName: "proj",
+      prompt: "ping",
+      enabled: true,
+    });
+    const { evaluateMissedMinutes } = await import("../cron/scheduler");
+    const fakeApi = {} as import("grammy").Api;
+
+    // Large gap (simulated sleep): last=0, now=20
+    const result = await evaluateMissedMinutes(fakeApi, -100, 20, 0);
+    expect(result).toBe(20);
+    // Capped at 5 fires (minutes 1-5 only), not 20
+    expect(relayCalls).toHaveLength(5);
+    expect(busCalls).toHaveLength(5);
+  });
 });

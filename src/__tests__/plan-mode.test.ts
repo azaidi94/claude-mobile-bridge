@@ -279,6 +279,7 @@ mock.module("../security", () => ({
     if (path.startsWith("/etc")) return false;
     return true;
   }),
+  enforceToolSafety: async () => ({}),
 }));
 
 // Mock utils
@@ -514,6 +515,7 @@ describe("plan-mode: plan callbacks", () => {
   test("handles edit action - prompts for feedback", async () => {
     const { handleCallback, pendingPlanFeedback } =
       await import("../handlers/callback");
+    const { pendingKey } = await import("../handlers/streaming");
     const ctx = createMockContext({
       callbackData: "plan:edit:123",
       chatId: 789,
@@ -540,7 +542,7 @@ describe("plan-mode: plan callbacks", () => {
     });
 
     // Should store pending feedback state
-    expect(pendingPlanFeedback.has(789)).toBe(true);
+    expect(pendingPlanFeedback.has(pendingKey(789, undefined))).toBe(true);
   });
 
   test("calls runPlanApproval on accept", async () => {
@@ -608,28 +610,30 @@ describe("plan-mode: pending feedback flow", () => {
 
   test("pendingPlanFeedback map stores chat ID and request ID", async () => {
     const { pendingPlanFeedback } = await import("../handlers/callback");
+    const { pendingKey } = await import("../handlers/streaming");
 
-    pendingPlanFeedback.set(123, "req-abc");
-    pendingPlanFeedback.set(456, "req-def");
+    pendingPlanFeedback.set(pendingKey(123, undefined), "req-abc");
+    pendingPlanFeedback.set(pendingKey(456, undefined), "req-def");
 
-    expect(pendingPlanFeedback.get(123)).toBe("req-abc");
-    expect(pendingPlanFeedback.get(456)).toBe("req-def");
+    expect(pendingPlanFeedback.get(pendingKey(123, undefined))).toBe("req-abc");
+    expect(pendingPlanFeedback.get(pendingKey(456, undefined))).toBe("req-def");
 
     // Cleanup
-    pendingPlanFeedback.delete(123);
-    pendingPlanFeedback.delete(456);
+    pendingPlanFeedback.delete(pendingKey(123, undefined));
+    pendingPlanFeedback.delete(pendingKey(456, undefined));
   });
 
   test("feedback clears pending state after processing", async () => {
     const { pendingPlanFeedback } = await import("../handlers/callback");
+    const { pendingKey } = await import("../handlers/streaming");
 
     // Simulate edit button press
-    pendingPlanFeedback.set(789, "req-123");
-    expect(pendingPlanFeedback.has(789)).toBe(true);
+    pendingPlanFeedback.set(pendingKey(789, undefined), "req-123");
+    expect(pendingPlanFeedback.has(pendingKey(789, undefined))).toBe(true);
 
     // Simulate text handler processing feedback (manual simulation)
-    pendingPlanFeedback.delete(789);
-    expect(pendingPlanFeedback.has(789)).toBe(false);
+    pendingPlanFeedback.delete(pendingKey(789, undefined));
+    expect(pendingPlanFeedback.has(pendingKey(789, undefined))).toBe(false);
   });
 });
 
@@ -751,6 +755,7 @@ describe("plan-mode: integration scenarios", () => {
   test("full flow: ExitPlanMode -> Edit -> feedback", async () => {
     const { handleCallback, pendingPlanFeedback } =
       await import("../handlers/callback");
+    const { pendingKey } = await import("../handlers/streaming");
 
     mockActiveSession = {
       name: "plan-session",
@@ -776,10 +781,10 @@ describe("plan-mode: integration scenarios", () => {
     expect(editCtx.editMessageText).toHaveBeenCalledWith(
       "✏️ Reply with your feedback for the plan:",
     );
-    expect(pendingPlanFeedback.has(789)).toBe(true);
+    expect(pendingPlanFeedback.has(pendingKey(789, undefined))).toBe(true);
 
     // Cleanup
-    pendingPlanFeedback.delete(789);
+    pendingPlanFeedback.delete(pendingKey(789, undefined));
   });
 });
 

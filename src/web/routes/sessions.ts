@@ -265,7 +265,10 @@ export function createSessionsRouter(): Hono {
     }
 
     if (found?.source === "desktop") {
-      sendWebRelay(found, body.text, emit);
+      sendWebRelay(found, body.text, emit).catch(() => {
+        emit("text", "⚠ relay send failed");
+        emit("done", "");
+      });
     } else {
       const state = getSessionState(busKey);
       if (found) state.loadFromRegistry(found);

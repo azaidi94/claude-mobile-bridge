@@ -101,4 +101,38 @@ describe("CdpClient", () => {
     ws.close();
     await expect(promise).rejects.toThrow("WebSocket closed");
   });
+
+  it("rejects immediately when sendCommand is called on a closed socket", async () => {
+    const ws = new MockWs();
+    const client = new CdpClient(ws);
+    ws.close(); // readyState → 3 (CLOSED)
+
+    await expect(
+      client.sendCommand("Runtime.evaluate", { expression: "1+1" }),
+    ).rejects.toThrow("WebSocket not open");
+  });
+
+  it("rejects immediately when sendCommand is called on a closing socket", async () => {
+    const ws = new MockWs();
+    const client = new CdpClient(ws);
+    ws.readyState = 2; // CLOSING
+
+    await expect(
+      client.sendCommand("Runtime.evaluate", { expression: "1+1" }),
+    ).rejects.toThrow("WebSocket not open");
+  });
+
+  it("drains pending requests on post-connect ws error (onerror not clobbered)", async () => {
+    const ws = new MockWs();
+    const client = new CdpClient(ws);
+    const promise = client.sendCommand("Runtime.evaluate", {
+      expression: "slow",
+    });
+
+    // Simulate a post-connect error — the drain handler must still fire.
+    // The constructor installed ws.onerror = drainPending; verify it
+    // wasn't clobbered (connectCdpTarget must restore it after open).
+    ws.onerror?.call(ws, new Error("network failure"));
+    await expect(promise).rejects.toThrow("WebSocket error");
+  });
 });

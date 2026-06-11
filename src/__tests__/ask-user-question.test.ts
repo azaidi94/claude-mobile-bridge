@@ -132,6 +132,7 @@ mock.module("../security", () => ({
   },
   checkCommandSafety: mock(() => [true, ""]),
   isPathAllowed: mock(() => true),
+  enforceToolSafety: async () => ({}),
 }));
 
 // Mock utils
@@ -479,15 +480,17 @@ describe("AskUserQuestion: state management", () => {
   });
 
   test("pendingAskUserQuestionCustom tracks custom input state", async () => {
-    const { pendingAskUserQuestionCustom } =
+    const { pendingAskUserQuestionCustom, pendingKey } =
       await import("../handlers/streaming");
 
-    pendingAskUserQuestionCustom.set(789, "req-456");
+    pendingAskUserQuestionCustom.set(pendingKey(789, undefined), "req-456");
 
-    expect(pendingAskUserQuestionCustom.get(789)).toBe("req-456");
+    expect(pendingAskUserQuestionCustom.get(pendingKey(789, undefined))).toBe(
+      "req-456",
+    );
 
     // Cleanup
-    pendingAskUserQuestionCustom.delete(789);
+    pendingAskUserQuestionCustom.delete(pendingKey(789, undefined));
   });
 
   test("answers accumulate across questions", async () => {
@@ -594,8 +597,11 @@ describe("AskUserQuestion: callback handling", () => {
 
   test("handles custom callback", async () => {
     const { handleCallback } = await import("../handlers/callback");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
-      await import("../handlers/streaming");
+    const {
+      pendingAskUserQuestions,
+      pendingAskUserQuestionCustom,
+      pendingKey,
+    } = await import("../handlers/streaming");
 
     // Setup pending state
     pendingAskUserQuestions.set("req-789", {
@@ -622,7 +628,9 @@ describe("AskUserQuestion: callback handling", () => {
     ).toBe(true);
 
     // Should store custom input state
-    expect(pendingAskUserQuestionCustom.get(789)).toBe("req-789");
+    expect(pendingAskUserQuestionCustom.get(pendingKey(789, undefined))).toBe(
+      "req-789",
+    );
 
     // Cleanup
     pendingAskUserQuestions.clear();
@@ -747,8 +755,11 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("captures custom text as answer", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
-      await import("../handlers/streaming");
+    const {
+      pendingAskUserQuestions,
+      pendingAskUserQuestionCustom,
+      pendingKey,
+    } = await import("../handlers/streaming");
 
     // Setup pending custom input state
     pendingAskUserQuestions.set("req-custom", {
@@ -759,7 +770,7 @@ describe("AskUserQuestion: custom text input", () => {
       chatId: 789,
       isPlanMode: false,
     });
-    pendingAskUserQuestionCustom.set(789, "req-custom");
+    pendingAskUserQuestionCustom.set(pendingKey(789, undefined), "req-custom");
 
     const ctx = createMockContext({
       messageText: "My custom answer",
@@ -772,7 +783,9 @@ describe("AskUserQuestion: custom text input", () => {
     expect(ctx._replies.some((r) => r.text.includes("Answered"))).toBe(true);
 
     // Custom input state should be cleared
-    expect(pendingAskUserQuestionCustom.has(789)).toBe(false);
+    expect(pendingAskUserQuestionCustom.has(pendingKey(789, undefined))).toBe(
+      false,
+    );
 
     // Cleanup
     pendingAskUserQuestions.clear();
@@ -781,8 +794,11 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("advances to next question with custom answer", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestions, pendingAskUserQuestionCustom } =
-      await import("../handlers/streaming");
+    const {
+      pendingAskUserQuestions,
+      pendingAskUserQuestionCustom,
+      pendingKey,
+    } = await import("../handlers/streaming");
 
     // Setup multi-question state
     pendingAskUserQuestions.set("req-custom-multi", {
@@ -796,7 +812,10 @@ describe("AskUserQuestion: custom text input", () => {
       chatId: 789,
       isPlanMode: false,
     });
-    pendingAskUserQuestionCustom.set(789, "req-custom-multi");
+    pendingAskUserQuestionCustom.set(
+      pendingKey(789, undefined),
+      "req-custom-multi",
+    );
 
     const ctx = createMockContext({
       messageText: "Custom for Q1",
@@ -820,11 +839,11 @@ describe("AskUserQuestion: custom text input", () => {
 
   test("handles expired custom input state", async () => {
     const { handleText } = await import("../handlers/text");
-    const { pendingAskUserQuestionCustom } =
+    const { pendingAskUserQuestionCustom, pendingKey } =
       await import("../handlers/streaming");
 
     // Setup expired state (no matching question state)
-    pendingAskUserQuestionCustom.set(789, "req-expired");
+    pendingAskUserQuestionCustom.set(pendingKey(789, undefined), "req-expired");
 
     const ctx = createMockContext({
       messageText: "Late answer",

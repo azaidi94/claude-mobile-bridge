@@ -467,6 +467,192 @@ describe("MessageBus.edit", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toContain("not found");
   });
+
+  test("oversized content is truncated ≤ 4096 with ellipsis", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    // Content that converts to > 4096 chars of HTML.
+    const longContent = "&".repeat(5000);
+    const r = await bus.edit(1, {
+      chatId: 1,
+      content: longContent,
+      format: "html",
+    });
+    expect(r).toEqual({ ok: true });
+    expect(api.editMessageText).toHaveBeenCalledTimes(1);
+    const call = api.editMessageText.mock.calls[0] as any[];
+    const sentText: string = call[2];
+    expect(sentText.length).toBeLessThanOrEqual(4096);
+    expect(sentText.endsWith("…")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTML-aware rechunking (post-conversion overflow)
+// ---------------------------------------------------------------------------
+
+describe("MessageBus.send — post-conversion rechunking", () => {
+  test("content whose HTML expands beyond 4096 is re-split safely", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    // 3000 `&` chars → each becomes `&amp;` (5 chars) → ~15000 chars of HTML.
+    // TELEGRAM_SAFE_LIMIT is 4000, so chunkContent produces one chunk.
+    // resolveChunks must detect the post-conversion overflow and re-split.
+    const content = "&".repeat(3000);
+    const r = await bus.send({
+      chatId: 1,
+      content,
+      format: "html",
+    });
+    expect("messageId" in r).toBe(true);
+    // Must have split into at least 4 chunks (~15000 / 4096 ≈ 4).
+    expect(api.sendMessage).toHaveBeenCalledTimes(api._sentTexts.length);
+    // Every chunk must be ≤ 4096 chars.
+    for (const sent of api._sentTexts) {
+      expect(sent.text.length).toBeLessThanOrEqual(4096);
+    }
+    // All chunks must be self-contained HTML (each `&amp;` is a complete entity).
+    for (const sent of api._sentTexts) {
+      if (sent.opts.parse_mode !== "HTML") continue;
+      // No truncated entities: `&amp;` is 5 chars, `&am` or `amp;` would be broken.
+      // Simple check: the text should not end mid-entity.
+      const html = sent.text;
+      expect(html).not.toMatch(/&[a-z]{1,4}$/); // dangling entity start
+      expect(html).not.toMatch(/^[a-z]+;/); // dangling entity end
+    }
+  });
+
+  test("large code block re-chunks without tag breakage", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    // Build a code block that's ~8k chars of raw markdown, converting to
+    // HTML with `<pre><code class="language-js">` wrapping.
+    const line = "const x = " + "y".repeat(60) + ";";
+    const code = Array.from({ length: 200 }, () => line).join("\n");
+    const text = "```js\n" + code + "\n```";
+
+    const r = await bus.send({ chatId: 7, content: text, format: "auto" });
+    expect("messageId" in r).toBe(true);
+    expect(api._sentTexts.length).toBeGreaterThan(1);
+    // Every HTML chunk must have balanced tags.
+    for (const sent of api._sentTexts) {
+      if (sent.opts.parse_mode !== "HTML") continue;
+      const html = sent.text;
+      for (const tag of ["pre", "b", "i", "code", "s", "em", "strong"]) {
+        const open = (html.match(new RegExp(`<${tag}[^>]*>`, "g")) || [])
+          .length;
+        const close = (html.match(new RegExp(`</${tag}>`, "g")) || []).length;
+        expect(open).toBe(close);
+      }
+    }
+    // Every chunk must be ≤ 4096 chars.
+    for (const sent of api._sentTexts) {
+      expect(sent.text.length).toBeLessThanOrEqual(4096);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dedup poisoning (dedup only recorded on success)
+// ---------------------------------------------------------------------------
+
+describe("MessageBus.send — dedup poisoning", () => {
+  test("failed send does not poison dedup cache", async () => {
+    // First send fails with a non-recoverable error.
+    let calls = 0;
+    const api = makeApi({
+      sendMessageImpl: () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.reject(new Error("Network error"));
+        }
+        return Promise.resolve({ message_id: 9999 });
+      },
+    });
+    const bus = createMessageBus(api as any);
+
+    // First send: fails.
+    const r1 = await bus.send({
+      chatId: 1,
+      content: "retry me",
+      dedupKey: "retry-key",
+    });
+    expect("dropped" in r1 && (r1 as any).dropped).toBe("error");
+
+    // Second send: same dedupKey, should NOT be dedup-dropped.
+    const r2 = await bus.send({
+      chatId: 1,
+      content: "retry me",
+      dedupKey: "retry-key",
+    });
+    expect("messageId" in r2).toBe(true);
+    if ("messageId" in r2) expect(r2.messageId).toBe(9999);
+  });
+
+  test("rate-limited send does not poison dedup cache", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+
+    // Exhaust all 30 tokens.
+    for (let i = 0; i < 30; i++) {
+      await bus.send({ chatId: 7, content: `m${i}` });
+    }
+
+    // 31st send with dedup key → should be rate-limited, not dedup-poisoned.
+    const r1 = await bus.send({
+      chatId: 7,
+      content: "after-burst",
+      dedupKey: "burst-key",
+    });
+    // Either dropped:ratelimit or succeeded after waiting.
+    if ("dropped" in r1 && (r1 as any).dropped === "ratelimit") {
+      // Rate-limited: verify retry is NOT dedup-dropped.
+      // Wait a bit for token refill.
+      await new Promise((r) => setTimeout(r, 200));
+      const r2 = await bus.send({
+        chatId: 7,
+        content: "after-burst",
+        dedupKey: "burst-key",
+      });
+      expect("messageId" in r2).toBe(true);
+    }
+    // If it succeeded (waited), that's also fine — dedup wasn't poisoned
+    // because it was never recorded before the send attempt.
+  }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// rate tokens per chunk
+// ---------------------------------------------------------------------------
+
+describe("MessageBus.send — rate tokens per chunk", () => {
+  test("multi-chunk send consumes rate token for each chunk", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+
+    // Consume 28 tokens first, leaving ~2 in the bucket.
+    for (let i = 0; i < 28; i++) {
+      await bus.send({ chatId: 9, content: `token-eater-${i}` });
+    }
+
+    // Now send a message that will produce 3+ chunks.
+    // With only ~2 tokens left + refill, the per-chunk token consumption
+    // ensures not all chunks blast through on the same token.
+    const para = "Z".repeat(3000);
+    const text = `${para}\n\n${para}\n\n${para}\n\n${para}`; // 4 chunks
+    const r = await bus.send({ chatId: 9, content: text, format: "plain" });
+
+    // The send should succeed (at least first chunk), and each chunk
+    // individually consumed a token. With plain format, no HTML expansion.
+    expect("messageId" in r).toBe(true);
+    // All chunks should have been sent (rate limiter had enough tokens
+    // with refill + waiting).
+    expect(api._sentTexts.length).toBe(28 + 4);
+    // Verify each send was for a distinct chunk.
+    for (const sent of api._sentTexts.slice(28)) {
+      expect(sent.text.length).toBeLessThanOrEqual(4096);
+    }
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------

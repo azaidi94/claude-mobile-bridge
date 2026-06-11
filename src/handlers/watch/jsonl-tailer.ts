@@ -307,6 +307,7 @@ export function setupIdDriftDetection(
     // Claim synchronously so a concurrent drift tick on a sibling watch sees
     // this id as taken before its own guard runs.
     const previousId = watchState.sessionId;
+    const previousSpeculative = watchState.speculativeTailerPath === true;
     watchState.sessionId = newId;
     const newPath = await findSessionJsonlPath(newId);
     if (!newPath) {
@@ -333,6 +334,15 @@ export function setupIdDriftDetection(
     // transcript into TG. LIVE-only: the cost is missing the first user
     // prompt on a fresh /clear (lands on disk before the 5s drift tick).
     watchState.tailer = newTailer;
+    // Clear the speculative flag and, if the interval was running at the
+    // aggressive 1s cadence because of it, restart it at the normal 5s cadence.
+    // Without this, the next speculative-branch tick (~284) sees the stale flag
+    // and performs a redundant rebind that stops the fresh tailer at EOF.
+    watchState.speculativeTailerPath = false;
+    if (previousSpeculative && watchState.idCheckInterval) {
+      clearInterval(watchState.idCheckInterval);
+      setupIdDriftDetection(botApi, watchState);
+    }
     await newTailer.start();
     const wasSpawnSeed = watchState.suppressNextIdChangeNotice === true;
     watchState.suppressNextIdChangeNotice = false;

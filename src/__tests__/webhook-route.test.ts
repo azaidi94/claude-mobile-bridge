@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 mock.module("../config", () => ({
   WEBHOOK_SECRET: "test-secret",
   TELEGRAM_TOKEN: "test-token",
+  ALLOWED_USERS: [1],
 }));
 
 interface BusCall {

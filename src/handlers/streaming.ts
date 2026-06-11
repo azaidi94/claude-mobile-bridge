@@ -149,7 +149,20 @@ export async function sendFileToTelegram(
 
 // State maps for AskUserQuestion
 export const pendingAskUserQuestions = new Map<string, AskUserQuestionState>();
-export const pendingAskUserQuestionCustom = new Map<number, string>(); // chatId -> requestId
+// Keyed by (chatId, threadId) so forum topics don't hijack each other's pending
+// custom-text captures. Same composite-key contract as relay-ask.ts.
+export const pendingAskUserQuestionCustom = new Map<string, string>(); // pendingKey -> requestId
+
+/**
+ * Composite key for pending-input maps. Treats undefined threadId (DM mode)
+ * as 0 so the key is stable across set/get/delete sites.
+ */
+export function pendingKey(
+  chatId: number,
+  threadId: number | undefined,
+): string {
+  return `${chatId}|${threadId ?? 0}`;
+}
 
 /**
  * Create inline keyboard for ask_user options.
@@ -424,7 +437,7 @@ export function createStatusCallback(
             // HTML parse failed, fall back to plain text
             debug(`html reply fallback: ${htmlError}`);
             // TODO(phase-2 status-msg): same as above.
-            const msg = await ctx.reply(formatted, {
+            const msg = await ctx.reply(display, {
               message_thread_id: threadId,
               disable_notification: true,
             });
@@ -460,7 +473,7 @@ export function createStatusCallback(
               await ctx.api.editMessageText(
                 msg.chat.id,
                 msg.message_id,
-                formatted,
+                display,
               );
               state.lastContent.set(segmentId, formatted);
             } catch (editError) {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "os";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 let testDir: string;
@@ -67,5 +67,18 @@ describe("prompt store", () => {
     const p = await m.addPrompt({ label: "x", text: "hello" });
     expect((await m.getById(p.id))?.text).toBe("hello");
     expect(await m.getById("nope")).toBeUndefined();
+  });
+
+  it("flush persists immediately without waiting for debounce", async () => {
+    const m = await fresh();
+    await m.addPrompt({ label: "immediate", text: "flush-test" });
+    // Call flush to cancel the debounce timer and write now
+    await m.flush();
+
+    // Read the file directly to confirm it was written
+    const raw = readFileSync(process.env.PROMPTS_STORE_PATH!, "utf-8");
+    const parsed = JSON.parse(raw);
+    expect(parsed.prompts).toHaveLength(1);
+    expect(parsed.prompts[0].label).toBe("immediate");
   });
 });

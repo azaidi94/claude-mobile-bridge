@@ -23,7 +23,7 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { getCurrentModelDisplayName } from "./session";
-import { error as logError, info, warn } from "./logger";
+import { error as logError, info, warn, debug } from "./logger";
 import {
   handleStart,
   handleHelp,
@@ -162,7 +162,15 @@ export function createBot(options: BotOptions): Bot {
   // Register chat IDs of allowed users for proactive notifications
   bot.use(async (ctx, next) => {
     const userId = ctx.from?.id;
-    if (userId && ctx.chat?.id && isAuthorized(userId, ALLOWED_USERS)) {
+
+    // Central auth gate — silently drop unauthorised users before any
+    // processing. No reply (don't confirm bot existence to strangers).
+    if (userId === undefined || !isAuthorized(userId, ALLOWED_USERS)) {
+      debug("bot: dropped update from unauthorised user", { userId });
+      return;
+    }
+
+    if (ctx.chat?.id) {
       const isNew = !getChatIds().has(ctx.chat.id);
       registerChatId(ctx.chat.id);
 

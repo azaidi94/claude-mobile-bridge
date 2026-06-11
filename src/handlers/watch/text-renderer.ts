@@ -12,6 +12,7 @@ import { debug } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import type { TailEvent } from "../../sessions/tailer";
 import { busStubMessage, type TailDisplayState } from "./state";
+import { checkAndConsumeClaim, turnClaimKey } from "./turn-claims";
 
 /** Render a streaming text chunk. Called for `event.type === "text"`. */
 export function renderText(
@@ -50,7 +51,15 @@ export function renderText(
   // edit-while-streaming math stays consistent.
   const rawDisplay = display;
 
-  if (!state.currentTextMsg) {
+  if (!state.currentTextMsg && !state.textMsgPending) {
+    // Guard: set synchronously before the async send so a second renderText
+    // call arriving before the send resolves sees the flag and falls through
+    // to the edit branch (or skips) instead of opening a second bubble.
+    state.textMsgPending = true;
+    // Snapshot of what this send covers — renders that arrive while the send
+    // is in flight hit neither branch below, so on resolve we compare and
+    // catch up with an edit if content accumulated in the meantime.
+    const sentSource = state.currentTextContent;
     bus
       .send({
         chatId,
@@ -60,16 +69,42 @@ export function renderText(
         silent: true,
       })
       .then((r) => {
+        state.textMsgPending = false;
         if (!("messageId" in r)) {
           debug(`tail text create dropped: ${r.dropped}`);
           return;
         }
         const stub = busStubMessage(chatId, r.messageId);
-        state.currentTextMsg = stub;
         trackProgress(stub);
+        if (state.segmentDone) {
+          // Segment was reset while the send was in flight — don't resurrect
+          // the stale bubble into the next segment.
+          return;
+        }
+        state.currentTextMsg = stub;
+        if (state.currentTextContent !== sentSource) {
+          const catchUp =
+            state.currentTextContent.length > TELEGRAM_SAFE_LIMIT
+              ? state.currentTextContent.slice(0, TELEGRAM_SAFE_LIMIT) + "..."
+              : state.currentTextContent;
+          bus
+            .edit(stub.message_id, {
+              chatId,
+              threadId,
+              content: catchUp,
+              format: "auto",
+            })
+            .then((r2) => {
+              if (!r2.ok) debug(`tail text catch-up edit not ok: ${r2.reason}`);
+            })
+            .catch((err) => debug(`tail text catch-up edit: ${err}`));
+        }
       })
-      .catch((err) => debug(`tail text create: ${err}`));
-  } else {
+      .catch((err) => {
+        state.textMsgPending = false;
+        debug(`tail text create: ${err}`);
+      });
+  } else if (state.currentTextMsg) {
     bus
       .edit(state.currentTextMsg.message_id, {
         chatId,
@@ -111,13 +146,18 @@ export function renderRelayReply(
         format: "auto",
       })
       .catch(() => {});
-  } else if (state.suppressRelayReplyText) {
-    // Own-origin and TCP's onReply already fired. Reset the flag, don't
-    // duplicate.
-    state.suppressRelayReplyText = false;
   } else {
-    // Own-origin but TCP didn't deliver (failure or race). Tailer is the
-    // fallback so the Telegram topic still sees the reply.
+    // Own-origin: check if the TCP relay path already claimed this turn.
+    // checkAndConsumeClaim removes the entry so the next turn with the same
+    // text is not incorrectly suppressed, and so a failed-then-released
+    // claim never blocks delivery.
+    const claims = state.relayReplyClaims;
+    if (claims && checkAndConsumeClaim(claims, turnClaimKey(event.content))) {
+      // TCP path claimed it and its send is in flight (or succeeded).
+      return;
+    }
+    // TCP didn't claim this turn (failure, race, or not wired) — tailer
+    // is the fallback so the Telegram topic still sees the reply.
     bus
       .send({
         chatId,
@@ -145,6 +185,7 @@ export function resetDisplaySegment(
     state.currentToolMsg = null;
   }
   state.currentTextMsg = null;
+  state.textMsgPending = false;
   state.currentTextContent = "";
   state.segmentDone = true;
 }

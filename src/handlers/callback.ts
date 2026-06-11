@@ -29,6 +29,7 @@ import {
   pendingAskUserQuestions,
   pendingAskUserQuestionCustom,
   sendPlanContent,
+  pendingKey,
 } from "./streaming";
 import {
   setActiveSession,
@@ -98,8 +99,9 @@ function busReply(
   });
 }
 
-// Track pending plan feedback by chat ID (exported for text.ts)
-export const pendingPlanFeedback = new Map<number, string>(); // chatId -> requestId
+// Track pending plan feedback by (chatId, threadId) — composite key prevents
+// sibling forum topics from consuming each other's replies.
+export const pendingPlanFeedback = new Map<string, string>(); // pendingKey -> requestId
 
 /**
  * Handle callback queries from inline keyboards.
@@ -109,6 +111,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
   const callbackData = ctx.callbackQuery?.data;
+  const threadId = ctx.callbackQuery?.message?.message_thread_id;
 
   if (!userId || !chatId || !callbackData) {
     await ctx.answerCallbackQuery();
@@ -174,6 +177,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
     const username = ctx.from?.username || "telegram";
+    // Acknowledge immediately — TG callback queries expire in ~15-30 s and
+    // sendViaRelay can block up to RELAY_RESPONSE_TIMEOUT_MS (300 s).
+    await ctx.answerCallbackQuery({ text: `▶ ${preview}` }).catch(() => {});
     const { sendViaRelay } = await import("./relay-bridge");
     const result = await sendViaRelay(
       ctx,
@@ -186,12 +192,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
       sctx,
     );
     if (result === "delivered") {
-      await ctx.answerCallbackQuery({ text: `▶ ${preview}` });
       await auditLog(userId, username, "PROMPT_TAP", saved.id, preview);
     } else {
-      await ctx.answerCallbackQuery({
-        text: `❌ ${result === "unavailable" ? "session offline" : "send failed"}`,
-      });
+      await busReply(
+        ctx,
+        `❌ ${result === "unavailable" ? "session offline" : "send failed"}`,
+      );
     }
     return;
   }
@@ -497,7 +503,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     if (action === "edit") {
       // Store pending feedback state
-      pendingPlanFeedback.set(chatId, requestId);
+      pendingPlanFeedback.set(pendingKey(chatId, threadId), requestId);
       await ctx.editMessageText("✏️ Reply with your feedback for the plan:");
       await ctx.answerCallbackQuery({ text: "Send your feedback" });
       return;
@@ -627,7 +633,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
     if (action === "custom") {
       // Store pending custom input
-      pendingAskUserQuestionCustom.set(chatId, requestId);
+      pendingAskUserQuestionCustom.set(pendingKey(chatId, threadId), requestId);
       const currentQ = pending.questions[pending.currentIndex]!;
       await ctx.editMessageText(
         `✏️ Type your answer:\n\n<i>${currentQ.question}</i>`,
@@ -735,7 +741,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   // Settings panel callbacks: set:<action>[:<field>[:<value>]]
   if (callbackData.startsWith("set:")) {
-    await handleSettingsCallback(ctx, chatId, callbackData);
+    await handleSettingsCallback(ctx, chatId, callbackData, threadId);
     return;
   }
 
@@ -792,6 +798,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   const requestId = parts[1]!;
   const optionIndex = parseInt(parts[2]!, 10);
+
+  // Validate requestId before using it in a filesystem path. It is minted
+  // as Date.now() (digits only) — anything else is forged or corrupted.
+  if (!/^\d+$/.test(requestId)) {
+    await ctx.answerCallbackQuery({ text: "Invalid request" });
+    return;
+  }
 
   // 7. Load request file
   const requestFile = `/tmp/ask-user-${requestId}.json`;
@@ -931,6 +944,7 @@ export async function handleSettingsCallback(
   ctx: Context,
   chatId: number,
   data: string,
+  threadId?: number,
 ): Promise<void> {
   const parts = data.split(":");
   const action = parts[1];
@@ -959,7 +973,7 @@ export async function handleSettingsCallback(
     }
 
     if (field === "workdir") {
-      pendingSettingsInput.set(chatId, "workdir");
+      pendingSettingsInput.set(pendingKey(chatId, threadId), "workdir");
       await ctx.editMessageText(
         `📁 <b>Reply with absolute path</b> (or <code>/cancel</code>):\n\nCurrent: <code>${escapeHtml(
           getWorkingDir(),
@@ -1083,7 +1097,7 @@ export async function handleSettingsCallback(
       await saveSetting({ terminal: undefined });
     } else if (field === "workdir") {
       await saveSetting({ workingDir: undefined });
-      pendingSettingsInput.delete(chatId);
+      pendingSettingsInput.delete(pendingKey(chatId, threadId));
     } else if (field === "autowatch") {
       await saveSetting({ autoWatchOnSpawn: undefined });
     } else if (field === "pinnedstatus") {
@@ -1104,7 +1118,7 @@ export async function handleSettingsCallback(
   }
 
   if (action === "back") {
-    pendingSettingsInput.delete(chatId);
+    pendingSettingsInput.delete(pendingKey(chatId, threadId));
     await rerenderSettingsPanel(ctx);
     await ctx.answerCallbackQuery();
     return;

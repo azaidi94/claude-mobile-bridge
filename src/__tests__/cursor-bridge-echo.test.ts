@@ -152,3 +152,96 @@ describe("CursorBridge echo suppression", () => {
     });
   });
 });
+
+describe("CursorBridge seenMessages TTL dedup", () => {
+  // Use a tiny TTL so we can test expiry without real 60s waits.
+  const TINY_TTL_MS = 100;
+
+  function makeMockCdp() {
+    const notificationHandlers: MockNotificationHandler[] = [];
+    return {
+      sendCommand: mock(async (method: string) => {
+        if (method === "Runtime.evaluate") {
+          return { result: { type: "object", value: [] as string[] } };
+        }
+        return {};
+      }),
+      onNotification: mock(
+        (
+          method: string,
+          handler: (params: Record<string, unknown>) => void,
+        ) => {
+          notificationHandlers.push({ method, handler });
+          return () => {};
+        },
+      ),
+      close: mock(() => {}),
+      simulateBinding: (name: string, payload: string) => {
+        for (const { method, handler } of notificationHandlers) {
+          if (method === "Runtime.bindingCalled") handler({ name, payload });
+        }
+      },
+    };
+  }
+
+  async function setupWithTtl() {
+    const bus = new SessionEventBus();
+    const cdp = makeMockCdp();
+    const received: SseEvent[] = [];
+    bus.subscribe(SESSION, (e) => received.push(e));
+    const bridge = new CursorBridge({
+      sessionName: SESSION,
+      sessionDir: "/tmp",
+      cdpClient: cdp as never,
+      bus,
+      seenMessagesTtlMs: TINY_TTL_MS,
+    });
+    await bridge.start();
+    received.length = 0;
+    return { bus, cdp, bridge, received };
+  }
+
+  function userEmits(received: SseEvent[]) {
+    return received.filter(
+      (e) => e.type === "user_message" && e.source === "cursor",
+    );
+  }
+
+  it("deduplicates an immediate duplicate fire (within TTL window)", () => {
+    // This tests that re-renders within the TTL window are suppressed.
+    // Without the TTL, this test would also pass (Set-based dedup). But
+    // with the TTL in place, the entry hasn't expired yet, so the dedup
+    // still works.
+    return (async () => {
+      const env = await setupWithTtl();
+      env.cdp.simulateBinding("cursorBridgeHumanMsg", "hello");
+      env.cdp.simulateBinding("cursorBridgeHumanMsg", "hello");
+      expect(userEmits(env.received)).toHaveLength(1);
+      expect(userEmits(env.received)[0]!.content).toBe("hello");
+    })();
+  });
+
+  it("forwards a repeated message after the TTL expires", async () => {
+    const env = await setupWithTtl();
+    // First occurrence — forwarded.
+    env.cdp.simulateBinding("cursorBridgeHumanMsg", "yes");
+    expect(userEmits(env.received)).toHaveLength(1);
+    expect(userEmits(env.received)[0]!.content).toBe("yes");
+
+    // Wait past the TTL so the entry expires.
+    await new Promise((r) => setTimeout(r, TINY_TTL_MS + 50));
+
+    // Same text again — must be forwarded (was previously dropped).
+    env.cdp.simulateBinding("cursorBridgeHumanMsg", "yes");
+    expect(userEmits(env.received)).toHaveLength(2);
+    expect(userEmits(env.received)[1]!.content).toBe("yes");
+  });
+
+  it("deduplicates multiple rapid fires within TTL", async () => {
+    const env = await setupWithTtl();
+    env.cdp.simulateBinding("cursorBridgeHumanMsg", "retry");
+    env.cdp.simulateBinding("cursorBridgeHumanMsg", "retry");
+    env.cdp.simulateBinding("cursorBridgeHumanMsg", "retry");
+    expect(userEmits(env.received)).toHaveLength(1);
+  });
+});

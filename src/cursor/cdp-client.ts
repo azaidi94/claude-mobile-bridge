@@ -27,8 +27,18 @@ export function connectCdpTarget(wsUrl: string): Promise<CdpClient> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl) as unknown as WebSocketLike;
     const client = new CdpClient(ws);
-    ws.onopen = () => resolve(client);
-    ws.onerror = (err: unknown) => reject(err);
+    // The constructor installed drainPending as ws.onerror. Save it so we
+    // can chain during connection setup, and restore it once connected so
+    // post-connect errors still drain pending requests.
+    const drainHandler = ws.onerror;
+    ws.onopen = () => {
+      ws.onerror = drainHandler;
+      resolve(client);
+    };
+    ws.onerror = (err: unknown) => {
+      drainHandler?.call(ws, err);
+      reject(err);
+    };
   });
 }
 
@@ -104,9 +114,29 @@ export class CdpClient {
     params: Record<string, unknown> = {},
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      // Reject fast on a dead socket — ws.send() silently discards on
+      // CLOSING/CLOSED, so without this check the pending entry hangs
+      // forever. The bridge's syncBridges loop has up to a 5 s window
+      // between WS death and reconnection; messages injected in that
+      // window would otherwise vanish with no log.
+      if (this.ws.readyState !== 1) {
+        reject(
+          new Error(`WebSocket not open (readyState=${this.ws.readyState})`),
+        );
+        return;
+      }
       const id = this.nextId++;
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }));
+      } catch (err) {
+        this.pending.delete(id);
+        reject(
+          new Error(
+            `WebSocket send failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+      }
     });
   }
 
