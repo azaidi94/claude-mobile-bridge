@@ -14,7 +14,11 @@ setupBotLogRotation(
 import { run } from "@grammyjs/runner";
 import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir, getAutoWatchOnSpawn } from "./settings";
+import {
+  getWorkingDir,
+  getAutoWatchOnSpawn,
+  getCursorEnabled,
+} from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -302,12 +306,12 @@ await startWatcher(notifyHandler);
 // undiscovered JSONL at startup). Runs once, idempotent.
 await backfillPortFileSessionIds();
 
-// Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
-// 0/no/off) to skip CDP target polling — useful when Cursor isn't
-// running or the user only wants the Claude Code bridge.
-const cursorBridgeEnabled = !["false", "0", "no", "off"].includes(
+// Cursor integration is opt-out. Disabled if CURSOR_BRIDGE_ENABLED env var
+// is false/0/no/off, OR if the user has toggled it off via /cursor off.
+const envDisabled = ["false", "0", "no", "off"].includes(
   (process.env.CURSOR_BRIDGE_ENABLED ?? "").toLowerCase(),
 );
+const cursorBridgeEnabled = !envDisabled && getCursorEnabled();
 if (cursorBridgeEnabled) {
   startCursorBridge(
     primaryChatId !== undefined
@@ -365,6 +369,7 @@ await bot.api.setMyCommands([
   { command: "execute", description: "Start/stop configured scripts" },
   { command: "settings", description: "Persistent settings panel" },
   { command: "groupmode", description: "Toggle group vs private routing" },
+  { command: "cursor", description: "Enable or disable Cursor AI bridge" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
   { command: "prompts", description: "Tappable saved-prompt menu" },

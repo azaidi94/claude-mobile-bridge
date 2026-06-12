@@ -60,6 +60,7 @@ mock.module("../settings", () => ({
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
 }));
 
 // Mock security module directly to avoid cross-test mock contamination

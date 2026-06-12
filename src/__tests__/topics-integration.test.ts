@@ -55,6 +55,7 @@ mock.module("../settings", () => ({
   getEnablePinnedStatus: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
   getTerminal: () => "Terminal" as const,
   getWorkingDir: () => "/tmp",
   getAutoWatchOnSpawn: () => true,

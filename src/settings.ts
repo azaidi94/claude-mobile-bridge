@@ -41,6 +41,11 @@ export interface BridgeSettings {
    * 0 (default) = off. Valid non-zero values: 10, 25, 50.
    */
   contextNotifyStep?: number;
+  /**
+   * Cursor AI bridge toggle. `true` (default) = enabled. `false` = disabled.
+   * Can also be disabled at startup via CURSOR_BRIDGE_ENABLED env var.
+   */
+  cursorEnabled?: boolean;
 }
 
 function resolveSettingsPath(): string {
@@ -78,6 +83,9 @@ function sanitize(raw: unknown): BridgeSettings {
     if ([0, 10, 25, 50].includes(o.contextNotifyStep)) {
       out.contextNotifyStep = o.contextNotifyStep;
     }
+  }
+  if (typeof o.cursorEnabled === "boolean") {
+    out.cursorEnabled = o.cursorEnabled;
   }
   return out;
 }
@@ -155,6 +163,10 @@ export function getGroupModeSetting(): boolean | undefined {
 
 export function getContextNotifyStep(): number {
   return ensure().contextNotifyStep ?? 0;
+}
+
+export function getCursorEnabled(): boolean {
+  return ensure().cursorEnabled ?? true;
 }
 
 /**

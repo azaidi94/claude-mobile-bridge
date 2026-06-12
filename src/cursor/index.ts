@@ -17,7 +17,7 @@ const SYNC_INTERVAL_MS = 5_000;
 const TOPIC_WAIT_MS = 30_000;
 const TOPIC_POLL_MS = 1_000;
 
-interface TelegramForward {
+export interface TelegramForward {
   api: Api;
   chatId: number;
 }

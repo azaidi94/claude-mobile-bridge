@@ -49,6 +49,7 @@ import {
   offlineSessionCache,
   spawnDesktopClaudeSession,
   handleGroupModeCallback,
+  handleCursorBridgeCallback,
   respawnSession,
 } from "./commands";
 import {
@@ -748,6 +749,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // /groupmode selector: gm:<on|off|auto>
   if (callbackData.startsWith("gm:")) {
     await handleGroupModeCallback(ctx, callbackData.slice(3));
+    return;
+  }
+
+  // /cursor selector: cursor:<on|off>
+  if (callbackData.startsWith("cursor:")) {
+    await handleCursorBridgeCallback(ctx, callbackData.slice(7));
     return;
   }
 
