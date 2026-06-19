@@ -65,9 +65,9 @@ describe("renderSettingsBody", () => {
     expect(body).toContain("━ Claude defaults ━");
     expect(body).toContain("Terminal.app");
     expect(body).toContain("Opus 4.6");
-    // All six fields should be marked (default).
+    // All seven fields should be marked (default).
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(6);
+    expect(defaultMatches.length).toBe(7);
   });
 
   test("drops (default) marker on fields with overrides", async () => {
@@ -77,9 +77,9 @@ describe("renderSettingsBody", () => {
     const body = renderSettingsBody();
     expect(body).toContain("iTerm2");
     expect(body).toContain("<code>off</code>");
-    // Terminal + autowatch now explicit; workdir + model + pinnedStatus + contextNotify still default = 4.
+    // Terminal + autowatch now explicit; workdir + model + pinnedStatus + images + contextNotify still default = 5.
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(4);
+    expect(defaultMatches.length).toBe(5);
   });
 
   test("truncates long working dirs with leading ellipsis", async () => {
@@ -97,13 +97,13 @@ describe("renderSettingsBody", () => {
 });
 
 describe("renderSettingsKeyboard", () => {
-  test("has six edit buttons in 4-row layout", async () => {
+  test("has seven edit buttons in 4-row layout", async () => {
     const { renderSettingsKeyboard } = await import("../handlers/settings");
     const kb = renderSettingsKeyboard();
     expect(kb.inline_keyboard.length).toBe(4);
     expect(kb.inline_keyboard[0]!.length).toBe(2);
     expect(kb.inline_keyboard[1]!.length).toBe(2);
-    expect(kb.inline_keyboard[2]!.length).toBe(1);
+    expect(kb.inline_keyboard[2]!.length).toBe(2);
     expect(kb.inline_keyboard[3]!.length).toBe(1);
     const all = kb.inline_keyboard.flat();
     expect(all.map((b) => b.callback_data)).toEqual([
@@ -112,6 +112,7 @@ describe("renderSettingsKeyboard", () => {
       "set:edit:autowatch",
       "set:edit:model",
       "set:edit:pinnedstatus",
+      "set:edit:images",
       "set:edit:contextnotify",
     ]);
   });

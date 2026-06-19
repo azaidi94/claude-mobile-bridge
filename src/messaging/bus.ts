@@ -37,7 +37,17 @@ export interface OutboundMessage {
   /** Idempotency key; bus drops a duplicate within DEDUP_TTL_MS. */
   dedupKey?: string;
   replyTo?: { messageId: number };
-  attachment?: { kind: AttachmentKind; path: string };
+  /**
+   * Either `path` (read from disk) or `bytes` (in-memory, e.g. base64 images
+   * decoded from a transcript) must be set. `filename` names an in-memory
+   * payload; defaults are derived from `path` otherwise.
+   */
+  attachment?: {
+    kind: AttachmentKind;
+    path?: string;
+    bytes?: Buffer;
+    filename?: string;
+  };
   /**
    * Suppress the user's push notification for this message (TG's
    * `disable_notification`). Used by quiet streaming bubbles in watch.ts.
@@ -335,15 +345,21 @@ export function createMessageBus(api: Api): MessageBus {
     chatId: number,
     threadId: number | undefined,
     kind: AttachmentKind,
-    path: string,
+    source: { path?: string; bytes?: Buffer; filename?: string },
     caption: string | undefined,
     parseMode: ResolvedParseMode | undefined,
     rawCaption: string,
     formatHint: FormatHint,
     silent: boolean,
   ): Promise<number> {
-    const buf = Buffer.from(await Bun.file(path).arrayBuffer());
-    const name = path.split("/").pop() || "file";
+    // Prefer in-memory bytes; fall back to reading from disk.
+    const loadBuf = async (): Promise<Buffer> =>
+      source.bytes ?? Buffer.from(await Bun.file(source.path!).arrayBuffer());
+    const buf = await loadBuf();
+    const name =
+      source.filename ||
+      (source.path ? source.path.split("/").pop() : "") ||
+      "file";
     const input = new InputFile(buf, name);
     const baseOpts: Record<string, unknown> = {};
     if (threadId !== undefined) baseOpts.message_thread_id = threadId;
@@ -381,7 +397,7 @@ export function createMessageBus(api: Api): MessageBus {
         if (threadId !== undefined) plainOpts.message_thread_id = threadId;
         if (silent) plainOpts.disable_notification = true;
         // Re-create input — InputFile streams may be consumed on first send.
-        const buf2 = Buffer.from(await Bun.file(path).arrayBuffer());
+        const buf2 = await loadBuf();
         const input2 = new InputFile(buf2, name);
         let msg;
         if (kind === "photo") {
@@ -478,7 +494,11 @@ export function createMessageBus(api: Api): MessageBus {
             msg.chatId,
             msg.threadId,
             msg.attachment.kind,
-            msg.attachment.path,
+            {
+              path: msg.attachment.path,
+              bytes: msg.attachment.bytes,
+              filename: msg.attachment.filename,
+            },
             msg.content ? resolved.content : undefined,
             resolved.parse_mode,
             msg.content,

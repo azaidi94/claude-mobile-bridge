@@ -179,6 +179,194 @@ describe("tailer: parseLine", () => {
     });
   });
 
+  test("emits image event for tool_result image block (before tool_result)", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "shot1",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: "AAAA",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    // image emitted before its tool_result so the tool name can be resolved
+    expect(events[0]).toMatchObject({
+      type: "image",
+      toolUseId: "shot1",
+      image: { mediaType: "image/jpeg", dataBase64: "AAAA" },
+    });
+    expect(events.some((e) => e.type === "tool_result")).toBe(true);
+  });
+
+  test("emits image event for top-level pasted image (no toolUseId)", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "text", text: "look at this" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "BBBB" },
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    const img = events[0]!;
+    expect(img).toMatchObject({
+      type: "image",
+      content: "look at this", // accompanying text folded into the caption
+      image: { mediaType: "image/png", dataBase64: "BBBB" },
+    });
+    expect(img.toolUseId).toBeUndefined();
+    // no separate user-text echo — the text is now the image's caption
+    expect(events.some((e) => e.type === "user")).toBe(false);
+  });
+
+  test("strips [Image #N] marker, folding only real text into the caption", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "text", text: "[Image #2] testing pasting in terminal" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "ZZ" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "image",
+      content: "testing pasting in terminal",
+    });
+  });
+
+  test("marker-only paste text yields an image with empty caption", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "text", text: "[Image #5]" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "QQ" },
+          },
+        ],
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "image", content: "" });
+  });
+
+  test("surfaces @-referenced image uploads with remaining text as caption", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: '@"/Users/x/.claude/uploads/s/IMG_6507.png" look at this',
+      },
+    });
+    const events = tailer.parseLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "image",
+      content: "look at this",
+      image: { path: "/Users/x/.claude/uploads/s/IMG_6507.png" },
+    });
+  });
+
+  test("non-image @-mentions stay as plain user text (not surfaced)", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: '@"/src/foo.ts" explain this' },
+    });
+    const events = tailer.parseLine(line);
+    expect(events.some((e) => e.type === "image")).toBe(false);
+    expect(events.find((e) => e.type === "user")?.content).toContain("foo.ts");
+  });
+
+  test("drops standalone [Image: source: /tmp/...] annotation entries", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text: "[Image: source: /var/folders/x/T/clipboard-1.png]",
+          },
+        ],
+      },
+    });
+    expect(tailer.parseLine(line)).toHaveLength(0);
+  });
+
+  test("does NOT surface images from relay-wrapped (TG-origin) messages", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text: '<channel source="channel-relay" chat_id="-1" request_id="r1" user="u" ts="2026-04-22T15:00:00Z">\nhi\n</channel>',
+          },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "CCCC" },
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events.some((e) => e.type === "image")).toBe(false);
+  });
+
+  test("defaults unknown media_type and ignores non-base64 image sources", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "x",
+            content: [
+              { type: "image", source: { type: "url", url: "http://x/y.png" } },
+              { type: "image", source: { type: "base64", data: "DDDD" } },
+            ],
+          },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    const imgs = events.filter((e) => e.type === "image");
+    // url source dropped, base64 kept with default media_type
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]!.image).toMatchObject({
+      mediaType: "image/png",
+      dataBase64: "DDDD",
+    });
+  });
+
   test("skips sidechain messages", () => {
     const line = JSON.stringify({
       type: "assistant",

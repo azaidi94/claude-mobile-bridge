@@ -1024,6 +1024,19 @@ export async function handleSettingsCallback(
       return;
     }
 
+    if (field === "images") {
+      const current = getOverrides().watchImages;
+      let next: boolean | undefined;
+      if (current === undefined) next = false;
+      else if (current === false) next = true;
+      else next = undefined;
+      await saveSetting({ watchImages: next });
+      await rerenderSettingsPanel(ctx);
+      const label = next === undefined ? "default (on)" : next ? "on" : "off";
+      await ctx.answerCallbackQuery({ text: `Images: ${label}` });
+      return;
+    }
+
     if (field === "contextnotify") {
       const current = getContextNotifyStep();
       const order = [0, 10, 25, 50];
@@ -1102,6 +1115,8 @@ export async function handleSettingsCallback(
       await saveSetting({ autoWatchOnSpawn: undefined });
     } else if (field === "pinnedstatus") {
       await saveSetting({ enablePinnedStatus: undefined });
+    } else if (field === "images") {
+      await saveSetting({ watchImages: undefined });
     } else if (field === "contextnotify") {
       await saveSetting({ contextNotifyStep: undefined });
     } else if (field === "model") {

@@ -61,6 +61,7 @@ mock.module("../settings", () => ({
   }),
   _reloadForTests: mock(() => {}),
   getEnablePinnedStatus: () => true,
+  getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => _settingsState.contextNotifyStep,
 }));

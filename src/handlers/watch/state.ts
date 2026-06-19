@@ -30,6 +30,11 @@ export interface TailDisplayState {
   finalReplyReceived?: boolean;
   /** Watch-only: maps toolUseId → toolName for tool_result correlation. */
   toolUseRegistry?: Map<string, string>;
+  /**
+   * Hash of the last image surfaced to this topic. Used to skip byte-identical
+   * consecutive images (computer-use re-screenshotting an unchanged frame).
+   */
+  lastImageHash?: string;
   /** Watch-only: last permission mode emitted (for dedup). */
   lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   /**

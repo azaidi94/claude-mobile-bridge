@@ -32,6 +32,21 @@ function stripChannelTag(text: string): string {
     .trim();
 }
 
+/**
+ * Strip Claude Code's image-paste annotations from user text:
+ *   - "[Image: source: /tmp/clipboard-….png]" — local-path noise (a TG image
+ *     surfaces the picture itself, so the path is meaningless there)
+ *   - "[Image #3]" — the inline paste marker
+ * Returns the human-meaningful remainder (often the image's caption text).
+ */
+export function stripImageAnnotations(text: string): string {
+  return text
+    .replace(/\[Image:\s*source:[^\]]*\]/g, "")
+    .replace(/\[Image\s*#\d+\]/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 /** Flatten a tool_result content (string or text-block array) into a single string. */
 export function extractToolResultText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -46,6 +61,70 @@ export function extractToolResultText(content: unknown): string {
   return "";
 }
 
+/** An image to surface as a Telegram photo/document — either inline base64
+ * (clipboard pastes, tool results) or a filesystem path (@-referenced uploads,
+ * read at send time). */
+export interface TailImage {
+  mediaType?: string;
+  dataBase64?: string;
+  path?: string;
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+/**
+ * Pull @-referenced image file paths out of user text, e.g.
+ * `@"/Users/x/.claude/uploads/sess/IMG.png" look at this`. Claude Code stores
+ * the literal @-mention in the transcript (file contents are expanded only at
+ * API time), so without this the path would surface as raw text. Non-image
+ * @-mentions are left untouched. Returns the paths plus the remaining text.
+ */
+export function extractAtImageRefs(text: string): {
+  paths: string[];
+  remainder: string;
+} {
+  const paths: string[] = [];
+  const take = (_m: string, p: string): string => {
+    if (IMAGE_EXT_RE.test(p)) {
+      paths.push(p);
+      return "";
+    }
+    return _m;
+  };
+  const remainder = text
+    .replace(/@"([^"]+)"/g, take)
+    .replace(/@(\S+)/g, take)
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return { paths, remainder };
+}
+
+/**
+ * Pull base64 image blocks out of a content array. Used for both tool_result
+ * content (browser screenshots, image Reads) and top-level user content
+ * (desktop-pasted images). Only `source.type === "base64"` is supported —
+ * url/file refs don't appear in Claude Code transcripts today.
+ */
+export function extractImageBlocks(content: unknown): TailImage[] {
+  if (!Array.isArray(content)) return [];
+  const out: TailImage[] = [];
+  for (const b of content as Array<{
+    type?: string;
+    source?: { type?: string; media_type?: string; data?: string };
+  }>) {
+    if (b?.type !== "image") continue;
+    const src = b.source;
+    if (src?.type === "base64" && typeof src.data === "string" && src.data) {
+      out.push({
+        mediaType:
+          typeof src.media_type === "string" ? src.media_type : "image/png",
+        dataBase64: src.data,
+      });
+    }
+  }
+  return out;
+}
+
 export type TailEventType =
   | "user"
   | "text"
@@ -55,6 +134,7 @@ export type TailEventType =
   | "turn_end"
   | "relay_reply"
   | "tool_result"
+  | "image"
   | "permission_mode"
   | "hook_summary"
   | "usage"
@@ -78,6 +158,8 @@ export interface TailEvent {
   toolUseId?: string;
   /** For "tool_result" events: true when the tool reported failure. */
   isError?: boolean;
+  /** For "image" events: decoded image payload to surface as a TG photo/document. */
+  image?: TailImage;
   /** For "permission_mode" events: the new permission mode value. */
   permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   /** For "hook_summary" events: parsed details of the stop-hook run. */
@@ -344,6 +426,25 @@ export class SessionTailer {
         // Tool_result content blocks must be emitted before extractUserText runs,
         // since tool_result-only content yields no text and would be dropped.
         const rawContent = entry.message?.content;
+        // Relay-wrapped user messages originate from a Telegram send — their
+        // top-level images are already visible in the topic, so don't echo
+        // them back. (tool_result images are unaffected; relay tools never
+        // produce images.)
+        const isRelayWrapped =
+          Array.isArray(rawContent) &&
+          rawContent.some(
+            (b: { type?: string; text?: string }) =>
+              b?.type === "text" &&
+              typeof b.text === "string" &&
+              b.text.includes(CHANNEL_RELAY_TAG),
+          );
+        const pastedImageEvents: TailEvent[] = isRelayWrapped
+          ? []
+          : extractImageBlocks(rawContent).map((img) => ({
+              type: "image" as const,
+              content: "",
+              image: img,
+            }));
         if (Array.isArray(rawContent)) {
           const resultEvents: TailEvent[] = [];
           for (const block of rawContent as Array<{
@@ -362,6 +463,16 @@ export class SessionTailer {
             if (this.relayToolUseIds.has(toolUseId)) {
               this.relayToolUseIds.delete(toolUseId);
               continue;
+            }
+            // Image blocks first, so renderImage can still resolve the tool
+            // name from toolUseRegistry before renderToolResult frees it.
+            for (const img of extractImageBlocks(block.content)) {
+              resultEvents.push({
+                type: "image",
+                content: "",
+                toolUseId,
+                image: img,
+              });
             }
             resultEvents.push({
               type: "tool_result",
@@ -393,12 +504,36 @@ export class SessionTailer {
                 resultEvents.push({ type: "user", content: text });
               }
             }
-            return resultEvents;
+            return [...pastedImageEvents, ...resultEvents];
           }
         }
 
         const text = this.extractUserText(entry.message?.content);
-        if (!text) return [];
+        if (!text) return pastedImageEvents;
+
+        // Native (non-relay) terminal image input. Two shapes:
+        //  1. @-referenced uploads → text like `@"/…/IMG.png" caption`; surface
+        //     the file and fold the remaining text as the caption.
+        //  2. Clipboard paste → typed text + an image block, plus a SEPARATE
+        //     standalone "[Image: source: /tmp/…]" annotation entry; fold the
+        //     typed text into the caption and drop the annotation-only entry.
+        if (!text.includes(CHANNEL_RELAY_TAG)) {
+          const at = extractAtImageRefs(text);
+          if (at.paths.length > 0) {
+            const refImages: TailEvent[] = at.paths.map((path, idx) => ({
+              type: "image",
+              content: idx === 0 ? at.remainder : "",
+              image: { path },
+            }));
+            return [...pastedImageEvents, ...refImages];
+          }
+          const cleaned = stripImageAnnotations(text);
+          if (pastedImageEvents.length > 0) {
+            if (cleaned) pastedImageEvents[0]!.content = cleaned;
+            return pastedImageEvents;
+          }
+          if (!cleaned) return []; // entry was pure image-source annotation
+        }
 
         // Channel-relay-wrapped message. Emit turn_boundary (display-reset marker
         // consumed by Telegram's watch.ts) AND a `user` event with the stripped
@@ -428,7 +563,7 @@ export class SessionTailer {
           return [{ type: "user", content: `⌘ ${cmdOutput}` }];
         }
 
-        return [{ type: "user", content: text }];
+        return [...pastedImageEvents, { type: "user", content: text }];
       }
 
       // Background-task completion ping. Claude Code persists these as
