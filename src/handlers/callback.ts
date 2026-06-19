@@ -50,6 +50,7 @@ import {
   spawnDesktopClaudeSession,
   handleGroupModeCallback,
   handleCursorBridgeCallback,
+  handleCursorSubscribe,
   respawnSession,
 } from "./commands";
 import {
@@ -752,7 +753,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // /cursor selector: cursor:<on|off>
+  // /cursor session subscribe: cursorsub:<name>
+  if (callbackData.startsWith("cursorsub:")) {
+    await handleCursorSubscribe(ctx, callbackData.slice(10));
+    return;
+  }
+
+  // /cursor selector: cursor:<off>
   if (callbackData.startsWith("cursor:")) {
     await handleCursorBridgeCallback(ctx, callbackData.slice(7));
     return;

@@ -46,6 +46,13 @@ export interface BridgeSettings {
    * Can also be disabled at startup via CURSOR_BRIDGE_ENABLED env var.
    */
   cursorEnabled?: boolean;
+  /**
+   * Name of the single Cursor session whose AI replies are forwarded to
+   * Telegram. `undefined` = nothing subscribed (bridge may still be attached
+   * to windows, but no cross-posting happens). Persisted so the choice
+   * survives restarts and re-wires once the window re-attaches.
+   */
+  cursorSubscribedSession?: string;
 }
 
 function resolveSettingsPath(): string {
@@ -86,6 +93,9 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.cursorEnabled === "boolean") {
     out.cursorEnabled = o.cursorEnabled;
+  }
+  if (typeof o.cursorSubscribedSession === "string") {
+    out.cursorSubscribedSession = o.cursorSubscribedSession;
   }
   return out;
 }
@@ -167,6 +177,11 @@ export function getContextNotifyStep(): number {
 
 export function getCursorEnabled(): boolean {
   return ensure().cursorEnabled ?? true;
+}
+
+/** Name of the subscribed Cursor session, or undefined if none. */
+export function getCursorSubscribedSession(): string | undefined {
+  return ensure().cursorSubscribedSession;
 }
 
 /**

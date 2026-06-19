@@ -12,12 +12,17 @@ setupBotLogRotation(
 );
 
 import { run } from "@grammyjs/runner";
-import { startCursorBridge, stopCursorBridge } from "./cursor";
+import {
+  startCursorBridge,
+  stopCursorBridge,
+  setCursorSubscription,
+} from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
 import {
   getWorkingDir,
   getAutoWatchOnSpawn,
   getCursorEnabled,
+  getCursorSubscribedSession,
 } from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
@@ -318,6 +323,9 @@ if (cursorBridgeEnabled) {
       ? { api: bot.api, chatId: primaryChatId }
       : undefined,
   );
+  // Restore the persisted single-session subscription so forwarding resumes
+  // once that window re-attaches. Undefined → nothing forwarded until picked.
+  setCursorSubscription(getCursorSubscribedSession() ?? null);
 } else {
   info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
 }

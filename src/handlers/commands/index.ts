@@ -68,6 +68,7 @@ export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
 export {
   handleCursorBridge,
   handleCursorBridgeCallback,
+  handleCursorSubscribe,
 } from "./cursor-bridge";
 
 export { handleCleanZombie } from "./cleanzombie";

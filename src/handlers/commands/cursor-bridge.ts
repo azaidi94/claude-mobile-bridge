@@ -1,65 +1,147 @@
 /**
- * /cursor — Toggle the Cursor AI bridge on or off at runtime.
+ * /cursor — list live Cursor sessions and pick which one forwards to Telegram.
  *
- * /cursor        — show current status + inline buttons
- * /cursor on     — enable bridge, start syncing live Cursor windows
- * /cursor off    — disable bridge, stop syncing, delete all cursor topics
+ * /cursor        — start the bridge if needed, then show the cursor-session
+ *                  list with a subscribe button per session.
+ * /cursor on     — alias for /cursor (ensure bridge running + show list).
+ * /cursor off    — unwatch all: clear the subscription, delete every cursor
+ *                  topic, and stop the bridge. Nothing forwards until /cursor
+ *                  is run again and a session is picked.
+ *
+ * Subscription is single: tapping a session (cursorsub:<name>) makes it the
+ * sole forwarded session and unwires the previous one. The choice persists to
+ * settings.json so it re-wires on restart once the window re-attaches.
  */
 
 import type { Context } from "grammy";
-import { InlineKeyboard } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import { ALLOWED_USERS } from "../../config";
-import { getCursorEnabled, saveSetting } from "../../settings";
+import { escapeHtml, formatTimeAgo } from "../../formatting";
+import { saveSetting, getCursorSubscribedSession } from "../../settings";
 import { isAuthorized } from "../../security";
-import { getTopicStore } from "../../topics";
+import { getSessions, getSession, getGitBranch } from "../../sessions";
+import { getTopicStore, getTopicBySession } from "../../topics";
+import { getMessageBus } from "../../messaging";
 import { busReply, getTopicManager } from "./helpers";
 
-function renderCursorText(enabled: boolean): string {
-  return (
-    `🖱 Cursor AI bridge: <b>${enabled ? "enabled" : "disabled"}</b>\n\n` +
-    `• <b>on</b> — bridge active; topics created for live Cursor windows\n` +
-    `• <b>off</b> — bridge stopped; all cursor topics removed`
-  );
-}
-
-function buildCursorKeyboard(enabled: boolean): InlineKeyboard {
-  const mark = (active: boolean, label: string) =>
-    active ? `✅ ${label}` : label;
-  return new InlineKeyboard()
-    .text(mark(enabled, "On"), "cursor:on")
-    .text(mark(!enabled, "Off"), "cursor:off");
-}
-
-async function applyCursorSetting(
-  ctx: Context,
-  enable: boolean,
-): Promise<void> {
-  await saveSetting({ cursorEnabled: enable });
-
+/**
+ * Build the cursor-session list view (text + inline keyboard). Lists only
+ * sessions with `source === "cursor"`, marks the subscribed one, and offers a
+ * deep-link to its topic plus an Off button.
+ */
+async function buildCursorListView(): Promise<{
+  text: string;
+  keyboard: InlineKeyboardMarkup;
+}> {
   const cursor = await import("../../cursor");
-  if (enable) {
-    const tm = getTopicManager();
-    const chatId = tm?.getChatId();
-    cursor.startCursorBridge(
-      chatId !== undefined ? { api: ctx.api, chatId } : undefined,
-    );
-  } else {
-    // Delete all cursor-* topics before stopping so the topic store stays clean.
-    const tm = getTopicManager();
-    if (tm) {
-      const cursorTopics = getTopicStore().topics.filter((t) =>
-        t.sessionName.startsWith("cursor-"),
-      );
-      await Promise.allSettled(
-        cursorTopics.map((t) => tm.deleteTopic(t.sessionName)),
-      );
-    }
-    cursor.stopCursorBridge();
+  const subscribed = cursor.getCursorSubscription();
+  const sessions = getSessions().filter((s) => s.source === "cursor");
+
+  if (sessions.length === 0) {
+    return {
+      text:
+        "🖱 <b>Cursor sessions</b>\n\n" +
+        "No live Cursor windows detected yet. Open a workspace in Cursor, " +
+        "then re-run /cursor.",
+      keyboard: {
+        inline_keyboard: [
+          [{ text: "🔕 Off (stop bridge)", callback_data: "cursor:off" }],
+        ],
+      },
+    };
   }
+
+  const branches = await Promise.all(sessions.map((s) => getGitBranch(s.dir)));
+  const lines: string[] = [
+    "🖱 <b>Cursor sessions</b>",
+    "Tap one to forward its AI replies to Telegram.\n",
+  ];
+  const rows: InlineKeyboardMarkup["inline_keyboard"] = [];
+
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i]!;
+    const isSub = s.name === subscribed;
+    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
+    const ago = formatTimeAgo(s.lastActivity);
+    const branch = branches[i];
+    const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(
+      `${isSub ? "✅" : "•"} <b>${escapeHtml(s.name)}</b>`,
+      `   ${meta}`,
+      "",
+    );
+    rows.push([
+      {
+        text: isSub ? `✅ ${s.name}` : s.name,
+        callback_data: `cursorsub:${s.name}`,
+      },
+    ]);
+  }
+
+  // Deep-link to the subscribed session's topic so the user can jump straight
+  // to it. Supergroup deep links drop the -100 chat-id prefix.
+  const store = getTopicStore();
+  if (subscribed && store.chatId) {
+    const topic = getTopicBySession(subscribed);
+    if (topic) {
+      const internal = String(store.chatId).replace(/^-100/, "");
+      rows.push([
+        {
+          text: `➡ Open ${subscribed}`,
+          url: `https://t.me/c/${internal}/${topic.topicId}`,
+        },
+      ]);
+    }
+  }
+
+  rows.push([{ text: "🔕 Off (unwatch all)", callback_data: "cursor:off" }]);
+
+  return { text: lines.join("\n"), keyboard: { inline_keyboard: rows } };
 }
 
 /**
- * /cursor command — show status or apply on|off argument directly.
+ * Ensure the bridge is polling and the persisted subscription is restored.
+ * Idempotent — startCursorBridge no-ops when already running.
+ */
+async function ensureBridgeRunning(ctx: Context): Promise<void> {
+  const cursor = await import("../../cursor");
+  if (cursor.isCursorBridgeRunning()) return;
+
+  const tm = getTopicManager();
+  const chatId = tm?.getChatId();
+  cursor.startCursorBridge(
+    chatId !== undefined ? { api: ctx.api, chatId } : undefined,
+  );
+  // Re-wire the persisted choice so forwarding resumes once the window attaches.
+  cursor.setCursorSubscription(getCursorSubscribedSession() ?? null);
+  await saveSetting({ cursorEnabled: true });
+}
+
+/** Tear everything down: clear subscription, delete cursor topics, stop bridge. */
+async function applyCursorOff(): Promise<void> {
+  await saveSetting({
+    cursorEnabled: false,
+    cursorSubscribedSession: undefined,
+  });
+
+  const tm = getTopicManager();
+  if (tm) {
+    const cursorTopics = getTopicStore().topics.filter((t) =>
+      t.sessionName.startsWith("cursor-"),
+    );
+    await Promise.allSettled(
+      cursorTopics.map((t) => tm.deleteTopic(t.sessionName)),
+    );
+  }
+
+  const cursor = await import("../../cursor");
+  cursor.stopCursorBridge();
+}
+
+/**
+ * /cursor command — show the cursor-session list, or `off` to tear down.
  */
 export async function handleCursorBridge(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -76,51 +158,94 @@ export async function handleCursorBridge(ctx: Context): Promise<void> {
     .trim()
     .toLowerCase();
 
-  if (arg === "on" || arg === "off") {
-    const enable = arg === "on";
-    await applyCursorSetting(ctx, enable);
+  if (arg === "off") {
+    await applyCursorOff();
     await busReply(
       ctx,
-      `🖱 Cursor AI bridge: <b>${enable ? "enabled" : "disabled"}</b>.`,
-      "html",
+      "🔕 Cursor bridge stopped — all cursor topics removed. Run /cursor to pick a session again.",
     );
     return;
   }
 
-  if (arg) {
+  if (arg && arg !== "on") {
     await busReply(ctx, "❌ Usage: /cursor [on|off]");
     return;
   }
 
-  const enabled = getCursorEnabled();
-  await busReply(ctx, renderCursorText(enabled), {
-    format: "html",
-    replyMarkup: buildCursorKeyboard(enabled),
-  });
+  // No arg or "on": ensure the bridge is up, scan windows, then list.
+  await ensureBridgeRunning(ctx);
+  const cursor = await import("../../cursor");
+  await cursor.refreshCursorTargets();
+
+  const { text, keyboard } = await buildCursorListView();
+  await busReply(ctx, text, { format: "html", replyMarkup: keyboard });
 }
 
 /**
- * Callback handler for cursor:<on|off> inline buttons.
+ * cursorsub:<name> — subscribe (forward to Telegram) a single Cursor session.
+ */
+export async function handleCursorSubscribe(
+  ctx: Context,
+  sessionName: string,
+): Promise<void> {
+  const session = getSession(sessionName);
+  if (!session || session.source !== "cursor") {
+    await ctx.answerCallbackQuery({ text: "Session not found" });
+    return;
+  }
+
+  const cursor = await import("../../cursor");
+  cursor.setCursorSubscription(sessionName);
+  await saveSetting({ cursorSubscribedSession: sessionName });
+
+  // Bump the session's topic so it surfaces in the forum list, confirming the
+  // subscription in-place.
+  const store = getTopicStore();
+  const topic = getTopicBySession(sessionName);
+  if (topic && store.chatId) {
+    void getMessageBus()
+      .send({
+        chatId: store.chatId,
+        threadId: topic.topicId,
+        content: "🔔 Telegram is now watching this Cursor session.",
+        format: "plain",
+      })
+      .catch(() => {});
+  }
+
+  // Refresh the list message in place with the updated ✅ marker.
+  try {
+    const { text, keyboard } = await buildCursorListView();
+    await ctx.editMessageText(text, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+    });
+  } catch {
+    // Message too old to edit — ignore.
+  }
+  await ctx.answerCallbackQuery({ text: `Watching ${sessionName}` });
+}
+
+/**
+ * Callback handler for the `cursor:<action>` inline buttons. Only `off` (the
+ * teardown button on the list) is handled here — subscription taps use the
+ * `cursorsub:` prefix routed to handleCursorSubscribe.
  */
 export async function handleCursorBridgeCallback(
   ctx: Context,
   action: string,
 ): Promise<void> {
-  if (action !== "on" && action !== "off") {
+  if (action !== "off") {
     await ctx.answerCallbackQuery({ text: "Unknown action" });
     return;
   }
-  const enable = action === "on";
-  await applyCursorSetting(ctx, enable);
+  await applyCursorOff();
   try {
-    await ctx.editMessageText(renderCursorText(enable), {
-      parse_mode: "HTML",
-      reply_markup: buildCursorKeyboard(enable),
-    });
+    await ctx.editMessageText(
+      "🔕 Cursor bridge stopped — all cursor topics removed. Run /cursor to pick a session again.",
+    );
   } catch {
     // Message too old to edit — ignore.
   }
-  await ctx.answerCallbackQuery({
-    text: `Cursor AI bridge ${enable ? "enabled" : "disabled"}.`,
-  });
+  await ctx.answerCallbackQuery({ text: "Cursor bridge stopped." });
 }
