@@ -342,8 +342,14 @@ if (primaryChatId !== undefined) {
 
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
+  // Don't reconcile (create topics for) cursor sessions other than the
+  // subscribed one — cursor topics are created on demand via /cursor. The
+  // subscribed one is kept so its existing topic is re-validated on restart.
+  const subscribedCursor = getCursorSubscribedSession();
   await topicManager.reconcile(
-    sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+    sessions
+      .filter((s) => s.source !== "cursor" || s.name === subscribedCursor)
+      .map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
   );
 
   // Start auto-watch and ping relay for all online sessions with topics

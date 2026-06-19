@@ -281,28 +281,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
       {
         getSessionState(active.name).loadFromRegistry(active);
 
-        // Rebuild session list with updated active marker
+        // Rebuild buttons with updated active checkmark — tiny title only,
+        // matching handleList (no per-session meta text).
         const sessions = getSessions();
-        const branches = await Promise.all(
-          sessions.map((s) => getGitBranch(s.dir)),
-        );
-        const lines: string[] = ["📋 <b>Sessions</b>\n"];
-
-        for (let i = 0; i < sessions.length; i++) {
-          const s = sessions[i]!;
-          const isActive = active.name === s.name;
-          const marker = isActive ? "✅ " : "• ";
-          const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-          const ago = formatTimeAgo(s.lastActivity);
-          const branch = branches[i];
-
-          const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
-            .filter(Boolean)
-            .join(" · ");
-          lines.push(`${marker}<b>${s.name}</b>`, `   ${meta}`, "");
-        }
-
-        // Rebuild buttons with updated checkmark
         const buttons = sessions.map((s) => [
           {
             text: active.name === s.name ? `✓ ${s.name}` : s.name,
@@ -310,7 +291,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
           },
         ]);
 
-        await ctx.editMessageText(lines.join("\n"), {
+        await ctx.editMessageText("📋 <b>Sessions</b>", {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: buttons },
         });

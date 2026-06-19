@@ -16,10 +16,9 @@
 import type { Context } from "grammy";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import { ALLOWED_USERS } from "../../config";
-import { escapeHtml, formatTimeAgo } from "../../formatting";
 import { saveSetting, getCursorSubscribedSession } from "../../settings";
 import { isAuthorized } from "../../security";
-import { getSessions, getSession, getGitBranch } from "../../sessions";
+import { getSessions, getSession } from "../../sessions";
 import { getTopicStore, getTopicBySession } from "../../topics";
 import { getMessageBus } from "../../messaging";
 import { busReply, getTopicManager } from "./helpers";
@@ -51,27 +50,11 @@ async function buildCursorListView(): Promise<{
     };
   }
 
-  const branches = await Promise.all(sessions.map((s) => getGitBranch(s.dir)));
-  const lines: string[] = [
-    "🖱 <b>Cursor sessions</b>",
-    "Tap one to forward its AI replies to Telegram.\n",
-  ];
+  // Tiny title + one button per session (✅ marks the subscribed one). No
+  // per-session meta text — the buttons are the selector.
   const rows: InlineKeyboardMarkup["inline_keyboard"] = [];
-
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!;
+  for (const s of sessions) {
     const isSub = s.name === subscribed;
-    const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-    const ago = formatTimeAgo(s.lastActivity);
-    const branch = branches[i];
-    const meta = [dir, branch ? `🌿 ${branch}` : null, ago]
-      .filter(Boolean)
-      .join(" · ");
-    lines.push(
-      `${isSub ? "✅" : "•"} <b>${escapeHtml(s.name)}</b>`,
-      `   ${meta}`,
-      "",
-    );
     rows.push([
       {
         text: isSub ? `✅ ${s.name}` : s.name,
@@ -98,7 +81,7 @@ async function buildCursorListView(): Promise<{
 
   rows.push([{ text: "🔕 Off (unwatch all)", callback_data: "cursor:off" }]);
 
-  return { text: lines.join("\n"), keyboard: { inline_keyboard: rows } };
+  return { text: "🖱 <b>Cursor</b>", keyboard: { inline_keyboard: rows } };
 }
 
 /**
@@ -192,6 +175,14 @@ export async function handleCursorSubscribe(
   if (!session || session.source !== "cursor") {
     await ctx.answerCallbackQuery({ text: "Session not found" });
     return;
+  }
+
+  // Cursor topics are created on demand (not on window-attach). Create this
+  // session's topic now if it doesn't exist, so cross-post has somewhere to
+  // forward and the deep-link resolves.
+  const tm = getTopicManager();
+  if (tm && !getTopicBySession(sessionName)) {
+    await tm.createTopic(session.name, session.dir, session.id).catch(() => {});
   }
 
   const cursor = await import("../../cursor");
