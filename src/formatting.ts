@@ -183,25 +183,29 @@ export function convertMarkdownToHtml(text: string): string {
   // Links: [text](url) -> <a href="url">text</a>
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-  // Restore code blocks
+  // Restore code blocks — use a function replacement so `$`-patterns in
+  // the code content (e.g. $`, $', $&, $1) are treated literally.
   for (let i = 0; i < codeBlocks.length; i++) {
     const escapedCode = escapeHtml(codeBlocks[i]!);
-    text = text.replace(`\x00CODEBLOCK${i}\x00`, `<pre>${escapedCode}</pre>`);
+    text = text.replace(
+      `\x00CODEBLOCK${i}\x00`,
+      () => `<pre>${escapedCode}</pre>`,
+    );
   }
 
   // Restore tables as preformatted blocks (column alignment preserved
   // by monospace rendering; Telegram doesn't support real tables).
   for (let i = 0; i < tableBlocks.length; i++) {
     const rendered = renderTableAsPre(tableBlocks[i]!);
-    text = text.replace(`\x00TABLE${i}\x00`, rendered);
+    text = text.replace(`\x00TABLE${i}\x00`, () => rendered);
   }
 
-  // Restore inline code
+  // Restore inline code — function replacement to treat $ literally.
   for (let i = 0; i < inlineCodes.length; i++) {
     const escapedCode = escapeHtml(inlineCodes[i]!);
     text = text.replace(
       `\x00INLINECODE${i}\x00`,
-      `<code>${escapedCode}</code>`,
+      () => `<code>${escapedCode}</code>`,
     );
   }
 

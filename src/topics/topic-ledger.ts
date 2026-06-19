@@ -77,6 +77,31 @@ export function recordTopicDeleted(topicId: number): Promise<void> {
 }
 
 /**
+ * Record a topic the bot didn't know about — observed via inbound message
+ * thread_id. Uses a placeholder sessionName so `/cleanzombie` treats it as an
+ * orphan with no live session, and uses its topicId in candidate sets.
+ * Idempotent at the per-process level via `discovered` (in-memory cache).
+ */
+const discovered = new Set<number>();
+export async function recordTopicDiscovered(topicId: number): Promise<boolean> {
+  if (discovered.has(topicId)) return false;
+  discovered.add(topicId);
+  // Avoid recording if the ledger already has any entry for this id — readLedger
+  // is cheap (one file read) and this only fires the first time we see an id
+  // this process. Future calls hit the in-memory set.
+  const seen = new Set((await readLedger()).map((e) => e.topicId));
+  if (seen.has(topicId)) return false;
+  await append({
+    type: "created",
+    topicId,
+    sessionName: `discovered-${topicId}`,
+    sessionDir: "",
+    at: new Date().toISOString(),
+  });
+  return true;
+}
+
+/**
  * Fold the event log into one entry per topic id. The newest event for an id
  * wins, so a `deleted` after a `created` marks the entry deleted.
  */

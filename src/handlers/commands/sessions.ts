@@ -12,7 +12,7 @@ import type { Context } from "grammy";
 import { escapeHtml, formatTimeAgo } from "../../formatting";
 import { ALLOWED_USERS } from "../../config";
 import { getWorkingDir } from "../../settings";
-import { isAuthorized } from "../../security";
+import { isAuthorized, isPathAllowed } from "../../security";
 import { isGeneralTopic } from "../../topics";
 import {
   getSessions,
@@ -60,6 +60,11 @@ export async function handleNew(ctx: Context): Promise<void> {
   const explicitPath = rawPath
     ? resolve(getWorkingDir(), rawPath)
     : getWorkingDir();
+
+  if (!isPathAllowed(explicitPath)) {
+    await busReply(ctx, "❌ Path not in allowed directories.");
+    return;
+  }
 
   try {
     const s = await stat(explicitPath);

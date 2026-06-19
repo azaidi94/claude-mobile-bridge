@@ -87,6 +87,7 @@ mock.module("../security", () => ({
   rateLimiter: { check: () => [true] },
   isPathAllowed: mock(() => true),
   checkCommandSafety: mock(() => [true, ""]),
+  enforceToolSafety: async () => ({}),
 }));
 
 // Mock session module
@@ -135,6 +136,7 @@ mock.module("../handlers", () => ({
   handleNew: mock(() => {}),
   handleRespawn: mock(() => {}),
   handleStop: mock(() => {}),
+  handleInterrupt: mock(() => {}),
   handleKill: mock(() => {}),
   handleStatus: mock(() => {}),
   handleModel: mock(() => {}),
@@ -147,6 +149,8 @@ mock.module("../handlers", () => ({
   handlePin: mock(() => {}),
   handleGroupMode: mock(() => {}),
   handleCleanZombie: mock(() => {}),
+  handleCron: mock(() => {}),
+  handlePrompts: mock(() => {}),
   handleSessions: mock(() => {}),
   handleSkip: mock(() => {}),
   handleQueue: mock(() => {}),

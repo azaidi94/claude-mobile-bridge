@@ -72,23 +72,38 @@ export interface CursorBridgeOptions {
   bus: SessionEventBus;
   /** Override the AI flush window. Tests use a very small value. */
   aiFlushDelayMs?: number;
+  /** Override the seenMessages dedup TTL. Tests use a very small value. */
+  seenMessagesTtlMs?: number;
 }
 
 /**
  * Cap on `seenMessages` — every distinct human message in the session adds
- * an entry, and entries are never removed by themselves. Without a bound, a
- * long-running session with thousands of messages would grow this to MBs.
- * 2000 mirrors the JSONL tail truncation. Set iterates in insertion order, so
- * eviction is FIFO — the oldest message becomes re-eligible for the dedup
- * check, which is acceptable: if a 2000-message-old line repeats verbatim
- * we'll re-emit it, far better than unbounded growth.
+ * an entry. 2000 mirrors the JSONL tail truncation. Map iterates in insertion
+ * order, so eviction is FIFO — the oldest message becomes re-eligible for the
+ * dedup check, which is acceptable: if a 2000-message-old line repeats
+ * verbatim we'll re-emit it, far better than unbounded growth.
  */
 const SEEN_MESSAGES_MAX = 2000;
+
+/**
+ * TTL for seenMessages dedup entries. Cursor can re-fire HUMAN_BINDING for
+ * the same DOM bubble on panel switches / re-renders — those happen within
+ * seconds. But a user legitimately typing the same text minutes later (e.g.
+ * "yes" twice in a row) should propagate. 60 s is long enough to cover any
+ * reasonable re-render window while letting genuine repeats through.
+ *
+ * Trade-off: a re-render that happens >60 s after the original (e.g. Cursor
+ * restored from sleep with a stale DOM) would produce a duplicate emit. That
+ * scenario is far rarer than the user typing the same short answer twice, so
+ * the TTL favors the common case. The recentlyInjected map (30 s TTL) already
+ * handles the injection-echo path independently.
+ */
+const SEEN_MESSAGES_TTL_MS = 60_000;
 
 export class CursorBridge {
   private unsubBus: (() => void) | null = null;
   private unsubNotification: (() => void) | null = null;
-  private seenMessages = new Set<string>();
+  private seenMessages = new Map<string, number>();
   // Text we injected from a non-cursor source, normalized → time
   // injected. TTL-based so a duplicate HUMAN_BINDING fire (Cursor
   // can render the same bubble in multiple panels) is suppressed
@@ -100,8 +115,11 @@ export class CursorBridge {
   private aiBuffer: string[] = [];
   private aiTimer: Timer | null = null;
   private log: CursorSessionLog | null = null;
+  private seenTtlMs: number;
 
-  constructor(private opts: CursorBridgeOptions) {}
+  constructor(private opts: CursorBridgeOptions) {
+    this.seenTtlMs = opts.seenMessagesTtlMs ?? SEEN_MESSAGES_TTL_MS;
+  }
 
   async start(): Promise<void> {
     const { sessionName, sessionDir, cdpClient, bus } = this.opts;
@@ -155,6 +173,7 @@ export class CursorBridge {
             // re-render fires another HUMAN_BINDING for the same text.
             return;
           }
+          this.pruneSeenMessages();
           if (this.seenMessages.has(text)) return;
           this.addSeen(text);
           // A new human message means the prior AI turn is finished —
@@ -332,15 +351,28 @@ export class CursorBridge {
   }
 
   /**
-   * FIFO-bounded insert into seenMessages. Set iterates in insertion order,
+   * FIFO-bounded insert into seenMessages. Map iterates in insertion order,
    * so once we hit the cap the oldest entry is dropped before the new one
-   * is added — keeps memory bounded over a long session.
+   * is added — keeps memory bounded over a long session. Each entry carries
+   * a timestamp so pruneSeenMessages can age out entries past the TTL.
    */
   private addSeen(text: string): void {
     if (this.seenMessages.size >= SEEN_MESSAGES_MAX) {
-      const oldest = this.seenMessages.values().next().value;
+      const oldest = this.seenMessages.keys().next().value;
       if (oldest !== undefined) this.seenMessages.delete(oldest);
     }
-    this.seenMessages.add(text);
+    this.seenMessages.set(text, Date.now());
+  }
+
+  /**
+   * Remove seenMessages entries older than SEEN_MESSAGES_TTL_MS.
+   * Called before each dedup check so genuine repeats of the same text
+   * (e.g. a user typing "yes" twice minutes apart) aren't silently dropped.
+   */
+  private pruneSeenMessages(): void {
+    const cutoff = Date.now() - this.seenTtlMs;
+    for (const [k, t] of this.seenMessages) {
+      if (t < cutoff) this.seenMessages.delete(k);
+    }
   }
 }

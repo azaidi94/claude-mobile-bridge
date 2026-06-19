@@ -1,7 +1,7 @@
 import { listCdpTargets, connectCdpTarget, type CdpTarget } from "./cdp-client";
 import { CursorBridge } from "./bridge";
 import { globalEventBus, type SseEvent } from "../web/sse";
-import { info, warn } from "../logger";
+import { info, warn, debug } from "../logger";
 import { homedir } from "os";
 import type { Api } from "grammy";
 import { getTopicBySession } from "../topics";
@@ -63,6 +63,32 @@ export function stopCursorBridge(): void {
     removeSession(sessionName);
   }
   bridges.clear();
+}
+
+/**
+ * A newly-opened Cursor window briefly reports its title as the raw
+ * `vscode-file://...workbench.html` URL until the workspace finishes
+ * loading. Attaching during that window mints junk session names like
+ * `cursor-vscode-file://vscode-app/applications/cu...` and creates a
+ * permanent TG topic for them. Skip attach while the title looks like a
+ * URL or is empty — the next sync tick re-evaluates once it settles.
+ *
+ * Also treats a bare "Cursor" workspace segment as unloaded: when opening
+ * a Remote-SSH window, the title shows just "Cursor" until the remote
+ * handshake completes. Attaching then produces a "cursor-cursor[-hash]"
+ * topic that sticks around even after the workspace name resolves.
+ */
+export function isUnloadedTitle(title: string): boolean {
+  const t = title.trim();
+  if (!t) return true;
+  if (/^(vscode-file:|https?:|file:|vscode-webview:)/i.test(t)) return true;
+  const last =
+    t
+      .split(/\s[—–-]\s/)
+      .pop()
+      ?.trim()
+      .toLowerCase() ?? "";
+  return last === "cursor";
 }
 
 /**
@@ -138,6 +164,16 @@ async function syncBridges(): Promise<void> {
 
 async function attachBridge(target: CdpTarget): Promise<void> {
   if (!target.webSocketDebuggerUrl) return;
+
+  // Title hasn't settled yet (still the raw workbench URL). Bail without
+  // adding to `bridges` so the next syncBridges tick re-checks once the
+  // workspace title loads.
+  if (isUnloadedTitle(target.title)) {
+    debug(
+      `cursor-bridge: skipping attach — title not settled: "${target.title}"`,
+    );
+    return;
+  }
 
   const sessionName = deriveSessionName(target.title);
   // If another window already produced the same session name (two open

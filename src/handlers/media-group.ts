@@ -167,6 +167,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       // message lifecycle to use bus.send + bus.edit.
       const statusMsg = await ctx.reply(
         `${config.emoji} Receiving ${config.itemLabelPlural}...`,
+        { message_thread_id: ctx.message?.message_thread_id },
       );
 
       pendingGroups.set(mediaGroupId, {

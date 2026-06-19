@@ -47,6 +47,7 @@ export { handleSessions, offlineSessionCache } from "./offline-sessions";
 
 export {
   handleStop,
+  handleInterrupt,
   handleStatus,
   handleModel,
   handleRestart,
@@ -65,3 +66,7 @@ export { handleApp } from "./app";
 export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
 
 export { handleCleanZombie } from "./cleanzombie";
+
+export { handleCron } from "./cron";
+
+export { handlePrompts } from "./prompts";

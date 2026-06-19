@@ -26,6 +26,7 @@ export { TopicManager } from "./topic-manager";
 export {
   recordTopicCreated,
   recordTopicDeleted,
+  recordTopicDiscovered,
   readLedger,
   readActiveLedger,
   backfillLedgerFromStore,

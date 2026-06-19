@@ -35,7 +35,7 @@ export async function handlePwd(
 
   const state =
     sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
-  const dir = sctx?.sessionDir || state?.workingDir || getWorkingDir();
+  const dir = state?.workingDir || sctx?.sessionDir || getWorkingDir();
   await busReply(ctx, `📁 <code>${escapeHtml(dir)}</code>`, "html");
 }
 
@@ -72,7 +72,7 @@ export async function handleCd(
 
   // resolve() normalizes ../segments and handles both absolute and relative paths
   const targetPath = resolve(
-    sctx?.sessionDir || state?.workingDir || getWorkingDir(),
+    state?.workingDir || sctx?.sessionDir || getWorkingDir(),
     rawPath,
   );
 
@@ -128,7 +128,7 @@ export async function handleLs(
 
   const state =
     sctx && sctx.source === "cc" ? getSessionState(sctx.sessionName) : null;
-  const baseDir = sctx?.sessionDir || state?.workingDir || getWorkingDir();
+  const baseDir = state?.workingDir || sctx?.sessionDir || getWorkingDir();
   const rawPath = ((ctx.match as string | undefined) ?? "").trim();
 
   // resolve() normalizes ../segments and handles both absolute and relative paths

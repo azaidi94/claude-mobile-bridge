@@ -13,7 +13,6 @@ import {
   getTopicStore,
 } from "./topic-store";
 import { info, warn, debug } from "../logger";
-import { safeAsync } from "../utils/safe-async";
 import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 import { scanPortFiles, updatePortFile } from "../relay/discovery";
 import { recordTopicCreated, recordTopicDeleted } from "./topic-ledger";
@@ -24,6 +23,11 @@ interface ReconcileSession {
   dir: string;
   id?: string;
 }
+
+// Per-sessionName in-flight guard: a concurrent createTopic call for the same
+// session awaits and reuses the first call's result rather than spawning a
+// second Telegram forum topic.
+const createInFlight = new Map<string, Promise<number | undefined>>();
 
 export class TopicManager {
   constructor(
@@ -62,6 +66,23 @@ export class TopicManager {
     sessionDir: string,
     sessionId?: string,
   ): Promise<number | undefined> {
+    const inflight = createInFlight.get(sessionName);
+    if (inflight) return inflight;
+
+    const promise = this._createTopicImpl(sessionName, sessionDir, sessionId);
+    createInFlight.set(sessionName, promise);
+    try {
+      return await promise;
+    } finally {
+      createInFlight.delete(sessionName);
+    }
+  }
+
+  private async _createTopicImpl(
+    sessionName: string,
+    sessionDir: string,
+    sessionId?: string,
+  ): Promise<number | undefined> {
     const existing = getTopicBySession(sessionName);
     if (existing) {
       // Verify the topic still exists in Telegram. The bus swallows TG errors
@@ -84,7 +105,10 @@ export class TopicManager {
           throw new Error(reason);
         }
       } else {
-        updateTopicMapping(sessionName, { isOnline: true, sessionId });
+        updateTopicMapping(sessionName, {
+          isOnline: true,
+          ...(sessionId ? { sessionId } : {}),
+        });
         const reusePid = await this.findRelayPid(
           sessionName,
           sessionDir,
@@ -162,23 +186,32 @@ export class TopicManager {
     const mapping = getTopicBySession(sessionName);
     if (!mapping) return;
 
-    const ok = await safeAsync(
-      "topic.delete",
-      async () => {
-        await this.api.deleteForumTopic(this.chatId, mapping.topicId);
-        return true;
-      },
-      { fields: { session: sessionName, topic_id: mapping.topicId } },
-    );
-    if (ok) {
+    try {
+      await this.api.deleteForumTopic(this.chatId, mapping.topicId);
       info(
         `topic-manager: deleted topic ${mapping.topicId} for ${sessionName}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // These errors confirm the topic no longer exists in Telegram — safe to
+      // clean up our records. Any other error (rate limit, network, etc.) is
+      // transient: keep the mapping so it remains reachable and don't tombstone
+      // or /cleanzombie can never find it again.
+      if (
+        !msg.includes("TOPIC_ID_INVALID") &&
+        !msg.includes("message thread not found")
+      ) {
+        warn(
+          `topic-manager: delete failed for ${mapping.topicId} (${sessionName}), keeping mapping: ${err}`,
+        );
+        return;
+      }
+      warn(
+        `topic-manager: topic ${mapping.topicId} already gone in Telegram, cleaning up`,
       );
     }
 
     removeTopicMapping(sessionName);
-    // Record in the ledger regardless of the Telegram call's outcome — either
-    // the topic is gone, or it was already gone; both mean "no longer ours".
     await recordTopicDeleted(mapping.topicId);
   }
 
@@ -194,19 +227,31 @@ export class TopicManager {
     const store = getTopicStore();
     const liveNames = new Set(liveSessions.map((s) => s.name));
 
-    // Delete topics for sessions that no longer exist
+    // Delete topics for sessions that no longer exist — but ONLY for
+    // CC/desktop sessions, whose liveness `liveSessions` (derived from the
+    // relay port-file scan) authoritatively knows. Cursor topics are NOT
+    // ours to prune here: at startup the cursor-bridge's syncBridges runs
+    // async on a 5s timer and hasn't re-registered its sessions yet, so
+    // every cursor-* topic would look "stale" and get deleted — then
+    // recreated seconds later with a new id. The cursor-bridge owns cursor
+    // topic lifecycle (closed-window cleanup) and /cleanzombie prunes stale
+    // ones with real CDP-liveness info. (Prefix sniff until phase 5 unifies
+    // Session sources.)
     const staleNames = store.topics
       .filter((m) => !liveNames.has(m.sessionName))
+      .filter((m) => !m.sessionName.startsWith("cursor-"))
       .map((m) => m.sessionName);
     await Promise.allSettled(staleNames.map((n) => this.deleteTopic(n)));
 
+    // Route every live session through createTopic, which validates an
+    // existing mapping by probing its topic: a healthy topic is reused (and
+    // marked online), a topic deleted in Telegram ("message thread not found")
+    // is dropped and recreated, and a session with no mapping gets a fresh
+    // topic. Trusting existing+online mappings without probing left stale
+    // entries unhealed across restarts (topic deleted mid-run → every send
+    // dropped with "message thread not found").
     await Promise.allSettled(
-      liveSessions.map((s) => {
-        const existing = getTopicBySession(s.name);
-        if (!existing) return this.createTopic(s.name, s.dir, s.id);
-        if (!existing.isOnline) return this.updateTopicStatus(s.name, true);
-        return Promise.resolve();
-      }),
+      liveSessions.map((s) => this.createTopic(s.name, s.dir, s.id)),
     );
 
     info(

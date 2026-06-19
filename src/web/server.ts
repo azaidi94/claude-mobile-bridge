@@ -5,6 +5,7 @@ import { createAgentsRouter } from "./routes/agents";
 import { createSystemRouter } from "./routes/system";
 import { createTasksRouter } from "./routes/tasks";
 import { createAuqBridgeRouter } from "./routes/auq-bridge";
+import { createWebhookRouter } from "./routes/webhook";
 import { WEB_PORT, WEB_URL } from "../config";
 import { info, warn } from "../logger";
 import { resolve, dirname } from "path";
@@ -40,6 +41,7 @@ export function startWebServer(): void {
   app.route("/api/system", createSystemRouter());
   app.route("/api/tasks", createTasksRouter());
   app.route("/api/auq-bridge", createAuqBridgeRouter());
+  app.route("/api/webhook", createWebhookRouter());
 
   // Cache-Control headers. Hashed assets in /assets/ are safe to cache forever
   // (the filename changes per build); index.html must always revalidate or the
@@ -78,13 +80,21 @@ export function startWebServer(): void {
     return c.html(text);
   });
 
+  // Default to loopback so the API is not reachable from the network.
+  // WEB_AUTH_LAN_BYPASS implies LAN exposure is intentional — bind 0.0.0.0
+  // unless the operator pinned a specific address with WEB_BIND_HOST.
+  const hostname =
+    process.env.WEB_BIND_HOST ??
+    (process.env.WEB_AUTH_LAN_BYPASS === "true" ? "0.0.0.0" : "127.0.0.1");
+
   const server = Bun.serve({
     port,
+    hostname,
     idleTimeout: 0,
     fetch(request, s) {
       const ipInfo = s.requestIP(request);
       return app.fetch(request, { remoteAddr: ipInfo?.address ?? null });
     },
   });
-  info(`web: server listening on port ${server.port}`);
+  info(`web: server listening on ${hostname}:${server.port}`);
 }

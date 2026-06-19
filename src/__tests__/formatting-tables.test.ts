@@ -113,3 +113,67 @@ describe("convertMarkdownToHtml: tables", () => {
     expect(html).not.toMatch(/<pre>\s*<pre>/);
   });
 });
+
+describe("convertMarkdownToHtml: $‑pattern safety in placeholder restoration", () => {
+  test("$', $` and $& inside a fenced code block render literally (no duplication)", () => {
+    // Bash commonly uses IFS=$'<char>' to set the field separator.
+    const md = [
+      "```bash",
+      "IFS=$'\\n' read -r x",
+      "echo $'tab\\tseparated'",
+      "```",
+      "",
+      "Trailing text after the block.",
+    ].join("\n");
+    const html = convertMarkdownToHtml(md);
+    // The trailing text must NOT be duplicated inside the <pre> — the
+    // $' and $` replacement patterns would otherwise pull surrounding
+    // text into the code block.
+    const preMatch = html.match(/<pre>([\s\S]*?)<\/pre>/);
+    expect(preMatch).not.toBeNull();
+    const preContent = preMatch![1]!;
+    // Trailing text should not appear inside the code block.
+    expect(preContent).not.toContain("Trailing text after the block.");
+    // The Bash content must be intact.
+    expect(preContent).toContain("IFS=$'\\n'");
+    expect(preContent).toContain("echo $'tab\\tseparated'");
+    // $ patterns must appear literally, not replaced.
+    expect(preContent).toContain("$'");
+    // Trailing text appears outside the code block.
+    expect(html).toContain("Trailing text after the block.");
+  });
+
+  test("$& inside inline code renders literally", () => {
+    const md = "Use `$&` to reference the full match.";
+    const html = convertMarkdownToHtml(md);
+    expect(html).toContain("<code>$&amp;</code>");
+    expect(html).toContain("Use");
+    // $& must not pull "Use" into the code element.
+    expect(html).not.toContain("<code>Use");
+  });
+
+  test("$1, $2 inside a fenced code block are untouched", () => {
+    const md = [
+      "```js",
+      "const swap = 'foo'.replace(/(foo)/, '$1bar');",
+      "```",
+    ].join("\n");
+    const html = convertMarkdownToHtml(md);
+    // $1 should appear literally in the code block (escaped as $ amp;1 by escapeHtml).
+    expect(html).toContain("$1bar");
+    // The code block should contain the original source but exclusively within <pre>
+    // (no injection outside it). Verify the raw code is escaped properly — the
+    // single quote in 'foo' should be escaped to &#39; (or &apos;).
+    expect(html).toContain("<pre>const swap = ");
+  });
+
+  test("$‑patterns inside inline code do not leak", () => {
+    const md = "Run `` IFS=$'\\n' `` then continue.";
+    const html = convertMarkdownToHtml(md);
+    expect(html).toContain("IFS=$'\\n'");
+    // "continue" must not leak into the code element.
+    const codeMatch = html.match(/<code>([\s\S]*?)<\/code>/);
+    expect(codeMatch).not.toBeNull();
+    expect(codeMatch![1]!).not.toContain("continue");
+  });
+});

@@ -2,8 +2,8 @@
  * TCP-relay outbound sends + the per-watch `onReply` wiring shared by both
  * `startWatchingSession` and `startAutoWatch`. The wired callback fans
  * relay replies into Telegram (PDF or text), forwards any file payloads,
- * and sets `suppressRelayReplyText` only after confirmed TG delivery so the
- * JSONL tailer can still rescue dropped sends.
+ * and uses the turn-claim protocol (turn-claims.ts) so the JSONL tailer
+ * can still rescue dropped sends without duplicating successful ones.
  */
 
 import type { Api } from "grammy";
@@ -15,6 +15,7 @@ import { getMessageBus } from "../../messaging";
 import type { SessionContext } from "../../sessions/context";
 import { watches, watchKey } from "./registry";
 import type { WatchState } from "./state";
+import { claimTurn, releaseClaim, turnClaimKey } from "./turn-claims";
 
 /**
  * Send a message via relay while watching (no takeover).
@@ -92,23 +93,32 @@ export function bindRelayReplyHandler(
   const onReply = (msg: RelayReply) => {
     const tid = watchState.threadId;
 
-    // Gate suppress on confirmed Telegram delivery so the JSONL-tailer
-    // fallback can rescue us when the TCP fast-path silently fails (network
-    // blip, TG rate-limit, etc). Previously suppress was set before the
-    // send resolved, locking out the fallback in the exact failure case it
-    // exists for.
-    const markDelivered = (ok: boolean) => {
-      if (ok) watchState.suppressRelayReplyText = true;
-    };
+    // Claim the turn synchronously before the async send so the JSONL tailer
+    // sees the claim even while the send is queued on the bus rate-limiter.
+    // On send failure the claim is released so the tailer fallback delivers.
+    // See turn-claims.ts for the full protocol.
+    if (!watchState.relayReplyClaims) {
+      watchState.relayReplyClaims = new Map();
+    }
+    const claims = watchState.relayReplyClaims;
+
     if (msg.send_as_pdf && msg.text) {
+      const key = turnClaimKey(msg.text);
+      claimTurn(claims, key);
       sendPdfReply(botApi, chatId, msg.text, msg.pdf_filename, tid)
-        .then(markDelivered)
-        .catch(() => {});
+        .then((ok) => {
+          if (!ok) releaseClaim(claims, key);
+        })
+        .catch(() => releaseClaim(claims, key));
     } else if (msg.text) {
+      const key = turnClaimKey(msg.text);
+      claimTurn(claims, key);
       getMessageBus()
         .send({ chatId, threadId: tid, content: msg.text, format: "auto" })
-        .then((r) => markDelivered("messageId" in r))
-        .catch(() => {});
+        .then((r) => {
+          if (!("messageId" in r)) releaseClaim(claims, key);
+        })
+        .catch(() => releaseClaim(claims, key));
     }
 
     if (msg.files?.length) {

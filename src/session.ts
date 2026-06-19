@@ -29,7 +29,11 @@ import {
   checkPendingAskUserRequests,
   checkPendingAskUserQuestionRequests,
 } from "./handlers/streaming";
-import { checkCommandSafety, isPathAllowed } from "./security";
+import {
+  checkCommandSafety,
+  enforceToolSafety,
+  isPathAllowed,
+} from "./security";
 import type { StatusCallback, TokenUsage, AskUserQuestionInput } from "./types";
 import { updateSessionId } from "./sessions";
 import { SessionState } from "./sessions/session-state";
@@ -305,6 +309,7 @@ export async function runQueryStreaming(
     hooks: {
       PreToolUse: [
         { matcher: "WebSearch|WebFetch", hooks: [autoApproveWebTools] },
+        { matcher: "Bash|Read|Write|Edit", hooks: [enforceToolSafety] },
       ],
     },
   };
@@ -426,18 +431,23 @@ export async function runQueryStreaming(
             const toolName = block.name;
             const toolInput = block.input as Record<string, unknown>;
 
-            // Safety check for Bash commands
+            // Stream-side safety checks are report-only: the PreToolUse hook
+            // (enforceToolSafety) is the authoritative enforcement point and
+            // has already denied the call before execution. The assistant
+            // event carrying the tool_use block still streams through here,
+            // so notify the user — but don't abort the query over a tool
+            // that never ran (the thrown error isn't a cleanup error, so it
+            // used to set lastError and leave the session needing /retry).
             if (toolName === "Bash") {
               const command = String(toolInput.command || "");
               const [isSafe, reason] = checkCommandSafety(command);
               if (!isSafe) {
                 warn(`blocked: ${reason}`);
                 await statusCallback("tool", `BLOCKED: ${reason}`);
-                throw new Error(`Unsafe command blocked: ${reason}`);
+                continue;
               }
             }
 
-            // Safety check for file operations
             if (["Read", "Write", "Edit"].includes(toolName)) {
               const filePath = String(toolInput.file_path || "");
               if (filePath) {
@@ -450,7 +460,7 @@ export async function runQueryStreaming(
                 if (!isTmpRead && !isPathAllowed(filePath)) {
                   warn(`blocked: path ${filePath}`);
                   await statusCallback("tool", `Access denied: ${filePath}`);
-                  throw new Error(`File access blocked: ${filePath}`);
+                  continue;
                 }
               }
             }
@@ -589,7 +599,8 @@ export async function runQueryStreaming(
       (queryCompleted ||
         askUserTriggered ||
         askUserQuestionTriggered ||
-        state.stopRequested)
+        state.stopRequested ||
+        state.abortController?.signal.aborted)
     ) {
       if (state.stopRequested && !queryCompleted) {
         completionState = "cancelled";

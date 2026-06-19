@@ -9,7 +9,7 @@ import type { Context } from "grammy";
 import { GrammyError } from "grammy";
 import { ALLOWED_USERS } from "../../config";
 import { isAuthorized } from "../../security";
-import { getTopicStore } from "../../topics";
+import { getTopicStore, getTopicBySession } from "../../topics";
 import type { LedgerEntry } from "../../topics";
 import { getSessions } from "../../sessions";
 import { scanPortFiles } from "../../relay";
@@ -83,14 +83,16 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
 
   const live = new Set(store.topics.map((t) => t.topicId));
 
-  // Ledger pass — the durable record of every topic the bot created. A ledger
-  // entry is a zombie when its session is no longer live, judged by the only
-  // signals that actually track a process: an alive relay port file, or a
-  // connected Cursor bridge. (Transcript-file existence — what reconcile and
-  // getSessions rely on — outlives the process, so it can't catch these.)
-  // ledgerSessionByTopic also drives store-mapping cleanup after deletion.
+  // Ledger pass — the durable record of every topic the bot created. For the
+  // default `/cleanzombie` mode, an entry is a zombie when its session is no
+  // longer live (judged by relay port files / connected Cursor bridges — the
+  // only signals that actually track a process). For `sweep` mode, EVERY
+  // active ledger entry not in the live snapshot is a zombie candidate (this
+  // catches duplicate topics for still-live sessions — same sessionName, old
+  // orphaned topicId).
   const ledgerSessionByTopic = new Map<number, string>();
-  if (mode !== "sweep") {
+  const linearMode = mode === "sweep" && args[1]?.toLowerCase() === "linear";
+  if (mode !== "sweep" || !linearMode) {
     try {
       // Dynamic imports: keep the static module graph of commands.ts free of
       // the cursor bridge and ledger modules, which test harnesses mock.
@@ -111,8 +113,14 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
         return false;
       };
       for (const e of ledgerEntries) {
-        if (!isLedgerSessionLive(e))
+        if (mode === "sweep") {
+          // sweep: any ledger entry whose topicId isn't the currently-tracked
+          // one is an orphan, even if the session is still live elsewhere.
+          if (!live.has(e.topicId))
+            ledgerSessionByTopic.set(e.topicId, e.sessionName);
+        } else if (!isLedgerSessionLive(e)) {
           ledgerSessionByTopic.set(e.topicId, e.sessionName);
+        }
       }
     } catch (err) {
       warn(`cleanzombie: ledger pass failed: ${err}`);
@@ -120,12 +128,12 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
   }
 
   let candidates: number[];
-  if (mode === "sweep") {
+  if (mode === "sweep" && linearMode) {
+    // Linear scan — fallback for ledger-loss recovery. Probes 2..upper.
+    const upperArg = args[2] ? parseInt(args[2], 10) : NaN;
     const maxKnown = Math.max(0, ...created, ...live);
     const upper =
-      Number.isFinite(sweepLimitArg) && sweepLimitArg > 0
-        ? sweepLimitArg
-        : maxKnown + 20;
+      Number.isFinite(upperArg) && upperArg > 0 ? upperArg : maxKnown + 20;
     candidates = [];
     // Skip id=1 (General topic — cannot be deleted).
     for (let id = 2; id <= upper; id++) {
@@ -133,8 +141,25 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
     }
     await busReply(
       ctx,
-      `🧹 Sweeping topic ids 2..${upper} (${candidates.length} to probe). ` +
-        `This may take a moment…`,
+      `🧹 Linear sweep ids 2..${upper} (${candidates.length} to probe). ` +
+        `Slow — most ids are not topics.`,
+    );
+  } else if (mode === "sweep") {
+    // Ledger-driven sweep — probe only known topic ids not in the live snapshot.
+    candidates = [...ledgerSessionByTopic.keys()].sort((a, b) => a - b);
+    if (candidates.length === 0) {
+      const prefix = pruneNote ? `🧹 ${pruneNote}\n` : "";
+      await busReply(
+        ctx,
+        `${prefix}✅ No ledger zombies. ${store.topics.length} live topic(s).\n` +
+          `Try <code>/cleanzombie sweep linear</code> to probe ids blindly.`,
+        "html",
+      );
+      return;
+    }
+    await busReply(
+      ctx,
+      `🧹 Sweeping ${candidates.length} ledger orphan(s) (topics not in live snapshot)…`,
     );
   } else {
     // Union of log-scan zombies (orphans unknown to the store) and ledger
@@ -169,6 +194,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
 
   let removed = 0;
   const failures: number[] = [];
+  const skipReasons = new Map<string, number>();
   for (let i = 0; i < candidates.length; i++) {
     const id = candidates[i]!;
     try {
@@ -193,7 +219,26 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
           continue;
         }
         if (err.error_code === 400) {
-          // Not-ours or already-gone — silent skip.
+          const reason = err.description || "unknown";
+          skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
+          info(`cleanzombie: skip topic ${id}: ${reason}`);
+          // Self-heal: TG says this topic id doesn't exist → tombstone the
+          // ledger so future runs skip it. Same treatment for "not found"
+          // variants. Drop the snapshot mapping ONLY if the session's current
+          // topic id matches `id` — otherwise we'd wipe a still-live mapping
+          // when probing a stale ledger entry whose session has since been
+          // re-topiced.
+          if (
+            reason.includes("TOPIC_ID_INVALID") ||
+            reason.includes("message thread not found")
+          ) {
+            await recordTopicDeleted(id);
+            const sessionName = ledgerSessionByTopic.get(id);
+            if (sessionName) {
+              const current = getTopicBySession(sessionName);
+              if (current?.topicId === id) removeTopicMapping(sessionName);
+            }
+          }
         } else {
           failures.push(id);
           warn(`cleanzombie: delete failed for ${id}: ${err}`);
@@ -209,6 +254,14 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
 
   let reply = `🧹 Deleted ${removed} topic(s).`;
   if (pruneNote) reply += ` ${pruneNote}`;
+  if (skipReasons.size > 0) {
+    const breakdown = [...skipReasons.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([r, n]) => `${n}× ${r}`)
+      .join("\n  ");
+    reply += `\nSkipped 400s:\n  ${breakdown}`;
+  }
   if (failures.length) {
     reply += `\n⚠️ ${failures.length} error(s), first few: ${failures
       .slice(0, 5)

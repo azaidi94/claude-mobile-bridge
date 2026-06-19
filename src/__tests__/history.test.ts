@@ -2,7 +2,11 @@
  * Unit tests for conversation history parsing and formatting.
  */
 
+import "./ensure-test-env";
 import { describe, expect, test } from "bun:test";
+import { writeFile, rm, mkdir } from "fs/promises";
+import { join } from "path";
+import { tmpdir, homedir } from "os";
 
 import {
   formatHistoryMessage,
@@ -10,6 +14,7 @@ import {
   stripChannelTag,
   type ConversationPair,
 } from "../sessions/history";
+import { encodeProjectPath } from "../sessions/tailer";
 
 // ============== formatHistoryMessage ==============
 
@@ -111,6 +116,36 @@ describe("history: getRecentHistory", () => {
 
   test("returns empty for non-existent session", async () => {
     expect(await getRecentHistory("nonexistent-id")).toEqual([]);
+  });
+
+  test("dot-aware encoding: finds JSONL for a cwd that contains dots", async () => {
+    // history.ts must encode dots as dashes (matching Claude Code's own encoding).
+    // Regression: the old encoding used only /→- so paths like
+    // /Users/ali/Dev/my.project resolved to the wrong directory and history
+    // silently returned [].
+    //
+    // We create a real directory under ~/.claude/projects using the encoded
+    // name and verify getRecentHistory returns the written conversation.
+    const cwd = join(tmpdir(), `test.proj-${Date.now()}`);
+    const encoded = encodeProjectPath(cwd);
+    const projectsDir = join(homedir(), ".claude", "projects");
+    const projectDir = join(projectsDir, encoded);
+    const jsonlPath = join(projectDir, "test-session-dot-enc.jsonl");
+
+    await mkdir(projectDir, { recursive: true });
+    try {
+      const line = JSON.stringify({
+        type: "user",
+        message: { content: "dot-path message" },
+      });
+      await writeFile(jsonlPath, line + "\n");
+
+      const pairs = await getRecentHistory(undefined, 3, cwd);
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]!.user).toBe("dot-path message");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
   });
 });
 

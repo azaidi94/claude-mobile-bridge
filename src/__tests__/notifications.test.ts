@@ -161,6 +161,42 @@ describe("notifications: suppressDirNotifications", () => {
     expect(broadcastsContaining(sendMessage, "inflight").length).toBe(0);
   });
 
+  test("remove→add flap within buffer suppresses both broadcasts", async () => {
+    const { api, sendMessage } = makeFakeApi();
+    const handler = createNotificationHandler(api);
+    const dir = "/tmp/flap-suppress-dir";
+
+    // Session goes offline, then reappears within the flap buffer.
+    handler({ added: [], removed: [{ name: "flap-suppress", dir }] });
+    handler({ added: [makeSession("flap-suppress", dir)], removed: [] });
+    await Bun.sleep(FLAP_BUFFER_MS + 200);
+
+    expect(broadcastsContaining(sendMessage, "flap-suppress").length).toBe(0);
+  });
+
+  test("topic manager appearing during the flap buffer is used at fire time", async () => {
+    const { api } = makeFakeApi();
+    const createTopic = mock(() => Promise.resolve(4242));
+    let manager:
+      | { createTopic: typeof createTopic; deleteTopic: () => Promise<void> }
+      | undefined;
+    const handler = createNotificationHandler(
+      api,
+      () => manager as unknown as import("../topics").TopicManager | undefined,
+    );
+
+    handler({
+      added: [makeSession("late-tm", "/tmp/late-tm-dir")],
+      removed: [],
+    });
+    // Manager becomes available while the 2s flap buffer is still running
+    // (fresh install: onForumGroupDetected fires after the first diff).
+    manager = { createTopic, deleteTopic: () => Promise.resolve() };
+    await Bun.sleep(FLAP_BUFFER_MS + 200);
+
+    expect(createTopic).toHaveBeenCalledTimes(1);
+  });
+
   test("broadcast drops chat id when Telegram returns chat not found", async () => {
     const stale = 777_666_001;
     const good = 777_666_002;

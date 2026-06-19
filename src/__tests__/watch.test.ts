@@ -42,6 +42,7 @@ mock.module("../security", () => ({
   rateLimiter: { check: () => [true] },
   isPathAllowed: () => true,
   checkCommandSafety: () => [true, ""],
+  enforceToolSafety: async () => ({}),
 }));
 
 // Mutable settings state so tests can tune getContextNotifyStep via saveSetting.
@@ -594,7 +595,11 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
 
   test("relay_reply with originChat === ownChat sends nothing (TCP dedup preserved)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
-    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    // Simulate TCP having claimed this turn before the tailer fired.
+    const { turnClaimKey } = require("../handlers/watch/turn-claims");
+    const claims = new Map<string, number>();
+    claims.set(turnClaimKey("hello"), Date.now() + 5 * 60 * 1000);
+    (state as any).relayReplyClaims = claims;
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -608,7 +613,11 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
 
   test("relay_reply with originChat === undefined sends nothing (dedup for own-path)", () => {
     const state = makeState(-1003968796171, 6302, "/repo/x");
-    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    // Simulate TCP having claimed this turn before the tailer fired.
+    const { turnClaimKey } = require("../handlers/watch/turn-claims");
+    const claims = new Map<string, number>();
+    claims.set(turnClaimKey("hello"), Date.now() + 5 * 60 * 1000);
+    (state as any).relayReplyClaims = claims;
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -653,9 +662,17 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
     expect(sent[0]!.text).toContain("fallback");
   });
 
-  test("relay_reply own-chat WITH suppressRelayReplyText skips send and resets flag", () => {
+  test("relay_reply own-chat with a matching turn claim skips send and consumes the claim", () => {
+    const {
+      turnClaimKey,
+      claimTurn,
+    } = require("../handlers/watch/turn-claims");
     const state = makeState(-1003968796171, 6302, "/repo/x");
-    (state as any).suppressRelayReplyText = true; // TCP already delivered
+    // TCP path claimed this turn synchronously before its async send.
+    const claims = new Map<string, number>();
+    (state as any).relayReplyClaims = claims;
+    claimTurn(claims, turnClaimKey("tcp-already-sent"));
+
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -668,8 +685,10 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
       },
       6302,
     );
+    // Tailer sees the claim → skips its fallback send and consumes the claim
+    // so a later turn with identical text is not suppressed.
     expect(sent).toHaveLength(0);
-    expect((state as any).suppressRelayReplyText).toBe(false);
+    expect(claims.has(turnClaimKey("tcp-already-sent"))).toBe(false);
   });
 });
 

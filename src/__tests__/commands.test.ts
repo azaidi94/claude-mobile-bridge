@@ -157,6 +157,9 @@ const stubSessionState = {
   get clearStopRequested() {
     return mockSessionMethods.clearStopRequested;
   },
+  get clearPendingPlanApproval() {
+    return mockSessionMethods.clearPendingPlanApproval;
+  },
   get kill() {
     return mockSessionMethods.kill;
   },
@@ -335,6 +338,7 @@ mock.module("../topics", () => ({
   safeSendInThread: mock(async () => ({})),
   TopicManager: class {},
   getTopicStore: mock(() => ({ chatId: 0, topics: [] })),
+  getTopicBySession: mock(() => undefined),
 }));
 
 // Mock session singleton
@@ -356,6 +360,7 @@ const mockSessionState = {
 const mockSessionMethods = {
   stop: mock(() => Promise.resolve(false as "stopped" | "pending" | false)),
   clearStopRequested: mock(() => {}),
+  clearPendingPlanApproval: mock(() => {}),
   kill: mock(() => Promise.resolve()),
   setWorkingDir: mock((dir: string) => {
     mockSessionState.workingDir = dir;
@@ -411,6 +416,11 @@ const mockBusEdit = mock(
     return { ok: true as const };
   },
 );
+const mockHandleText = mock(async () => {});
+mock.module("../handlers/text", () => ({
+  handleText: mockHandleText,
+}));
+
 mock.module("../messaging", () => ({
   getMessageBus: () => ({ send: mockBusSend, edit: mockBusEdit }),
   setMessageBus: mock(() => {}),
@@ -515,6 +525,7 @@ function resetMocks() {
   mockSessionState.lastUsage = null;
   mockSessionState.queryStarted = null;
 
+  mockHandleText.mockClear();
   mockSessionMethods.stop.mockClear();
   mockSessionMethods.clearStopRequested.mockClear();
   mockSessionMethods.kill.mockClear();
@@ -1070,6 +1081,30 @@ describe("commands: /new", () => {
     expect(ctx._replies[0]?.text).toContain("Unauthorized");
   });
 
+  test("handleNew rejects path outside ALLOWED_PATHS and does not spawn", async () => {
+    // ALLOWED_PATHS = ["/tmp"] — /usr is outside that boundary
+    const accessSpy = spyOn(fsPromises, "access").mockImplementation(
+      async (path, mode?) => {
+        if (String(path) === "/usr/local/bin/claude") return undefined;
+        return realFsAccess(path, mode);
+      },
+    );
+    try {
+      const { handleNew } = await import("../handlers/commands");
+      const ctx = createMockContext({
+        userId: 123456,
+        messageText: "/new /usr/local",
+      });
+
+      await handleNew(ctx as any);
+
+      expect(ctx._replies[0]?.text).toContain("not in allowed");
+      expect(bunSpawnSyncSpy).not.toHaveBeenCalled();
+    } finally {
+      accessSpy.mockRestore();
+    }
+  });
+
   test("handleNew auto-watches the newly spawned session in the same directory", async () => {
     const { handleNew, setTopicManager } = await import("../handlers/commands");
     setTopicManager({
@@ -1456,6 +1491,30 @@ describe("commands: /retry", () => {
     expect(ctx._replies[0]?.text).toContain("running");
     expect(ctx._replies[0]?.text).toContain("/stop");
   });
+
+  test("handleRetry passes intact from.id and chat.id to handleText", async () => {
+    const { handleRetry } = await import("../handlers/commands");
+    const sessionStateMod = (await import("../sessions/session-state")) as any;
+    sessionStateMod._resetSessionStatesForTests();
+    const state = sessionStateMod.makeRealLikeState("retry-ctx-test");
+    state.lastMessage = "the previous message";
+    const ctx = createMockContext({ userId: 123456, chatId: 789 });
+    const sctx = {
+      source: "cc" as const,
+      sessionName: "retry-ctx-test",
+      sessionDir: "/tmp",
+      sessionId: "",
+    };
+
+    await handleRetry(ctx as any, sctx as any);
+
+    expect(mockHandleText).toHaveBeenCalledTimes(1);
+    const [calledCtx, , calledText] = mockHandleText.mock
+      .calls[0] as unknown as [any, any, string];
+    expect(calledCtx.from?.id).toBe(123456);
+    expect(calledCtx.chat?.id).toBe(789);
+    expect(calledText).toBe("the previous message");
+  });
 });
 
 // ============== /refresh Command Tests ==============
@@ -1523,7 +1582,7 @@ describe("commands: parsing", () => {
       const { handleNew } = await import("../handlers/commands");
       const ctx = createMockContext({
         userId: 123456,
-        messageText: "/new /nonexistent/path",
+        messageText: "/new /tmp/nonexistent-path-xyz-99999",
       });
 
       await handleNew(ctx as any);
@@ -1897,6 +1956,23 @@ describe("commands: /cd", () => {
 
     const { rm } = await import("fs/promises");
     await rm(tmpDir, { recursive: true }).catch(() => {});
+  });
+
+  test("handlePwd reflects state.workingDir override after cd (state takes precedence over sctx.sessionDir)", async () => {
+    const { handlePwd } = await import("../handlers/commands");
+    // sessionDir and workingDir differ — workingDir must win
+    mockActiveSession = {
+      name: "precedence-session",
+      info: { dir: "/tmp/session-dir", name: "precedence-session" },
+    };
+    // Simulate /cd having updated workingDir to a different path
+    mockSessionState.workingDir = "/tmp/after-cd-dir";
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handlePwd(ctx as any, mkSctx());
+
+    expect(ctx._replies[0]?.text).toContain("/tmp/after-cd-dir");
+    expect(ctx._replies[0]?.text).not.toContain("/tmp/session-dir");
   });
 });
 

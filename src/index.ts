@@ -14,7 +14,7 @@ setupBotLogRotation(
 import { run } from "@grammyjs/runner";
 import { startCursorBridge, stopCursorBridge } from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir } from "./settings";
+import { getWorkingDir, getAutoWatchOnSpawn } from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -183,6 +183,11 @@ onBridgeChange((online) => {
 // tailer and emits noisy `watch: stopped` logs.
 const AUTO_WATCH_RETRY_MS = 60_000;
 const autoWatchRetryTimer: Timer = setInterval(() => {
+  // Respect the autoWatchOnSpawn setting here too — previously this loop
+  // re-watched every topic unconditionally, so disabling the setting in the
+  // /new spawn path never fully took effect (this loop re-armed the watch
+  // within 60s). Both paths now honour the same toggle.
+  if (!getAutoWatchOnSpawn()) return;
   const tm = topicManager;
   if (!tm) return;
   const chatId = tm.getChatId();
@@ -222,7 +227,6 @@ if (primaryChatId !== undefined && storedTopicChatId) {
  */
 function pingRelayForSession(
   sessionName: string,
-  topicId: number,
   sessionDir: string,
   chatId: number,
   sessionId?: string,
@@ -268,13 +272,16 @@ function pingRelayForSession(
 
 const notifyHandler = createNotificationHandler(
   bot.api,
-  topicManager,
+  // Getter, not the value: topicManager may still be undefined here on a fresh
+  // install (it's created later by onForumGroupDetected). Resolving per-event
+  // means notifications start creating topics as soon as the manager exists,
+  // without a restart.
+  () => topicManager,
   (sessionName, topicId, sessionDir, sessionId, claudePid) => {
     const chatId = topicManager?.getChatId();
     if (chatId !== undefined && topicId !== undefined) {
       pingRelayForSession(
         sessionName,
-        topicId,
         sessionDir,
         chatId,
         sessionId,
@@ -311,6 +318,16 @@ if (cursorBridgeEnabled) {
   info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
 }
 
+// Cron scheduler runs only when we know which chat to send results to;
+// otherwise a fired job has no destination.
+let stopCronSchedulerFn: (() => void) | undefined;
+if (primaryChatId !== undefined) {
+  const { startCronScheduler, stopCronScheduler } =
+    await import("./cron/scheduler");
+  stopCronSchedulerFn = stopCronScheduler;
+  startCronScheduler(bot.api, primaryChatId);
+}
+
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
   await topicManager.reconcile(
@@ -321,14 +338,7 @@ if (topicManager && primaryChatId !== undefined) {
   for (const s of sessions) {
     const topic = getTopicBySession(s.name);
     if (topic) {
-      pingRelayForSession(
-        s.name,
-        topic.topicId,
-        s.dir,
-        primaryChatId,
-        s.id,
-        s.pid,
-      );
+      pingRelayForSession(s.name, s.dir, primaryChatId, s.id, s.pid);
       startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
         (err) =>
           warn(
@@ -345,7 +355,8 @@ await bot.api.setMyCommands([
   { command: "sessions", description: "Browse offline sessions" },
   { command: "new", description: "Open desktop Claude (Terminal)" },
   { command: "run", description: "Async — fire prompt, ping when done" },
-  { command: "stop", description: "Interrupt current query" },
+  { command: "stop", description: "Stop query + clear pending prompts" },
+  { command: "interrupt", description: "Stop query, keep pending prompts" },
   { command: "kill", description: "Terminate session" },
   { command: "retry", description: "Retry last message" },
   { command: "status", description: "Show session details" },
@@ -355,6 +366,8 @@ await bot.api.setMyCommands([
   { command: "settings", description: "Persistent settings panel" },
   { command: "groupmode", description: "Toggle group vs private routing" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
+  { command: "cron", description: "Schedule prompts at cron times" },
+  { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);
@@ -399,32 +412,35 @@ setRestartFn(restartRunner);
 
 function monitorRunner() {
   const monitored = runner;
+  // Re-check guards at FIRE time, not just when scheduling: a /restart (or a
+  // shutdown) arriving during the 3s window already swapped `runner`, and an
+  // unconditional restart here would start a second concurrent getUpdates
+  // poller → Telegram 409 conflicts.
+  const scheduleRestart = (reason: string) => {
+    if (stopping || monitored !== runner) return;
+    warn(`${reason}, restarting in 3s`);
+    setTimeout(() => {
+      if (stopping || monitored !== runner) return;
+      runner = run(bot);
+      monitorRunner();
+    }, 3000);
+  };
   monitored
     .task()
-    ?.then(() => {
-      if (stopping || monitored !== runner) return;
-      warn("runner stopped unexpectedly, restarting in 3s");
-      setTimeout(() => {
-        runner = run(bot);
-        monitorRunner();
-      }, 3000);
-    })
-    .catch((err) => {
-      if (stopping || monitored !== runner) return;
-      warn(`runner error: ${err}, restarting in 3s`);
-      setTimeout(() => {
-        runner = run(bot);
-        monitorRunner();
-      }, 3000);
-    });
+    ?.then(() => scheduleRestart("runner stopped unexpectedly"))
+    .catch((err) => scheduleRestart(`runner error: ${err}`));
 }
 monitorRunner();
 
 // Graceful shutdown
 const stopRunner = () => {
+  // Set stopping unconditionally — a runner that died into the 3s restart
+  // window is not isRunning(), and without this the pending restart timer
+  // would resurrect it after we asked to stop.
+  stopping = true;
   if (runner.isRunning()) {
-    stopping = true;
     info("stopping bot");
+    stopCronSchedulerFn?.();
     stopWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
@@ -433,20 +449,36 @@ const stopRunner = () => {
   }
 };
 
+/** Best-effort flush of cron + prompt stores before shutdown. */
+async function flushStores(): Promise<void> {
+  try {
+    const [{ flush: flushCron }, { flush: flushPrompts }] = await Promise.all([
+      import("./cron/store"),
+      import("./prompts/store"),
+    ]);
+    await Promise.all([flushCron(), flushPrompts()]);
+  } catch (err) {
+    warn(`shutdown flush: ${err}`);
+  }
+}
+
 process.on("uncaughtException", (err) => {
   logError("process: uncaught exception", err);
   stopRunner();
-  process.exit(1);
+  flushStores().finally(() => process.exit(1));
+  setTimeout(() => process.exit(1), 2_000);
 });
 
 process.on("SIGINT", () => {
   info("SIGINT");
   stopRunner();
-  process.exit(0);
+  flushStores().finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2_000);
 });
 
 process.on("SIGTERM", () => {
   info("SIGTERM");
   stopRunner();
-  process.exit(0);
+  flushStores().finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2_000);
 });

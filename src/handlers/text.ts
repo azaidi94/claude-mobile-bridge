@@ -24,6 +24,7 @@ import {
   pendingAskUserQuestions,
   pendingAskUserQuestionCustom,
   sendPlanContent,
+  pendingKey,
 } from "./streaming";
 import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
@@ -50,6 +51,7 @@ import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
+import { markReceived } from "./reactions";
 
 /**
  * Bus-routed reply helper. Use for plain or HTML text replies including
@@ -83,11 +85,12 @@ function busReply(
 export async function handleText(
   ctx: Context,
   sctx?: SessionContext,
+  textOverride?: string,
 ): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
-  let message = ctx.message?.text;
+  let message = textOverride ?? ctx.message?.text;
 
   if (!userId || !message || !chatId) {
     return;
@@ -106,6 +109,9 @@ export async function handleText(
   // an open ask_remote in another topic. The text is consumed here — never
   // forwarded into the Claude session as a fresh prompt.
   const incomingThreadId = ctx.message?.message_thread_id;
+  // Composite key for pending-input maps — (chatId, threadId) so forum topics
+  // don't hijack each other's pending replies.
+  const incomingPendingKey = pendingKey(chatId, incomingThreadId);
   if (tryConsumeCustomTextAnswer(chatId, incomingThreadId, message)) {
     return;
   }
@@ -120,6 +126,15 @@ export async function handleText(
     username,
     messagePreview: truncate(message, 120),
   });
+
+  // Stage-aware reactions — instant 👀 receipt so the user sees the bot
+  // noticed their message. Promoted to 🤔 by event-router on first tool/text
+  // event and to 🎉 on turn_end. If the message bails before reaching CC,
+  // the 👀 honestly stays put.
+  const inboundMessageId = ctx.message?.message_id;
+  if (inboundMessageId !== undefined) {
+    markReceived(ctx.api, chatId, incomingThreadId, inboundMessageId);
+  }
 
   // Topic routing — use the explicit SessionContext the caller resolved.
   // Falls back to the General-topic nudge when no context (private chats,
@@ -147,10 +162,11 @@ export async function handleText(
   } else if (isTopicChat(ctx) && isGeneralTopic(ctx)) {
     // Free text in General — nudge to use a topic.
     // Allow through if there are pending interactive states.
+    const incomingPendingKey = pendingKey(chatId, incomingThreadId);
     if (
-      !pendingSettingsInput.has(chatId) &&
-      !pendingPlanFeedback.has(chatId) &&
-      !pendingAskUserQuestionCustom.has(chatId)
+      !pendingSettingsInput.has(incomingPendingKey) &&
+      !pendingPlanFeedback.has(incomingPendingKey) &&
+      !pendingAskUserQuestionCustom.has(incomingPendingKey)
     ) {
       await busReply(
         ctx,
@@ -161,10 +177,11 @@ export async function handleText(
   }
 
   // 1.4. Check for pending settings input (working dir entry)
-  if (pendingSettingsInput.has(chatId)) {
-    const field = pendingSettingsInput.get(chatId)!;
+  const _settingsPK = pendingKey(chatId, incomingThreadId);
+  if (pendingSettingsInput.has(_settingsPK)) {
+    const field = pendingSettingsInput.get(_settingsPK)!;
     if (message.trim() === "/cancel") {
-      pendingSettingsInput.delete(chatId);
+      pendingSettingsInput.delete(_settingsPK);
       await busReply(ctx, "✖ Cancelled.", { threadId });
       return;
     }
@@ -187,7 +204,7 @@ export async function handleText(
         return;
       }
       await saveSetting({ workingDir: path });
-      pendingSettingsInput.delete(chatId);
+      pendingSettingsInput.delete(_settingsPK);
       await busReply(
         ctx,
         `✅ Working dir set:\n<code>${escapeHtml(path)}</code>`,
@@ -198,9 +215,10 @@ export async function handleText(
   }
 
   // 1.5. Check for pending plan feedback
-  if (pendingPlanFeedback.has(chatId)) {
-    const requestId = pendingPlanFeedback.get(chatId)!;
-    pendingPlanFeedback.delete(chatId);
+  const _planPK = pendingKey(chatId, incomingThreadId);
+  if (pendingPlanFeedback.has(_planPK)) {
+    const requestId = pendingPlanFeedback.get(_planPK)!;
+    pendingPlanFeedback.delete(_planPK);
 
     // Plan-edit replies only make sense against a resolved per-session
     // SessionState. Without sctx (private DM / General topic) there's no
@@ -273,9 +291,10 @@ export async function handleText(
   }
 
   // 1.6. Check for pending AskUserQuestion custom input
-  if (pendingAskUserQuestionCustom.has(chatId)) {
-    const requestId = pendingAskUserQuestionCustom.get(chatId)!;
-    pendingAskUserQuestionCustom.delete(chatId);
+  const _customPK = pendingKey(chatId, incomingThreadId);
+  if (pendingAskUserQuestionCustom.has(_customPK)) {
+    const requestId = pendingAskUserQuestionCustom.get(_customPK)!;
+    pendingAskUserQuestionCustom.delete(_customPK);
 
     const pending = pendingAskUserQuestions.get(requestId);
     if (!pending) {

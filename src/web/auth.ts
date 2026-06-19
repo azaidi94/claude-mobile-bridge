@@ -1,7 +1,15 @@
-import { createHmac } from "crypto";
+import { createHmac, createHash, timingSafeEqual } from "crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
-import { TELEGRAM_TOKEN } from "../config";
+import { TELEGRAM_TOKEN, ALLOWED_USERS } from "../config";
+
+// Normalises both strings to equal-length SHA-256 digests before comparing
+// so callers cannot leak secrets via timing differences.
+export function timingSafeCompare(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
 
 export function validateInitData(
   initData: string,
@@ -31,7 +39,7 @@ export function validateInitData(
     .update(dataCheckString)
     .digest("hex");
 
-  return expectedHash === hash;
+  return timingSafeCompare(expectedHash, hash);
 }
 
 export function extractInitData(c: Context): string {
@@ -78,5 +86,24 @@ export const authMiddleware = createMiddleware(async (c, next) => {
   if (!token || !validateInitData(initData, token)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+
+  // Reject any Telegram user not in the allowlist. An empty allowlist means
+  // no one is permitted (startup validation enforces it's non-empty in prod).
+  let userId: number | undefined;
+  try {
+    const params = new URLSearchParams(initData);
+    const userJson = params.get("user");
+    if (!userJson) return c.json({ error: "Unauthorized" }, 401);
+    const parsed = JSON.parse(userJson) as { id?: unknown };
+    if (typeof parsed.id !== "number")
+      return c.json({ error: "Unauthorized" }, 401);
+    userId = parsed.id;
+  } catch {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  if (!ALLOWED_USERS.includes(userId)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
   return next();
 });

@@ -7,6 +7,7 @@ import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import { escapeHtml } from "../formatting";
+import { encodeProjectPath } from "./tailer";
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const CHUNK_SIZE = 128 * 1024; // 128KB
@@ -46,9 +47,10 @@ async function findJsonlPath(sessionId: string): Promise<string | null> {
 /**
  * Find the most recent JSONL file for a directory.
  * Project dirs are path-encoded: /Users/ali/Dev/foo → -Users-ali-Dev-foo
+ * Dots are also encoded: /path/to/.claude → -path-to--claude
  */
 async function findLatestJsonlForDir(dir: string): Promise<string | null> {
-  const encoded = dir.replace(/\/+$/, "").replace(/\//g, "-");
+  const encoded = encodeProjectPath(dir.replace(/\/+$/, ""));
 
   try {
     const projectDir = join(PROJECTS_DIR, encoded);

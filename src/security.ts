@@ -6,6 +6,10 @@
 
 import { resolve, normalize } from "path";
 import { realpathSync } from "fs";
+import type {
+  HookCallback,
+  PreToolUseHookInput,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { RateLimitBucket } from "./types";
 import * as config from "./config";
 
@@ -127,26 +131,67 @@ export function checkCommandSafety(
 ): [safe: boolean, reason: string] {
   const lowerCommand = command.toLowerCase();
 
-  // Check blocked patterns
+  // Check blocked patterns.
+  // Patterns ending with '/' or '~' get a word-boundary check after the match
+  // to prevent false positives where the pattern is a prefix of a longer path
+  // (e.g. "rm -rf /" must not block "rm -rf /tmp/build").
   for (const pattern of config.BLOCKED_PATTERNS) {
-    if (lowerCommand.includes(pattern.toLowerCase())) {
-      return [false, `Blocked pattern: ${pattern}`];
+    const patternLower = pattern.toLowerCase();
+    const idx = lowerCommand.indexOf(patternLower);
+    if (idx === -1) continue;
+    const lastChar = patternLower[patternLower.length - 1];
+    if (lastChar === "/" || lastChar === "~") {
+      const charAfter = lowerCommand[idx + patternLower.length];
+      // Allow only if the pattern is immediately continued by more path
+      // characters. Any shell word terminator — whitespace (incl. tab),
+      // separators, redirects, subshell/quote delimiters — ends the word,
+      // so the pattern matched a bare target, not a longer-path prefix.
+      if (charAfter !== undefined && !/[\s;&|<>()`'"]/.test(charAfter)) {
+        continue;
+      }
     }
+    return [false, `Blocked pattern: ${pattern}`];
   }
 
-  // Special handling for rm commands - validate paths
-  if (lowerCommand.includes("rm ")) {
+  // Special handling for rm commands - validate paths.
+  // Use word-boundary detection to avoid false positives like "confirm delete".
+  if (/(?:^|[;&|`$(\s])rm\s/.test(command)) {
     try {
-      // Simple parsing: extract arguments after rm
-      const rmMatch = command.match(/rm\s+(.+)/i);
+      const rmMatch = command.match(/(?:^|[;&|`$(\s])rm\s+(.*)/i);
       if (rmMatch) {
-        const args = rmMatch[1]!.split(/\s+/);
+        const args = rmMatch[1]!.split(/\s+/).filter(Boolean);
+
+        // Detect recursive and force flags in any order / combination
+        const hasRecursive = args.some(
+          (a) =>
+            a === "-r" ||
+            a === "-R" ||
+            a === "--recursive" ||
+            /^-[a-zA-Z]*[rR]/.test(a),
+        );
+        const hasForce = args.some(
+          (a) => a === "-f" || a === "--force" || /^-[a-zA-Z]*f/.test(a),
+        );
+
         for (const arg of args) {
           // Skip flags
-          if (arg.startsWith("-") || arg.length <= 1) continue;
+          if (arg.startsWith("-")) continue;
 
-          // Check if path is allowed
-          if (!isPathAllowed(arg)) {
+          // Strip surrounding quotes before path validation
+          const stripped = arg.replace(/^["']|["']$/g, "");
+          if (!stripped) continue;
+
+          // Catastrophic targets (~, /) must be blocked even if HOME is in
+          // ALLOWED_PATHS — rm -rf ~ or rm -rf / deletes the entire tree.
+          if (
+            hasRecursive &&
+            hasForce &&
+            (stripped === "/" || stripped === "~")
+          ) {
+            return [false, `rm target outside allowed paths: ${arg}`];
+          }
+
+          if (!isPathAllowed(stripped)) {
             return [false, `rm target outside allowed paths: ${arg}`];
           }
         }
@@ -159,6 +204,56 @@ export function checkCommandSafety(
 
   return [true, ""];
 }
+
+// ============== PreToolUse Safety Hook ==============
+
+/**
+ * PreToolUse hook that enforces command and path safety BEFORE tool execution.
+ * Registered with matcher "Bash|Read|Write|Edit" in session options.
+ * This is the authoritative enforcement point; stream-side checks remain as
+ * defense-in-depth.
+ */
+export const enforceToolSafety: HookCallback = async (input) => {
+  const preInput = input as PreToolUseHookInput;
+  const toolName = preInput.tool_name;
+  const toolInput = preInput.tool_input as Record<string, unknown>;
+
+  if (toolName === "Bash") {
+    const command = String(toolInput.command || "");
+    const [isSafe, reason] = checkCommandSafety(command);
+    if (!isSafe) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse" as const,
+          permissionDecision: "deny" as const,
+          permissionDecisionReason: reason,
+        },
+      };
+    }
+  }
+
+  if (toolName === "Read" || toolName === "Write" || toolName === "Edit") {
+    const filePath = String(toolInput.file_path || "");
+    if (filePath) {
+      const isTmpRead =
+        toolName === "Read" &&
+        (config.TEMP_PATHS.some((p) => filePath.startsWith(p)) ||
+          filePath.includes("/.claude/"));
+
+      if (!isTmpRead && !isPathAllowed(filePath)) {
+        return {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse" as const,
+            permissionDecision: "deny" as const,
+            permissionDecisionReason: `File access blocked: ${filePath}`,
+          },
+        };
+      }
+    }
+  }
+
+  return {};
+};
 
 // ============== Authorization ==============
 

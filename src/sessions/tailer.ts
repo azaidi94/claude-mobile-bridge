@@ -107,6 +107,10 @@ export class SessionTailer {
   private pollTimer: Timer | null = null;
   private debounceTimer: Timer | null = null;
   private stopped = false;
+  /** Prevents overlapping readNew() calls from replaying the same byte range. */
+  private readInFlight = false;
+  /** True when a second read was requested while one was already in flight. */
+  private readPending = false;
   /**
    * Tool_use ids of channel-relay tool calls (reply / edit_message / react).
    * Their assistant-side blocks are silenced (emitted as `relay_reply` or
@@ -236,24 +240,76 @@ export class SessionTailer {
   }
 
   /**
-   * Read new bytes from the file and parse lines.
+   * Schedule a read if not already in flight. Concurrent callers (poll timer
+   * + fs.watch debounce) coalesce: at most one extra read queues while
+   * another is running, preventing the same byte range from being replayed.
    */
-  private async readNew(): Promise<void> {
+  private readNew(): void {
     if (this.stopped) return;
+    if (this.readInFlight) {
+      this.readPending = true;
+      return;
+    }
+    this.readInFlight = true;
+    void this.doRead();
+  }
 
+  /**
+   * Read new bytes from the file and parse lines.
+   *
+   * Torn-write safety: only advance the offset past the last `\n`-terminated
+   * line. If the writer is mid-append the trailing fragment stays unconsumed
+   * and will be picked up on the next read, so no entry is permanently lost.
+   *
+   * Stopped safety: checks `this.stopped` after each await and before each
+   * callback delivery, so `stop()` is effective even for in-flight reads.
+   */
+  private async doRead(): Promise<void> {
     try {
+      if (this.stopped) return;
+
       const file = Bun.file(this.filePath);
       const size = file.size;
-      if (size <= this.offset) return;
 
-      const slice = file.slice(this.offset, size);
+      // Truncation / in-place rewrite recovery. If the file shrank below our
+      // saved offset (e.g. Claude Code compacted and rewrote the JSONL), the
+      // old `size <= offset` guard would bail forever — the tailer went
+      // silently dead for that session while fs.watch/poll kept firing. Resync
+      // to the new EOF so subsequent appends are read again. We jump to EOF
+      // (rather than re-reading from 0) to avoid replaying the whole rewritten
+      // file into the surfaces.
+      if (size < this.offset) {
+        warn(
+          `tailer: file shrank (${this.offset} → ${size}), resyncing to EOF: ${this.filePath}`,
+        );
+        this.offset = size;
+        return;
+      }
+      if (size === this.offset) return;
+
+      const readStart = this.offset;
+      const slice = file.slice(readStart, size);
       const text = await slice.text();
-      this.offset = size;
 
-      const lines = text.split("\n").filter(Boolean);
+      if (this.stopped) return;
+
+      // Only consume up to the last complete (newline-terminated) line.
+      // Bytes after the last `\n` are a partial write; leave them unconsumed
+      // so the next read will retry from the same position.
+      const lastNewline = text.lastIndexOf("\n");
+      if (lastNewline === -1) return;
+
+      const consumed = text.slice(0, lastNewline + 1);
+      // Offsets are byte offsets; text.length is UTF-16 code units. Use
+      // Buffer.byteLength to account for multi-byte UTF-8 characters.
+      this.offset = readStart + Buffer.byteLength(consumed, "utf-8");
+
+      const lines = consumed.split("\n").filter(Boolean);
       for (const line of lines) {
+        if (this.stopped) return;
         const events = this.parseLine(line);
         for (const event of events) {
+          if (this.stopped) return;
           try {
             this.callback(event);
           } catch (err) {
@@ -263,6 +319,12 @@ export class SessionTailer {
       }
     } catch (err) {
       debug(`tailer: read error: ${err}`);
+    } finally {
+      this.readInFlight = false;
+      if (this.readPending && !this.stopped) {
+        this.readPending = false;
+        this.readNew();
+      }
     }
   }
 
@@ -546,9 +608,14 @@ export class SessionTailer {
   }
 }
 
+/** Encode a cwd into the directory-name segment Claude Code uses under ~/.claude/projects/. */
+export function encodeProjectPath(cwd: string): string {
+  return cwd.replace(/[/.]/g, "-");
+}
+
 /** Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`. */
 function projectDir(cwd: string): string {
-  return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"));
+  return join(PROJECTS_DIR, encodeProjectPath(cwd));
 }
 
 /**

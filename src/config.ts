@@ -321,6 +321,13 @@ export const WEB_APP_SHORT_URL = process.env.WEB_APP_SHORT_URL?.trim() || "";
 export const RELAY_AUQ_SECRET = process.env.RELAY_AUQ_SECRET?.trim() || "";
 
 /**
+ * Shared secret for POST /api/webhook/notify — lets external systems (CI,
+ * cron jobs, deploy hooks) inject a message into a TG topic. Empty disables
+ * the endpoint entirely.
+ */
+export const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET?.trim() || "";
+
+/**
  * If true, bypass auth for direct-to-port requests from loopback or RFC 1918
  * LAN addresses (no X-Forwarded-For / X-Real-IP header).
  * Safe behind a reverse proxy because proxies always set X-Forwarded-For.

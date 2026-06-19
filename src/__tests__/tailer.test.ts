@@ -15,6 +15,7 @@ import {
   SessionTailer,
   findSessionJsonlPath,
   getExpectedJsonlPath,
+  encodeProjectPath,
   type TailEvent,
 } from "../sessions/tailer";
 
@@ -901,6 +902,24 @@ describe("tailer: findSessionJsonlPath", () => {
   });
 });
 
+// ============== encodeProjectPath ==============
+
+describe("tailer: encodeProjectPath", () => {
+  test("replaces slashes with dashes", () => {
+    expect(encodeProjectPath("/Users/ali/Dev/foo")).toBe("-Users-ali-Dev-foo");
+  });
+
+  test("replaces dots with dashes", () => {
+    expect(encodeProjectPath("/path/to/.claude/worktrees")).toBe(
+      "-path-to--claude-worktrees",
+    );
+  });
+
+  test("handles paths with no special chars", () => {
+    expect(encodeProjectPath("myproject")).toBe("myproject");
+  });
+});
+
 // ============== getExpectedJsonlPath ==============
 
 describe("tailer: getExpectedJsonlPath", () => {
@@ -1004,6 +1023,115 @@ describe("tailer: lifecycle", () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0]!.type).toBe("text");
     expect(events[0]!.content).toBe("New content");
+  });
+
+  test("recovers after the file is truncated/rewritten below the saved offset", async () => {
+    // Regression: readNew()'s `size <= offset` guard used to bail forever once
+    // a watched JSONL shrank below the saved offset (in-place rewrite). The
+    // tailer then went silently dead for that session — assistant output still
+    // arrived via the relay TCP path, masking it, but native terminal input
+    // (tailer-only) vanished. Recovery resyncs the offset to the new EOF and
+    // resumes emitting subsequent appends.
+    const events: TailEvent[] = [];
+
+    // Large initial content so start() seeks to a high offset.
+    const bigLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "x".repeat(2000) }] },
+    });
+    await writeFile(testFile, bigLine + "\n");
+
+    const tailer = new SessionTailer(testFile, (e) => events.push(e));
+    await tailer.start(); // offset == big size
+    try {
+      // Rewrite the file far smaller than the saved offset (simulates a
+      // compaction / in-place rewrite). This is what used to wedge readNew.
+      await writeFile(testFile, "");
+      // Let one poll detect the shrink and resync the offset to the new EOF.
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+
+      // A subsequent append must now be picked up — proving the tailer is
+      // alive again rather than stuck on the stale offset.
+      const { appendFile } = await import("fs/promises");
+      const newLine = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "post-truncation input" },
+      });
+      await appendFile(testFile, newLine + "\n");
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+
+      const userEvt = events.find((e) => e.type === "user");
+      expect(userEvt).toBeDefined();
+      expect(userEvt!.content).toBe("post-truncation input");
+    } finally {
+      tailer.stop();
+    }
+  });
+
+  test("torn-write: partial line is not permanently lost; multi-byte char handled", async () => {
+    // Simulates a writer that is mid-append when the tailer fires.
+    // entry1 contains a multi-byte UTF-8 character (é = 2 bytes) to verify
+    // that byte-offset accounting is correct.
+    const entry1 = JSON.stringify({
+      type: "user",
+      message: { content: "héllo" },
+    });
+    const entry2 = JSON.stringify({
+      type: "user",
+      message: { content: "wörld" },
+    });
+    // Partial: first entry complete, second entry truncated mid-JSON (no newline).
+    const partial2 = entry2.slice(0, Math.floor(entry2.length / 2));
+
+    const events: TailEvent[] = [];
+    const tailer = new SessionTailer(testFile, (e) => events.push(e));
+    tailer.startFromBeginning();
+    await tailer.start();
+
+    const { appendFile } = await import("fs/promises");
+    await appendFile(testFile, entry1 + "\n" + partial2);
+
+    // Wait for poll to fire and process the first complete line only.
+    await new Promise((r) => setTimeout(r, 2200));
+
+    const afterPartial = events.filter((e) => e.type === "user");
+    expect(afterPartial).toHaveLength(1);
+    expect(afterPartial[0]!.content).toBe("héllo");
+
+    // Complete the second entry and let the tailer pick it up.
+    const rest2 = entry2.slice(Math.floor(entry2.length / 2));
+    await appendFile(testFile, rest2 + "\n");
+    await new Promise((r) => setTimeout(r, 2200));
+
+    const afterComplete = events.filter((e) => e.type === "user");
+    expect(afterComplete).toHaveLength(2);
+    expect(afterComplete[1]!.content).toBe("wörld");
+
+    tailer.stop();
+  });
+
+  test("stop() in callback halts delivery of subsequent events in the same read", async () => {
+    // Write several lines so the tailer processes multiple events per read.
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      JSON.stringify({ type: "user", message: { content: `msg${i}` } }),
+    ).join("\n");
+    await writeFile(testFile, lines + "\n");
+
+    let callCount = 0;
+    let tailerRef: SessionTailer;
+    const tailer = new SessionTailer(testFile, () => {
+      callCount++;
+      tailerRef!.stop();
+    });
+    tailerRef = tailer;
+
+    tailer.startFromBeginning();
+    await tailer.start();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // stop() is called inside the first callback. The doRead loop checks
+    // this.stopped before each subsequent delivery, so only 1 event fires.
+    expect(callCount).toBe(1);
   });
 
   test("starts on a non-existent path and tails it once it appears", async () => {

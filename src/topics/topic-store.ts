@@ -150,7 +150,19 @@ export function updateTopicMapping(
 ): void {
   const mapping = store.topics.find((t) => t.sessionName === sessionName);
   if (mapping) {
-    Object.assign(mapping, update);
+    // Strip undefined values and protect a stored non-empty sessionId from
+    // being wiped by a falsy update (port-file sessions carry id: ""; startup
+    // reconcile passes s.id likewise — either would clobber a valid UUID).
+    const safe: Partial<TopicMapping> = {};
+    for (const [k, v] of Object.entries(update) as [
+      keyof TopicMapping,
+      unknown,
+    ][]) {
+      if (v === undefined) continue;
+      if (k === "sessionId" && !v && mapping.sessionId) continue;
+      (safe as Record<string, unknown>)[k] = v;
+    }
+    Object.assign(mapping, safe);
     scheduleSave();
   }
 }

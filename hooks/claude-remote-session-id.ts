@@ -38,6 +38,7 @@ import {
   readFileSync,
   writeFileSync,
   readdirSync,
+  renameSync,
   appendFileSync,
   mkdirSync,
 } from "fs";
@@ -233,10 +234,12 @@ async function main(): Promise<void> {
   if (current.sessionId === sessionId) return; // already current — no churn
 
   try {
+    const tmpFile = `${target.file}.tmp`;
     writeFileSync(
-      target.file,
+      tmpFile,
       JSON.stringify(mergeSessionId(current, sessionId), null, 2),
     );
+    renameSync(tmpFile, target.file);
     logLine(
       `updated ${target.file} sessionId=${sessionId} (was ${String(
         current.sessionId ?? "none",

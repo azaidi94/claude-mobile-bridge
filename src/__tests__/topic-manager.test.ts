@@ -52,6 +52,16 @@ afterAll(async () => {
   await rm(_topicStoreTmpDir, { recursive: true, force: true });
 });
 
+// Spy on ledger writes — we assert tombstone / no-tombstone in deleteTopic tests.
+const mockRecordTopicCreated = mock(async (_entry: object) => {});
+const mockRecordTopicDeleted = mock(async (_topicId: number) => {});
+
+mock.module("../topics/topic-ledger", () => ({
+  recordTopicCreated: mockRecordTopicCreated,
+  recordTopicDeleted: mockRecordTopicDeleted,
+  readActiveLedger: async () => [],
+}));
+
 // Stub the message bus — topic-manager (step 6a) now sends online/history
 // pings via getMessageBus(). Route bus sends into mockApi.sendMessage so the
 // existing test instrumentation (existing topic detection, error propagation)
@@ -158,6 +168,7 @@ import {
   addTopicMapping,
   getTopicBySession,
   getTopicStore,
+  updateTopicMapping,
 } from "../topics/topic-store";
 import { TopicManager } from "../topics/topic-manager";
 
@@ -205,6 +216,9 @@ describe("TopicManager", () => {
     mockApi.createForumTopic.mockClear();
     mockApi.editForumTopic.mockClear();
     mockApi.deleteForumTopic.mockClear();
+    mockApi.sendMessage.mockClear();
+    mockRecordTopicDeleted.mockClear();
+    mockRecordTopicCreated.mockClear();
   });
 
   test("createTopic creates forum topic and persists mapping", async () => {
@@ -303,6 +317,56 @@ describe("TopicManager", () => {
     expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 10);
   });
 
+  test("reconcile does NOT delete cursor topics absent from liveSessions", async () => {
+    // Cursor sessions register asynchronously via the cursor-bridge after
+    // startup, so they're missing from the port-file-derived liveSessions
+    // at reconcile time. They must not be pruned here.
+    seedMapping("cursor-prompt_gen", 40, true);
+    seedMapping("gone-cc", 41, true);
+    const mgr = createManager();
+
+    await mgr.reconcile([{ name: "still-alive-cc", dir: "/tmp/d" }]);
+
+    expect(getTopicBySession("cursor-prompt_gen")).toBeDefined();
+    expect(mockApi.deleteForumTopic).not.toHaveBeenCalledWith(CHAT_ID, 40);
+    // Non-cursor stale topic is still pruned.
+    expect(getTopicBySession("gone-cc")).toBeUndefined();
+    expect(mockApi.deleteForumTopic).toHaveBeenCalledWith(CHAT_ID, 41);
+  });
+
+  test("reconcile recreates an existing online mapping whose TG topic was deleted", async () => {
+    // Regression: a topic deleted in Telegram mid-run leaves a stale store
+    // entry with isOnline:true. reconcile used to trust existing+online
+    // mappings without probing, so a restart never healed it — every send hit
+    // "message thread not found" and dropped. reconcile must validate the
+    // topic still exists and recreate it if not.
+    seedMapping("stale-sess", 88, true);
+
+    // The validation probe to the (deleted) topic fails with TG's exact error.
+    mockApi.sendMessage.mockImplementationOnce(() =>
+      Promise.reject(new Error("Bad Request: message thread not found")),
+    );
+
+    const mgr = createManager();
+    await mgr.reconcile([{ name: "stale-sess", dir: "/tmp/x", id: "sid-x" }]);
+
+    expect(mockApi.createForumTopic).toHaveBeenCalled();
+    const mapping = getTopicBySession("stale-sess");
+    expect(mapping).toBeDefined();
+    expect(mapping!.topicId).toBe(42); // freshly created, not the dead 88
+  });
+
+  test("reconcile reuses a healthy existing online topic without recreating", async () => {
+    seedMapping("healthy-sess", 70, true);
+    const mgr = createManager();
+
+    await mgr.reconcile([{ name: "healthy-sess", dir: "/tmp/y", id: "sid-y" }]);
+
+    // Probe succeeds (default mock), so the topic is reused, not recreated.
+    expect(mockApi.createForumTopic).not.toHaveBeenCalled();
+    expect(getTopicBySession("healthy-sess")!.topicId).toBe(70);
+  });
+
   test("reconcile updates offline→online for sessions that came back", async () => {
     seedMapping("comeback", 30, false);
     const mgr = createManager();
@@ -322,5 +386,102 @@ describe("TopicManager", () => {
     expect(pid).toBe(11111);
     expect((updates as Record<string, unknown>).topicId).toBeDefined();
     expect((updates as Record<string, unknown>).topicName).toBe("my-session");
+  });
+
+  // ---- Bug 1: sessionId clobber ----
+
+  test("updateTopicMapping with empty-string sessionId does not overwrite stored UUID", () => {
+    addTopicMapping({
+      topicId: 55,
+      sessionName: "protected",
+      sessionDir: "/tmp/test",
+      sessionId: "real-uuid-123",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    updateTopicMapping("protected", { isOnline: false, sessionId: "" });
+
+    const mapping = getTopicBySession("protected");
+    expect(mapping!.sessionId).toBe("real-uuid-123");
+    expect(mapping!.isOnline).toBe(false);
+  });
+
+  test("updateTopicMapping with undefined sessionId does not overwrite stored UUID", () => {
+    addTopicMapping({
+      topicId: 56,
+      sessionName: "protected2",
+      sessionDir: "/tmp/test",
+      sessionId: "real-uuid-456",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    updateTopicMapping("protected2", { isOnline: false, sessionId: undefined });
+
+    const mapping = getTopicBySession("protected2");
+    expect(mapping!.sessionId).toBe("real-uuid-456");
+  });
+
+  // ---- Bug 2: deleteTopic tombstone on transient failure ----
+
+  test("deleteTopic on transient error (429) keeps mapping and writes no tombstone", async () => {
+    seedMapping("rate-limited", 77);
+    mockApi.deleteForumTopic.mockImplementationOnce(() =>
+      Promise.reject(new Error("Too Many Requests: retry after 1")),
+    );
+
+    const mgr = createManager();
+    await mgr.deleteTopic("rate-limited");
+
+    expect(getTopicBySession("rate-limited")).toBeDefined();
+    expect(mockRecordTopicDeleted).not.toHaveBeenCalled();
+  });
+
+  test("deleteTopic when topic already gone ('message thread not found') removes mapping and writes tombstone", async () => {
+    seedMapping("already-gone", 88);
+    mockApi.deleteForumTopic.mockImplementationOnce(() =>
+      Promise.reject(new Error("Bad Request: message thread not found")),
+    );
+
+    const mgr = createManager();
+    await mgr.deleteTopic("already-gone");
+
+    expect(getTopicBySession("already-gone")).toBeUndefined();
+    expect(mockRecordTopicDeleted).toHaveBeenCalledWith(88);
+  });
+
+  // ---- Bug 3: concurrent createTopic in-flight guard ----
+
+  test("two concurrent createTopic calls for same session produce one createForumTopic API call", async () => {
+    let releaseCreate!: (v: {
+      message_thread_id: number;
+      name: string;
+      icon_color: number;
+    }) => void;
+    const deferred = new Promise<{
+      message_thread_id: number;
+      name: string;
+      icon_color: number;
+    }>((res) => {
+      releaseCreate = res;
+    });
+    mockApi.createForumTopic.mockImplementationOnce(() => deferred);
+
+    const mgr = createManager();
+    const p1 = mgr.createTopic("concurrent-sess", "/tmp/proj");
+    const p2 = mgr.createTopic("concurrent-sess", "/tmp/proj");
+
+    releaseCreate({
+      message_thread_id: 42,
+      name: "concurrent-sess",
+      icon_color: 0,
+    });
+
+    const [id1, id2] = await Promise.all([p1, p2]);
+
+    expect(mockApi.createForumTopic).toHaveBeenCalledTimes(1);
+    expect(id1).toBe(42);
+    expect(id2).toBe(42);
   });
 });

@@ -102,6 +102,7 @@ mock.module("../security", () => ({
   },
   checkCommandSafety: () => [true, ""],
   isAuthorized: (userId: number, allowed: number[]) => allowed.includes(userId),
+  enforceToolSafety: async () => ({}),
 }));
 
 // Bus mock — translates bus.send(attachment=...) into the photos/documents

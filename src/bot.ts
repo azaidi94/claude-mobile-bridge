@@ -23,13 +23,14 @@ import {
 } from "./sessions";
 import { isAuthorized } from "./security";
 import { getCurrentModelDisplayName } from "./session";
-import { error as logError, info, warn } from "./logger";
+import { error as logError, info, warn, debug } from "./logger";
 import {
   handleStart,
   handleHelp,
   handleNew,
   handleRespawn,
   handleStop,
+  handleInterrupt,
   handleKill,
   handleStatus,
   handleModel,
@@ -41,6 +42,8 @@ import {
   handlePin,
   handleGroupMode,
   handleCleanZombie,
+  handleCron,
+  handlePrompts,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -109,6 +112,21 @@ export function createBot(options: BotOptions): Bot {
     }),
   );
 
+  // Topic discovery — every inbound thread_id we haven't seen gets recorded as
+  // a `discovered-<id>` ledger entry so `/cleanzombie` can find pre-ledger
+  // orphans the bot lost track of. Fire-and-forget, idempotent.
+  bot.use(async (ctx, next) => {
+    const tid = ctx.message?.message_thread_id;
+    if (tid && tid !== 1) {
+      const { getSessionByTopic, recordTopicDiscovered } =
+        await import("./topics");
+      if (!getSessionByTopic(tid)) {
+        recordTopicDiscovered(tid).catch(() => {});
+      }
+    }
+    await next();
+  });
+
   // Stall detection — warn if a handler runs longer than 30s. Placed after
   // sequentialize so the timer measures handler execution only, not queue wait.
   bot.use(async (ctx, next) => {
@@ -144,7 +162,15 @@ export function createBot(options: BotOptions): Bot {
   // Register chat IDs of allowed users for proactive notifications
   bot.use(async (ctx, next) => {
     const userId = ctx.from?.id;
-    if (userId && ctx.chat?.id && isAuthorized(userId, ALLOWED_USERS)) {
+
+    // Central auth gate — silently drop unauthorised users before any
+    // processing. No reply (don't confirm bot existence to strangers).
+    if (userId === undefined || !isAuthorized(userId, ALLOWED_USERS)) {
+      debug("bot: dropped update from unauthorised user", { userId });
+      return;
+    }
+
+    if (ctx.chat?.id) {
       const isNew = !getChatIds().has(ctx.chat.id);
       registerChatId(ctx.chat.id);
 
@@ -247,6 +273,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("new", handleNew);
   bot.command("respawn", withSctx(handleRespawn));
   bot.command("stop", withSctx(handleStop));
+  bot.command("interrupt", withSctx(handleInterrupt));
   bot.command("kill", withSctx(handleKill));
   bot.command("status", withSctx(handleStatus));
   bot.command("model", withSctx(handleModel));
@@ -260,6 +287,8 @@ export function createBot(options: BotOptions): Bot {
   bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);
+  bot.command("cron", withSctx(handleCron));
+  bot.command("prompts", withSctx(handlePrompts));
   bot.command("sessions", handleSessions);
   bot.command("pwd", withSctx(handlePwd));
   bot.command("cd", withSctx(handleCd));
