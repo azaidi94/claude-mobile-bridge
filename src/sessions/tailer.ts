@@ -24,6 +24,17 @@ function extractOriginChatFromTag(text: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/**
+ * Pull the `image_path="…"` attribute the relay stamps on a `<channel …>` tag
+ * when the inbound Telegram message carried a photo. The user already sees that
+ * photo in the topic, so when Claude `Read`s the path to look at it we suppress
+ * the Read's tool_result image (see `relayImagePaths` in SessionTailer).
+ */
+function extractImagePathFromTag(text: string): string | undefined {
+  const m = text.match(/<channel\s[^>]*\bimage_path="([^"]+)"/);
+  return m ? m[1] : undefined;
+}
+
 /** Strip the `<channel …>…</channel>` wrapper, leaving inner text. */
 function stripChannelTag(text: string): string {
   return text
@@ -204,6 +215,23 @@ export class SessionTailer {
   private relayToolUseIds = new Set<string>();
   private readonly relayToolUseIdsMax = 64;
   /**
+   * Filesystem paths of photos the user sent in via Telegram (the relay stamps
+   * them as `image_path="…"` on the `<channel>` tag). The user already sees
+   * these in the topic, so when Claude `Read`s one to look at it we must NOT
+   * echo the Read's tool_result image back. Bounded FIFO — a Read almost always
+   * lands within the next few entries.
+   */
+  private relayImagePaths = new Set<string>();
+  private readonly relayImagePathsMax = 32;
+  /**
+   * Tool_use ids of `Read`s of a `relayImagePaths` file — their tool_result
+   * image block is dropped so the user's own photo isn't surfaced twice. The
+   * tool_result itself still emits (Read remains a visible tool action).
+   * Bounded FIFO; consumed when its tool_result lands.
+   */
+  private suppressImageToolUseIds = new Set<string>();
+  private readonly suppressImageToolUseIdsMax = 64;
+  /**
    * Last permission mode emitted as an event. Claude's runtime appends a
    * permission-mode sentinel after every turn even when the mode hasn't
    * changed; emitting that as an event re-arms the watch's liveness typing
@@ -239,6 +267,26 @@ export class SessionTailer {
     if (this.relayToolUseIds.size > this.relayToolUseIdsMax) {
       const oldest = this.relayToolUseIds.values().next().value;
       if (oldest !== undefined) this.relayToolUseIds.delete(oldest);
+    }
+  }
+
+  /** Remember a Telegram-origin photo path (FIFO-bounded). */
+  private trackRelayImagePath(path: string | undefined): void {
+    if (!path) return;
+    this.relayImagePaths.add(path);
+    if (this.relayImagePaths.size > this.relayImagePathsMax) {
+      const oldest = this.relayImagePaths.values().next().value;
+      if (oldest !== undefined) this.relayImagePaths.delete(oldest);
+    }
+  }
+
+  /** Flag a tool_use whose image tool_result should be dropped (FIFO-bounded). */
+  private markSuppressImageToolUse(id: string | undefined): void {
+    if (!id) return;
+    this.suppressImageToolUseIds.add(id);
+    if (this.suppressImageToolUseIds.size > this.suppressImageToolUseIdsMax) {
+      const oldest = this.suppressImageToolUseIds.values().next().value;
+      if (oldest !== undefined) this.suppressImageToolUseIds.delete(oldest);
     }
   }
 
@@ -466,13 +514,17 @@ export class SessionTailer {
             }
             // Image blocks first, so renderImage can still resolve the tool
             // name from toolUseRegistry before renderToolResult frees it.
-            for (const img of extractImageBlocks(block.content)) {
-              resultEvents.push({
-                type: "image",
-                content: "",
-                toolUseId,
-                image: img,
-              });
+            // Skip when this Read fetched a photo the user just sent in via
+            // Telegram — `delete` both tests membership and consumes the flag.
+            if (!this.suppressImageToolUseIds.delete(toolUseId)) {
+              for (const img of extractImageBlocks(block.content)) {
+                resultEvents.push({
+                  type: "image",
+                  content: "",
+                  toolUseId,
+                  image: img,
+                });
+              }
             }
             resultEvents.push({
               type: "tool_result",
@@ -491,6 +543,7 @@ export class SessionTailer {
             if (text) {
               if (text.includes(CHANNEL_RELAY_TAG)) {
                 const originChat = extractOriginChatFromTag(text);
+                this.trackRelayImagePath(extractImagePathFromTag(text));
                 const inner = stripChannelTag(text);
                 resultEvents.push({ type: "turn_boundary", content: "" });
                 if (inner) {
@@ -541,6 +594,7 @@ export class SessionTailer {
         // TCP fast-path delivery.
         if (text.includes(CHANNEL_RELAY_TAG)) {
           const originChat = extractOriginChatFromTag(text);
+          this.trackRelayImagePath(extractImagePathFromTag(text));
           const inner = stripChannelTag(text);
           const events: TailEvent[] = [{ type: "turn_boundary", content: "" }];
           if (inner) {
@@ -674,6 +728,16 @@ export class SessionTailer {
             if (block.name === "mcp__channel-relay__react") {
               this.trackRelayToolUse(block.id);
               continue;
+            }
+
+            // A Read of a Telegram-origin photo (the user's own inbound image)
+            // returns the picture as a tool_result image block — drop it so the
+            // photo isn't echoed back into the topic. The Read tool action still
+            // renders; only its image result is suppressed (matched below by id).
+            const filePath =
+              typeof input.file_path === "string" ? input.file_path : undefined;
+            if (filePath && this.relayImagePaths.has(filePath)) {
+              this.markSuppressImageToolUse(block.id);
             }
 
             const toolDisplay = formatToolStatus(block.name, input);

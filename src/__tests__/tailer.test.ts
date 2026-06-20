@@ -340,6 +340,108 @@ describe("tailer: parseLine", () => {
     expect(events.some((e) => e.type === "image")).toBe(false);
   });
 
+  test("suppresses the Read tool_result image of a Telegram-origin photo", () => {
+    // User sends a photo via TG → relay stamps image_path on the <channel> tag.
+    const userLine = JSON.stringify({
+      type: "user",
+      message: {
+        content:
+          '<channel source="channel-relay" chat_id="-1" request_id="r1" user="u" ts="2026-06-21T00:00:00Z" image_path="/tmp/telegram-bot/photo_1_a.jpg">\nlook at this\n</channel>',
+      },
+    });
+    // Claude reads that exact path to look at it.
+    const readLine = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_read_1",
+            name: "Read",
+            input: { file_path: "/tmp/telegram-bot/photo_1_a.jpg" },
+          },
+        ],
+      },
+    });
+    // The Read result carries the photo back as a base64 image block.
+    const resultLine = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_read_1",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: "PP",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    tailer.parseLine(userLine);
+    expect(tailer.parseLine(readLine).some((e) => e.type === "tool")).toBe(
+      true,
+    );
+    const resultEvents = tailer.parseLine(resultLine);
+    // No echoed photo, but the Read still registers as a tool_result.
+    expect(resultEvents.some((e) => e.type === "image")).toBe(false);
+    expect(resultEvents.some((e) => e.type === "tool_result")).toBe(true);
+  });
+
+  test("still surfaces a Read image when the path is not Telegram-origin", () => {
+    const userLine = JSON.stringify({
+      type: "user",
+      message: {
+        content:
+          '<channel source="channel-relay" chat_id="-1" request_id="r1" user="u" ts="2026-06-21T00:00:00Z" image_path="/tmp/telegram-bot/photo_2_b.jpg">\nhi\n</channel>',
+      },
+    });
+    // Claude reads a DIFFERENT image (e.g. one it found in the repo).
+    const readLine = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_read_2",
+            name: "Read",
+            input: { file_path: "/Users/x/repo/diagram.png" },
+          },
+        ],
+      },
+    });
+    const resultLine = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tu_read_2",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/png", data: "QQ" },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    tailer.parseLine(userLine);
+    tailer.parseLine(readLine);
+    const resultEvents = tailer.parseLine(resultLine);
+    expect(resultEvents.some((e) => e.type === "image")).toBe(true);
+  });
+
   test("defaults unknown media_type and ignores non-base64 image sources", () => {
     const line = JSON.stringify({
       type: "user",
