@@ -518,6 +518,7 @@ export class SessionTailer {
                 type: "ask_user_question",
                 content: "",
                 questions,
+                toolUseId: block.id,
               });
               continue;
             }

@@ -30,6 +30,17 @@ export interface TailDisplayState {
   finalReplyReceived?: boolean;
   /** Watch-only: maps toolUseId → toolName for tool_result correlation. */
   toolUseRegistry?: Map<string, string>;
+  /**
+   * The most recent native AskUserQuestion observation card still awaiting its
+   * answer. When the matching tool_result lands (answered at the desktop), the
+   * card is edited into a resolved "✅ Answered" state so Telegram doesn't drift
+   * out of sync with the local terminal. Cleared once finalized.
+   */
+  pendingAskCard?: {
+    messageId: number;
+    toolUseId: string;
+    questions: import("../../types").AskUserQuestionItem[];
+  };
   /** Watch-only: last permission mode emitted (for dedup). */
   lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   /**

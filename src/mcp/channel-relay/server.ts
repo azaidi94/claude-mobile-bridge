@@ -539,7 +539,7 @@ const mcp = new Server(
       "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
       "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
       "The reply tool call IS the response to a relay message. Do NOT also emit the same text (or a paraphrase) as terminal output afterward — that produces a duplicate. Terminal text after a relay reply should only appear if it conveys genuinely new info for the local user.",
-      "When you would otherwise call AskUserQuestion AND a Telegram chat_id has been seen in this session, prefer the ask_remote tool instead — it surfaces the question on the user's phone with tappable buttons and returns the chosen option as the tool result. Native AskUserQuestion only renders on the desktop terminal and doesn't reach Telegram users.",
+      "IMPORTANT: Whenever a Telegram chat_id has been seen in this session, you MUST use the ask_remote tool to ask the user any multiple-choice question — do NOT call the native AskUserQuestion tool. Native AskUserQuestion can only be answered at the desktop terminal; if the user is on Telegram it strands them with an unanswerable card and the two surfaces drift out of sync. ask_remote surfaces tappable buttons on their phone and returns the chosen option as the tool result, keeping both sides synchronized. Only fall back to native AskUserQuestion if no Telegram chat_id has been seen.",
     ].join("\n"),
   },
 );
