@@ -5,8 +5,12 @@ import {
   waitFor,
   deleteEntry,
 } from "../../handlers/auq-bridge-registry";
-import { findWatchByDir } from "../../handlers/watch";
-import { getTopicBySessionDir, getTopicStore } from "../../topics";
+import { findWatchByDir, findWatchBySessionId } from "../../handlers/watch";
+import {
+  getTopicBySessionDir,
+  getTopicBySessionId,
+  getTopicStore,
+} from "../../topics";
 
 interface PostBody {
   request_id: string;
@@ -42,13 +46,17 @@ export function createAuqBridgeRouter(): Hono {
     if (!body?.request_id || !body?.cwd || !body?.questions?.length) {
       return c.json({ error: "missing fields" }, 400);
     }
-    // Route order:
-    //  1. Active /watch for the cwd (legacy single-topic / explicit subscribe)
-    //  2. Topic store mapping by sessionDir (group-forum mode: each session
-    //     has its own topic, so the topic is the routing key — no /watch
-    //     required). Without this fallback, AUQs from sessions that have a
-    //     topic but no active watch silently 404 and never reach Telegram.
-    const watch = findWatchByDir(body.cwd);
+    // Route order (exact sessionId first so two sessions in ONE folder don't
+    // cross-wire — routing by cwd alone sends the 2nd session's AUQ to the
+    // 1st session's topic). The worker always posts session_id; cwd is the
+    // legacy fallback for callers/sessions without a known id.
+    //  1. Active /watch — by session_id, then by cwd.
+    //  2. Topic store mapping — by session_id, then by sessionDir (group-forum
+    //     mode: each session has its own topic, no /watch required). Without
+    //     this, AUQs from sessions with a topic but no watch silently 404.
+    const watch =
+      (body.session_id ? findWatchBySessionId(body.session_id) : null) ??
+      findWatchByDir(body.cwd);
     let chatId: number;
     let threadId: number;
     let sessionName: string;
@@ -57,7 +65,9 @@ export function createAuqBridgeRouter(): Hono {
       threadId = watch.threadId;
       sessionName = watch.sessionName;
     } else {
-      const topic = getTopicBySessionDir(body.cwd);
+      const topic =
+        (body.session_id ? getTopicBySessionId(body.session_id) : undefined) ??
+        getTopicBySessionDir(body.cwd);
       const store = getTopicStore();
       if (!topic || !store.chatId) {
         return c.json({ error: "no watch or topic for cwd" }, 404);

@@ -144,6 +144,18 @@ export function getTopicBySessionDir(
   return store.topics.find((t) => t.sessionDir === sessionDir);
 }
 
+/**
+ * Look up a topic by its Claude sessionId. Unlike `getTopicBySessionDir`, this
+ * is sibling-safe: two sessions in the same folder have distinct sessionIds, so
+ * routing by id (not dir) lands each session's messages in its own topic.
+ */
+export function getTopicBySessionId(
+  sessionId: string,
+): TopicMapping | undefined {
+  if (!sessionId) return undefined;
+  return store.topics.find((t) => t.sessionId === sessionId);
+}
+
 export function updateTopicMapping(
   sessionName: string,
   update: Partial<TopicMapping>,

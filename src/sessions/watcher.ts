@@ -252,6 +252,26 @@ function isUuid(str: string): boolean {
 }
 
 /**
+ * Resolve the sessionId for one relay port file in a directory.
+ *
+ * An explicit port-file sessionId is always authoritative. A port file lacking
+ * one is back-filled from the dir's JSONL candidates (via `nextFallback`) ONLY
+ * when it is the lone relay in the dir. With 2+ sibling relays a guessed id
+ * routinely grabs a sibling's transcript — and because `selectRelayTarget`
+ * matches sessionId before pid, that misroutes messages to the wrong session.
+ * So for siblings we return "" and let exact pid (ppid) matching route it.
+ */
+export function resolveSiblingId(
+  pfSessionId: string | undefined,
+  siblingCount: number,
+  nextFallback: () => string | undefined,
+): string {
+  if (pfSessionId) return pfSessionId;
+  if (siblingCount > 1) return "";
+  return nextFallback() ?? "";
+}
+
+/**
  * Generate unique session name from directory.
  */
 function generateName(dir: string): string {
@@ -441,7 +461,13 @@ async function scanSessions(): Promise<{
     for (const pf of pfs) {
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      const resolvedId = pf.sessionId || unusedFallbacks[fallbackIdx++] || "";
+      // Never guess a fallback id across siblings — it misroutes (see
+      // resolveSiblingId). Lone relays still back-fill from the newest JSONL.
+      const resolvedId = resolveSiblingId(
+        pf.sessionId,
+        pfs.length,
+        () => unusedFallbacks[fallbackIdx++],
+      );
       dirFound.push({
         id: resolvedId,
         name: "",

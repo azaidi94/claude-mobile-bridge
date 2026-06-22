@@ -19,6 +19,7 @@ export {
   _getWatchForTests,
   _registerWatchForTests,
   findWatchByDir,
+  findWatchBySessionId,
   getWatch,
   isWatching,
   isWatchingAny,
