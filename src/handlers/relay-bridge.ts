@@ -3,7 +3,7 @@
  * desktop Claude session.
  */
 
-import type { Context } from "grammy";
+import type { Api, Context } from "grammy";
 import type { SessionContext } from "../sessions/context";
 import { getWorkingDir } from "../settings";
 import type { RelayClient, RelayDisplayState } from "../relay";
@@ -13,13 +13,41 @@ import {
   wireRelayDisplay,
   cleanupProgressMessages,
 } from "../relay";
-import { handleTailEvent, isWatching, sendWatchRelay } from "./watch";
+import {
+  bridgeTailToSse,
+  handleTailEvent,
+  isWatching,
+  sendWatchRelay,
+} from "./watch";
+import { globalEventBus } from "../web/sse";
+import type { TailEvent } from "../sessions/tailer";
 import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
 import { debug, elapsedMs, info, warn } from "../logger";
 
 export type RelayResult = "delivered" | "unavailable" | "failed";
+
+/**
+ * Build the relay-mode JSONL tailer callback. Besides driving the live TG
+ * display via `handleTailEvent`, it forwards every event to `globalEventBus`
+ * via `bridgeTailToSse` — mirroring the /watch-mode tailers. Without the bus
+ * feed, an AUQ bridge's `attachBusCancellation` never sees the local terminal
+ * `tool_result`, so a native AskUserQuestion answered at the desktop leaves the
+ * Telegram card blocked. `relay_reply` is skipped because the TCP relay
+ * (wireRelayDisplay) owns the final reply.
+ */
+export function makeRelayTailHandler(
+  api: Api,
+  displayState: RelayDisplayState,
+  sessionName: string | undefined,
+): (event: TailEvent) => void {
+  return (event) => {
+    if (event.type === "relay_reply") return;
+    handleTailEvent(api, displayState, event);
+    if (sessionName) bridgeTailToSse(globalEventBus, sessionName, event);
+  };
+}
 
 export async function sendViaRelay(
   ctx: Context,
@@ -87,12 +115,10 @@ export async function sendViaRelay(
   if (sessionId) {
     const jsonlPath = await findSessionJsonlPath(sessionId);
     if (jsonlPath) {
-      tailer = new SessionTailer(jsonlPath, (event) => {
-        // TCP relay (wireRelayDisplay) owns the final reply; skip relay_reply
-        // from the tailer to avoid sending the same message twice.
-        if (event.type === "relay_reply") return;
-        handleTailEvent(ctx.api, displayState, event);
-      });
+      tailer = new SessionTailer(
+        jsonlPath,
+        makeRelayTailHandler(ctx.api, displayState, sctx?.sessionName),
+      );
       await tailer.start();
     }
   }
