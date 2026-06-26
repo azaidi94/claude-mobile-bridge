@@ -7,33 +7,55 @@ export function shadowCompareIdentities(
   input: {
     portFiles: PortFileData[];
     topics: TopicMapping[];
-    registryIdFor: (claudePid: number) => string | undefined;
+    registrySessions: ReadonlyArray<{ claudePid: number; sessionId: string }>;
   },
   log: (msg: string, ctx?: object) => void = warn,
 ): { compared: number; divergences: number } {
   const aliveRelays = input.portFiles.filter((pf) => isProcessAlive(pf.pid));
   const resolved = resolveIdentities({ aliveRelays, topics: input.topics });
+
+  // Resolver's authoritative id per live claudePid (the only ids it asserts).
+  const resolverAuthById = new Map<number, string>();
+  for (const r of resolved) {
+    if (r.claudePid > 0 && r.provenance === "authoritative" && r.sessionId) {
+      resolverAuthById.set(r.claudePid, r.sessionId);
+    }
+  }
+  // Which claudePids have a LIVE relay at all (to avoid blaming the resolver for
+  // a registry entry whose process is already gone).
+  const liveClaudePids = new Set<number>(
+    resolved.filter((r) => r.claudePid > 0).map((r) => r.claudePid),
+  );
+  const registryById = new Map<number, string>();
+  for (const s of input.registrySessions) {
+    if (s.claudePid > 0 && s.sessionId)
+      registryById.set(s.claudePid, s.sessionId);
+  }
+
+  const pids = new Set<number>([
+    ...resolverAuthById.keys(),
+    ...registryById.keys(),
+  ]);
   let compared = 0;
   let divergences = 0;
-  for (const r of resolved) {
-    // WS-3a scope (by design): we only compare the `authoritative` subset, where
-    // both sides already hold a sessionId for this Claude pid. That proves the
-    // resolver copies authoritative ids correctly — NOT that it reproduces the
-    // registry's harder decisions (cwd-fallback, sibling routing) or the
-    // registry-found/resolver-missing direction. WS-3b must widen this before
-    // migrating the watcher. A clean soak here = "zero divergences on authoritative ids".
-    if (r.provenance !== "authoritative" || !r.sessionId) continue;
-    // Guard: claudePid <= 0 means ppid was absent — unresolvable, skip.
-    if (r.claudePid <= 0) continue;
+  for (const pid of pids) {
     compared++;
-    const registryId = input.registryIdFor(r.claudePid);
-    if (registryId && registryId !== r.sessionId) {
+    const resolverId = resolverAuthById.get(pid);
+    const registryId = registryById.get(pid);
+    let kind: string | null = null;
+    if (resolverId && registryId && resolverId !== registryId) {
+      kind = "registry_resolver_disagree";
+    } else if (registryId && !resolverId && liveClaudePids.has(pid)) {
+      kind = "registry_only";
+    } else if (resolverId && !registryId) {
+      kind = "resolver_only";
+    }
+    if (kind) {
       divergences++;
-      log("identity-shadow: registry/resolver sessionId divergence", {
-        claudePid: r.claudePid,
-        cwd: r.cwd,
-        resolver: r.sessionId,
-        registry: registryId,
+      log(`identity-shadow: ${kind}`, {
+        claudePid: pid,
+        resolver: resolverId ?? null,
+        registry: registryId ?? null,
       });
     }
   }

@@ -785,13 +785,14 @@ async function doRefresh(): Promise<SessionDiff> {
     warn(`identity: invariant check failed: ${err}`);
   }
 
-  // Shadow-only (WS-3a): does the new resolver reproduce the registry's ids?
+  // Shadow-only (WS-3b): bidirectional — also flag registry ids the resolver doesn't reproduce.
   try {
     shadowCompareIdentities({
       portFiles,
       topics: getTopicStore().topics,
-      registryIdFor: (claudePid) =>
-        getSessions().find((s) => s.pid === claudePid)?.id || undefined,
+      registrySessions: getSessions()
+        .filter((s) => s.source === "desktop" && s.id && s.pid)
+        .map((s) => ({ claudePid: s.pid!, sessionId: s.id })),
     });
   } catch (err) {
     warn(`identity-shadow: comparison failed: ${err}`);
