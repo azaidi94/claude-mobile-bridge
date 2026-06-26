@@ -134,4 +134,43 @@ describe("backfillPortFileSessionIds", () => {
     const after = readPortFile(`channel-relay-eeee-${process.pid}.json`);
     expect(after.sessionId).toBeUndefined();
   });
+
+  // Never guess across siblings: two id-less LIVE relays in one cwd must get
+  // NEITHER backfilled. Writing a mtime-guessed id into a sibling's port file
+  // (persisted, authoritative-looking) is the misroute bug — worse than the
+  // in-memory guess. Exact pid routing handles siblings; the hook / relay
+  // self-discovery supply their real ids.
+  test("does not backfill ambiguous same-cwd siblings", async () => {
+    const a = process.pid;
+    const b = process.ppid; // also a live process
+    writePortFile(`channel-relay-siba-${a}.json`, {
+      port: 1,
+      pid: a,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    writePortFile(`channel-relay-sibb-${b}.json`, {
+      port: 2,
+      pid: b,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    writeFileSync(
+      join(PROJECT_DIR, "11111111-1111-1111-1111-111111111111.jsonl"),
+      "x\n",
+    );
+    writeFileSync(
+      join(PROJECT_DIR, "22222222-2222-2222-2222-222222222222.jsonl"),
+      "x\n",
+    );
+
+    await backfillPortFileSessionIds();
+
+    expect(
+      readPortFile(`channel-relay-siba-${a}.json`).sessionId,
+    ).toBeUndefined();
+    expect(
+      readPortFile(`channel-relay-sibb-${b}.json`).sessionId,
+    ).toBeUndefined();
+  });
 });
