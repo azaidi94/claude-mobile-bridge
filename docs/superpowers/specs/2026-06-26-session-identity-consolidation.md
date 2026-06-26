@@ -239,18 +239,20 @@ the code it tested, so it never caught the encoder). Fixes:
 
 ---
 
-## 8. Open questions (need a decision before the plan)
+## 8. Open questions — RESOLVED 2026-06-26
 
-1. **Scope of the hook install** — user `settings.json` for _all_ sessions, or a
-   dedicated `CLAUDE_CONFIG_DIR`/project-scoped install? (Recommend user settings
-   for coverage; flag if you'd rather keep blast radius small.)
-2. **Does the canonical map get persisted**, or rebuilt each refresh from the
-   port files? (Recommend rebuilt — port files are already the durable layer;
-   avoid a fifth store.)
-3. **Surface invariant violations to the user** (a Telegram `/health` line), or
-   logs-only? (Recommend logs-only first; add `/health` later.)
-4. How long a **soak** before WS-6 prunes the fallback — fixed (e.g. 2 weeks) or
-   metric-gated (`inferred` count == 0 across N restarts)?
+1. **Scope of the hook install** — ✅ **Global user `settings.json`** (covers
+   hand-started sessions too). Approved by AZ.
+2. **Persist the canonical map?** — ✅ **Rebuilt each refresh** from port files;
+   no fifth store. (Recommended default, taken.)
+3. **Surface violations to the user?** — ✅ **Logs-only first**; a Telegram
+   `/health` line can come later. (Recommended default, taken.)
+4. **Soak length before WS-6 prunes the fallback** — ✅ **Metric-gated**:
+   `inferred`/`missing` count == 0 across N restarts, not a fixed calendar
+   window. (Recommended default, taken.)
+
+First implementation increment (WS-1) is planned in
+`docs/superpowers/plans/2026-06-26-identity-observability-ws1.md`.
 
 ---
 
