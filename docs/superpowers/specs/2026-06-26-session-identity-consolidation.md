@@ -64,6 +64,20 @@ So in practice we still fall back to guessing, and the guesses still break. The
 consolidation is: **make the authoritative path the only path, guarantee it
 runs, and make every remaining fallback loud.**
 
+> **Correction (2026-06-26):** the hook IS installed in global
+> `~/.claude/settings.json` (both `claude-remote-session-start.sh` and
+> `claude-remote-session-id.ts`), so the first bullet ("only launcher-injected")
+> is wrong — install is not the gap. The real finding is stronger and proves the
+> third bullet: `~/.claude/logs/session-id-hook.log` had **zero entries** for the
+> two Jun-26 sibling sessions that broke today (last activity Jun 25). The
+> installed hook **silently did not fire (or bailed)** for exactly the siblings —
+> consistent with its by-design refusal to guess ancestry across siblings when
+> the relay port file isn't yet written or two sessions start close together.
+> So **WS-2 is reshaped**: not "install the hook" but "make the installed hook
+> reliable + loud" — log every bail with its reason, and fix the sibling
+> ancestry race. D1's _install_ half is already satisfied; its _detection_ half
+> (WS-1 + a loud hook bail) is the work.
+
 ---
 
 ## 2. Goals / Non-goals
