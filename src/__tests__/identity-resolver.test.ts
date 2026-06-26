@@ -89,3 +89,76 @@ describe("resolveIdentities", () => {
     expect(out.find((r) => r.relayPid === 2)!.provenance).toBe("ambiguous");
   });
 });
+
+describe("resolveIdentities — adversarial (WS-4)", () => {
+  test("empty input yields empty output", () => {
+    expect(resolveIdentities({ aliveRelays: [], topics: [] })).toEqual([]);
+  });
+
+  test("three id-less relays in one cwd are all ambiguous", () => {
+    const out = resolveIdentities({
+      aliveRelays: [
+        relay({ pid: 1, ppid: 11, cwd: "/d" }),
+        relay({ pid: 2, ppid: 22, cwd: "/d" }),
+        relay({ pid: 3, ppid: 33, cwd: "/d" }),
+      ],
+      topics: [],
+    });
+    expect(out.map((r) => r.provenance)).toEqual([
+      "ambiguous",
+      "ambiguous",
+      "ambiguous",
+    ]);
+  });
+
+  test("three siblings: one authoritative, two id-less → the two are ambiguous (broad rule)", () => {
+    const out = resolveIdentities({
+      aliveRelays: [
+        relay({ pid: 1, ppid: 11, cwd: "/d", sessionId: "sid-1" }),
+        relay({ pid: 2, ppid: 22, cwd: "/d" }),
+        relay({ pid: 3, ppid: 33, cwd: "/d" }),
+      ],
+      topics: [topic({ topicId: 9, sessionId: "sid-1" })],
+    });
+    expect(out.find((r) => r.relayPid === 1)!.provenance).toBe("authoritative");
+    expect(out.find((r) => r.relayPid === 1)!.topicId).toBe(9);
+    expect(out.find((r) => r.relayPid === 2)!.provenance).toBe("ambiguous");
+    expect(out.find((r) => r.relayPid === 3)!.provenance).toBe("ambiguous");
+  });
+
+  test("ambiguity is per-cwd: a lone relay in another dir stays missing", () => {
+    const out = resolveIdentities({
+      aliveRelays: [
+        relay({ pid: 1, ppid: 11, cwd: "/shared" }),
+        relay({ pid: 2, ppid: 22, cwd: "/shared" }),
+        relay({ pid: 3, ppid: 33, cwd: "/solo" }),
+      ],
+      topics: [],
+    });
+    expect(out.find((r) => r.relayPid === 3)!.provenance).toBe("missing");
+    expect(out.find((r) => r.relayPid === 1)!.provenance).toBe("ambiguous");
+  });
+
+  test("cwd with spaces/dots/unicode is grouped verbatim (resolver does not encode paths)", () => {
+    const weird = "/Users/a/My Project (v2)/café_dir";
+    const out = resolveIdentities({
+      aliveRelays: [
+        relay({ pid: 1, ppid: 11, cwd: weird, sessionId: "sid-w" }),
+        relay({ pid: 2, ppid: 22, cwd: weird }),
+      ],
+      topics: [],
+    });
+    // Both share the exact cwd → the id-less one is ambiguous.
+    expect(out.find((r) => r.relayPid === 2)!.provenance).toBe("ambiguous");
+    expect(out.find((r) => r.relayPid === 1)!.cwd).toBe(weird);
+  });
+
+  test("an authoritative sessionId with no matching topic resolves topicId null", () => {
+    const out = resolveIdentities({
+      aliveRelays: [relay({ sessionId: "orphan-sid" })],
+      topics: [topic({ sessionId: "different-sid", topicId: 5 })],
+    });
+    expect(out[0]!.provenance).toBe("authoritative");
+    expect(out[0]!.topicId).toBeNull();
+  });
+});

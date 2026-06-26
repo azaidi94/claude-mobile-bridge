@@ -27,7 +27,7 @@ import { getTopicStore } from "../topics/topic-store";
 import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
 import { shadowCompareIdentities } from "./identity-shadow";
-import { resolveIdentities } from "./identity";
+import { resolveIdentities, type ResolvedIdentity } from "./identity";
 
 const execAsync = promisify(exec);
 
@@ -446,19 +446,15 @@ async function scanSessions(): Promise<{
     // (a cwd with >1 relay) resolves empty so exact pid (ppid) routing wins.
     const identities = resolveIdentities({ aliveRelays: pfs, topics: [] });
     const identityByRelayPid = new Map(identities.map((i) => [i.relayPid, i]));
-    let fallbackIdx = 0;
-    for (const pf of pfs) {
+    const relayIds = pickRelayIds(
+      pfs.map((pf) => identityByRelayPid.get(pf.pid)),
+      unusedFallbacks,
+    );
+    for (let i = 0; i < pfs.length; i++) {
+      const pf = pfs[i]!;
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      const identity = identityByRelayPid.get(pf.pid);
-      let resolvedId: string;
-      if (identity?.provenance === "authoritative" && identity.sessionId) {
-        resolvedId = identity.sessionId;
-      } else if (identity?.provenance === "missing") {
-        resolvedId = unusedFallbacks[fallbackIdx++] ?? "";
-      } else {
-        resolvedId = ""; // ambiguous (or unknown) — pid routes it
-      }
+      const resolvedId = relayIds[i]!;
       dirFound.push({
         id: resolvedId,
         name: "",
@@ -561,6 +557,27 @@ export function portFileNameUpdates(
     out.push({ relayPid, sessionName: si.name });
   }
   return out;
+}
+
+/**
+ * Map each relay's resolved identity to the sessionId the watcher assigns,
+ * consuming `unusedFallbacks` (newest unclaimed JSONL ids) ONLY for lone
+ * `missing` relays. `ambiguous` siblings resolve to "" and never consume a
+ * fallback — guessing one grabs a sibling's transcript and misroutes (the
+ * historical bug). Pure (the fallback cursor is local) so it's directly tested.
+ * Input order matches the port-file order; output is the id per port file.
+ */
+export function pickRelayIds(
+  identities: Array<ResolvedIdentity | undefined>,
+  unusedFallbacks: string[],
+): string[] {
+  let fallbackIdx = 0;
+  return identities.map((i) => {
+    if (i?.provenance === "authoritative" && i.sessionId) return i.sessionId;
+    if (i?.provenance === "missing")
+      return unusedFallbacks[fallbackIdx++] ?? "";
+    return ""; // ambiguous (or unknown) — exact pid routing handles it
+  });
 }
 
 export function assignPidsToSessions(
