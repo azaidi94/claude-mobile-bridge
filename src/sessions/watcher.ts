@@ -25,6 +25,7 @@ import { STATE_DIR } from "../paths";
 // import cycle. Read-only: used to pin session names across restarts.
 import { getTopicStore } from "../topics/topic-store";
 import { dropSessionState } from "./session-state";
+import { reportIdentityViolations } from "./identity-report";
 
 const execAsync = promisify(exec);
 
@@ -770,6 +771,17 @@ async function doRefresh(): Promise<SessionDiff> {
     if (relayPid !== undefined) {
       updatePortFile(relayPid, { sessionName: si.name });
     }
+  }
+
+  // Observe-only (WS-1): surface identity disagreement; changes no routing.
+  try {
+    reportIdentityViolations({
+      sessions: getSessions(),
+      topics: getTopicStore().topics,
+      portFiles,
+    });
+  } catch (err) {
+    warn(`identity: invariant check failed: ${err}`);
   }
 
   // Validate active session
