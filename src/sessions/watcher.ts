@@ -529,6 +529,40 @@ export function seedNamesFromTopicStore(
  * Matches by session ID when available, uses relay port files as a bridge,
  * then falls back to dir-based heuristic.
  */
+/**
+ * Compute which relay port files need their `sessionName` rewritten — only the
+ * ones whose stored name differs from the session's assigned name. Returning the
+ * needed writes (instead of writing unconditionally) keeps a no-op refresh from
+ * re-mtime-ing every port file, which would otherwise trip the watcher's own
+ * STATE_DIR file-watch and spin a ~1/sec refresh loop. Pure (no I/O) for testing.
+ */
+export function portFileNameUpdates(
+  sessions: Iterable<SessionInfo>,
+  portFiles: PortFileData[],
+): Array<{ relayPid: number; sessionName: string }> {
+  const relayPidBySessionId = new Map<string, number>();
+  const relayPidByDirPpid = new Map<string, number>();
+  const nameByPid = new Map<number, string | undefined>();
+  for (const pf of portFiles) {
+    if (pf.sessionId) relayPidBySessionId.set(pf.sessionId, pf.pid);
+    if (pf.ppid) relayPidByDirPpid.set(`${pf.cwd}\0${pf.ppid}`, pf.pid);
+    nameByPid.set(pf.pid, pf.sessionName);
+  }
+  const out: Array<{ relayPid: number; sessionName: string }> = [];
+  for (const si of sessions) {
+    if (si.source !== "desktop" || !si.name) continue;
+    const relayPid =
+      (si.id ? relayPidBySessionId.get(si.id) : undefined) ??
+      (si.pid !== undefined
+        ? relayPidByDirPpid.get(`${si.dir}\0${si.pid}`)
+        : undefined);
+    if (relayPid === undefined) continue;
+    if (nameByPid.get(relayPid) === si.name) continue; // already correct — skip
+    out.push({ relayPid, sessionName: si.name });
+  }
+  return out;
+}
+
 export function assignPidsToSessions(
   sessions: SessionInfo[],
   processes: ClaudeProcess[],
@@ -742,24 +776,15 @@ async function doRefresh(): Promise<SessionDiff> {
     info(`session removed: ${old.name} (${old.dir})`);
   }
 
-  // Write each desktop session's assigned name back to its relay port file.
-  // This makes the port file the single source of truth for session identity.
-  const relayPidBySessionId = new Map<string, number>();
-  const relayPidByDirPpid = new Map<string, number>();
-  for (const pf of portFiles) {
-    if (pf.sessionId) relayPidBySessionId.set(pf.sessionId, pf.pid);
-    if (pf.ppid) relayPidByDirPpid.set(`${pf.cwd}\0${pf.ppid}`, pf.pid);
-  }
-  for (const si of cache.sessions.values()) {
-    if (si.source !== "desktop" || !si.name) continue;
-    const relayPid =
-      (si.id ? relayPidBySessionId.get(si.id) : undefined) ??
-      (si.pid !== undefined
-        ? relayPidByDirPpid.get(`${si.dir}\0${si.pid}`)
-        : undefined);
-    if (relayPid !== undefined) {
-      updatePortFile(relayPid, { sessionName: si.name });
-    }
+  // Write each desktop session's assigned name back to its relay port file —
+  // but ONLY when it actually changed. An unconditional write trips the
+  // watcher's own STATE_DIR file-watch, which schedules another refresh, which
+  // writes again: a ~1/sec self-trigger loop. Skipping no-op writes breaks it.
+  for (const { relayPid, sessionName } of portFileNameUpdates(
+    cache.sessions.values(),
+    portFiles,
+  )) {
+    updatePortFile(relayPid, { sessionName });
   }
 
   // Observe-only (WS-1): surface identity disagreement; changes no routing.
