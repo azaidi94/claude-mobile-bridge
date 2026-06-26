@@ -27,6 +27,7 @@ import { getTopicStore } from "../topics/topic-store";
 import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
 import { shadowCompareIdentities } from "./identity-shadow";
+import { resolveIdentities } from "./identity";
 
 const execAsync = promisify(exec);
 
@@ -255,26 +256,6 @@ function isUuid(str: string): boolean {
 }
 
 /**
- * Resolve the sessionId for one relay port file in a directory.
- *
- * An explicit port-file sessionId is always authoritative. A port file lacking
- * one is back-filled from the dir's JSONL candidates (via `nextFallback`) ONLY
- * when it is the lone relay in the dir. With 2+ sibling relays a guessed id
- * routinely grabs a sibling's transcript — and because `selectRelayTarget`
- * matches sessionId before pid, that misroutes messages to the wrong session.
- * So for siblings we return "" and let exact pid (ppid) matching route it.
- */
-export function resolveSiblingId(
-  pfSessionId: string | undefined,
-  siblingCount: number,
-  nextFallback: () => string | undefined,
-): string {
-  if (pfSessionId) return pfSessionId;
-  if (siblingCount > 1) return "";
-  return nextFallback() ?? "";
-}
-
-/**
  * Generate unique session name from directory.
  */
 function generateName(dir: string): string {
@@ -460,17 +441,24 @@ async function scanSessions(): Promise<{
           !explicitPfIds.has(c.info.id),
       )
       .map((c) => c.info.id);
+    // Resolve each relay's id via the single shared rule. `unusedFallbacks`
+    // still supplies the lone-relay (`missing`) JSONL back-fill; `ambiguous`
+    // (a cwd with >1 relay) resolves empty so exact pid (ppid) routing wins.
+    const identities = resolveIdentities({ aliveRelays: pfs, topics: [] });
+    const identityByRelayPid = new Map(identities.map((i) => [i.relayPid, i]));
     let fallbackIdx = 0;
     for (const pf of pfs) {
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      // Never guess a fallback id across siblings — it misroutes (see
-      // resolveSiblingId). Lone relays still back-fill from the newest JSONL.
-      const resolvedId = resolveSiblingId(
-        pf.sessionId,
-        pfs.length,
-        () => unusedFallbacks[fallbackIdx++],
-      );
+      const identity = identityByRelayPid.get(pf.pid);
+      let resolvedId: string;
+      if (identity?.provenance === "authoritative" && identity.sessionId) {
+        resolvedId = identity.sessionId;
+      } else if (identity?.provenance === "missing") {
+        resolvedId = unusedFallbacks[fallbackIdx++] ?? "";
+      } else {
+        resolvedId = ""; // ambiguous (or unknown) — pid routes it
+      }
       dirFound.push({
         id: resolvedId,
         name: "",
