@@ -16,6 +16,12 @@ export function shadowCompareIdentities(
   let compared = 0;
   let divergences = 0;
   for (const r of resolved) {
+    // WS-3a scope (by design): we only compare the `authoritative` subset, where
+    // both sides already hold a sessionId for this Claude pid. That proves the
+    // resolver copies authoritative ids correctly — NOT that it reproduces the
+    // registry's harder decisions (cwd-fallback, sibling routing) or the
+    // registry-found/resolver-missing direction. WS-3b must widen this before
+    // migrating the watcher. A clean soak here = "zero divergences on authoritative ids".
     if (r.provenance !== "authoritative" || !r.sessionId) continue;
     // Guard: claudePid <= 0 means ppid was absent — unresolvable, skip.
     if (r.claudePid <= 0) continue;

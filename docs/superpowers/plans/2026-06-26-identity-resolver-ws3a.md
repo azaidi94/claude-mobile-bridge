@@ -10,10 +10,12 @@
 
 **Why shadow first:** WS-3 touches the most-patched code in the repo (56/73 recent fixes). A behavior-preserving migration is only safe if we can prove the new resolver reproduces current behavior _before_ switching. Shadow mode gives that evidence from real runs; WS-1's invariant logging is already in place to catch regressions.
 
+> **Scope limit on the shadow evidence (post-review 2026-06-26):** the WS-3a shadow only compares the **`authoritative`** subset — relays where both the resolver and the registry already hold a sessionId for the same Claude PID. For those, the resolver's id is just `pf.sessionId` and the registry's id is also derived from it, so agreement is close to tautological. The shadow therefore proves "the resolver copies the authoritative ids correctly," NOT "the resolver reproduces the registry's _harder_ decisions" (the `scanSessions` cwd-fallback loop, sibling routing, the `registryIdFor → undefined` direction). Those are exactly the bug-prone cases and are out of WS-3a's comparison. So read a clean soak as **"zero divergences on authoritative ids"** — necessary but not sufficient. WS-3b must add comparison of the harder cases (or a different proof) before migrating the watcher; do not green-light it on WS-3a's soak alone.
+
 ## Global Constraints
 
 - WS-3a is **additive / observe-only**: no consumer may change behavior. The resolver's output is logged for comparison and otherwise unused.
-- Provenance vocabulary (exact strings): `"authoritative"` (sessionId present in the port file — written by the SessionStart hook or the relay's own discovery), `"ambiguous"` (no sessionId and >1 live relay in the same cwd), `"missing"` (no sessionId, lone relay in its cwd — recoverable by backfill). These mirror WS-1's `IdentityViolation` kinds so the two stay coherent.
+- Provenance vocabulary (exact strings): `"authoritative"` (sessionId present in the port file — written by the SessionStart hook or the relay's own discovery), `"ambiguous"` (no sessionId and >1 **id-less** live relay in the same cwd), `"missing"` (no sessionId, not ambiguous — recoverable by backfill). The vocabulary _overlaps_ WS-1's `IdentityViolation` kinds but is **deliberately narrower**: WS-1's `ambiguous_siblings` counts _all_ relays in a cwd, so one authoritative + one id-less relay reads as `ambiguous_siblings` there, whereas the resolver counts only _id-less_ relays and classifies that id-less relay as `missing` (backfill can still safely claim the remaining JSONL). This is intentional (see the Task 1 crux note), not a bug — but the two modules will classify that one mixed state differently. WS-3d may want to narrow WS-1 to match when it folds backfill behind these rules.
 - Reuse existing types verbatim:
   - `PortFileData` (`src/relay/discovery.ts`): `{ port, pid, ppid, cwd, sessionId?, sessionName?, startedAt, ... }`
   - `SessionInfo` (`src/sessions/types.ts`): `{ id, name, dir, lastActivity, source, pid? }`
@@ -377,7 +379,10 @@ git commit -m "feat(identity): shadow-compare resolveIdentities against the watc
 ## Follow-on sub-plans (NOT in WS-3a)
 
 Written once WS-3a has soaked and shadow logs show the resolver agrees with the
-registry (zero divergences) on real traffic:
+registry (zero divergences) on real traffic — **but remember that clean soak only
+covers authoritative ids** (see the scope-limit note in §Why shadow first). WS-3b
+must extend the comparison to the harder cases (ambiguous/missing, registry-found
+ids) before it migrates the watcher:
 
 - **WS-3b — Migrate the watcher.** Replace `resolveSiblingId` + the `scanSessions`
   id-assignment with `resolveIdentities`; the resolver becomes the registry's
@@ -392,6 +397,6 @@ Each migration is its own behavior-preserving plan, written when reached.
 ## Self-review notes
 
 - Spec coverage: implements D2's _introduce one resolver with provenance_ — additively, in shadow mode. The consumer migrations (the rest of D2) are the follow-on sub-plans.
-- The `provenance` strings align with WS-1's `IdentityViolation` kinds (`ambiguous_siblings` ↔ `ambiguous`, `missing_session_id` ↔ `missing`), keeping the two modules coherent.
+- The `provenance` strings _overlap_ WS-1's `IdentityViolation` kinds but the resolver's `ambiguous` is deliberately narrower (id-less siblings only) — see the corrected Global Constraints note. The two intentionally classify a mixed authoritative+id-less cwd differently.
 - No placeholders; every step carries real code and exact commands.
 - The one genuine design judgment (id-less sibling next to an authoritative one = `missing`, not `ambiguous`) is called out in Task 1 Step 1 with an instruction to escalate rather than guess.
