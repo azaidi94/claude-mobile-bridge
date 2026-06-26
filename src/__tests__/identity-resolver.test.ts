@@ -78,7 +78,7 @@ describe("resolveIdentities", () => {
     expect(out.find((r) => r.relayPid === 2)!.topicId).toBe(2);
   });
 
-  test("an id-less relay sharing a cwd with an authoritative one is still 'missing' (only id-less siblings make it ambiguous)", () => {
+  test("an id-less relay sharing a cwd with ANY other relay is 'ambiguous' (broad rule, coherent with WS-1 + the watcher)", () => {
     const out = resolveIdentities({
       aliveRelays: [
         relay({ pid: 1, ppid: 11, cwd: "/mix", sessionId: "sid-1" }),
@@ -86,6 +86,6 @@ describe("resolveIdentities", () => {
       ],
       topics: [],
     });
-    expect(out.find((r) => r.relayPid === 2)!.provenance).toBe("missing");
+    expect(out.find((r) => r.relayPid === 2)!.provenance).toBe("ambiguous");
   });
 });
