@@ -31,12 +31,16 @@ export const LOG_DIR =
  * Shared by the bot (backfill) and the channel-relay MCP server (sessionId
  * self-discovery) so both encode identically.
  */
+export function encodeClaudeProjectDir(workingDir: string): string {
+  return workingDir.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 export function claudeProjectDir(workingDir: string): string {
   return join(
     homedir(),
     ".claude",
     "projects",
-    workingDir.replace(/[^a-zA-Z0-9]/g, "-"),
+    encodeClaudeProjectDir(workingDir),
   );
 }
 
