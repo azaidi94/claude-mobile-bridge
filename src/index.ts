@@ -65,7 +65,6 @@ import {
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
-import { backfillPortFileSessionIds } from "./relay/backfill";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -304,12 +303,10 @@ const notifyHandler = createNotificationHandler(
     }
   },
 );
+// sessionId backfill for id-less port files now runs inside the watcher's
+// refresh cycle (see doRefresh), so it covers both startup and any session
+// that appears later — no separate startup sweep needed here.
 await startWatcher(notifyHandler);
-
-// Backfill sessionId on any existing relay port files that lack it (relay
-// processes started before the discovery-loop race fix, or any with a still-
-// undiscovered JSONL at startup). Runs once, idempotent.
-await backfillPortFileSessionIds();
 
 // Cursor integration is opt-out. Disabled if CURSOR_BRIDGE_ENABLED env var
 // is false/0/no/off, OR if the user has toggled it off via /cursor off.

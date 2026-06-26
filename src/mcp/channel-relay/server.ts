@@ -27,10 +27,13 @@ import {
   readdirSync,
   statSync,
 } from "fs";
-import { homedir } from "os";
 import { writeJsonLine } from "../../utils/socket-writer";
 import { join } from "path";
-import { STATE_DIR, parseRelayPortFilePid } from "../../paths";
+import {
+  STATE_DIR,
+  parseRelayPortFilePid,
+  claudeProjectDir,
+} from "../../paths";
 import { pickRolledSessionId, type JsonlCandidate } from "./session-discovery";
 
 // ── Port file ──────────────────────────────────────────────────────────
@@ -89,11 +92,6 @@ function removePortFile(): void {
   } catch {
     // silently ok: best-effort cleanup; port file may already be gone
   }
-}
-
-/** Convert a cwd to the Claude projects directory name (slashes → dashes). */
-function claudeProjectDir(workingDir: string): string {
-  return join(homedir(), ".claude", "projects", workingDir.replace(/\//g, "-"));
 }
 
 /** Collect sessionIds already claimed by OTHER relay port files in STATE_DIR. */

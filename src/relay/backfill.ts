@@ -17,18 +17,13 @@
  */
 
 import { readdir, readFile, stat } from "fs/promises";
-import { homedir } from "os";
 import { join } from "path";
-import { STATE_DIR } from "../paths";
+import { STATE_DIR, claudeProjectDir } from "../paths";
 import { updatePortFile, isProcessAlive, type PortFileData } from "./discovery";
 import { info, warn } from "../logger";
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function claudeProjectDir(workingDir: string): string {
-  return join(homedir(), ".claude", "projects", workingDir.replace(/\//g, "-"));
-}
 
 async function findUnclaimedSessionId(
   projectDir: string,

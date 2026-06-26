@@ -19,6 +19,7 @@ import {
   updatePortFile,
 } from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
+import { backfillPortFileSessionIds } from "../relay/backfill";
 import { STATE_DIR } from "../paths";
 // Imported from the leaf module (not the barrel) to avoid a topics→sessions
 // import cycle. Read-only: used to pin session names across restarts.
@@ -617,6 +618,14 @@ export function assignPidsToSessions(
  * Call via the serialized `refresh()` wrapper — do not call directly.
  */
 async function doRefresh(): Promise<SessionDiff> {
+  // Backfill sessionId onto any alive port file that lacks one BEFORE we
+  // resolve sessions, so a session that appeared after startup (its port file
+  // landed via the STATE_DIR watch that triggered this refresh) is identified
+  // on the same tick instead of waiting for a bot restart. Idempotent and
+  // cheap when every port file already has its id. (The old once-at-startup
+  // sweep never re-ran, so post-startup siblings stayed id-less indefinitely.)
+  await backfillPortFileSessionIds();
+
   // Snapshot current desktop sessions by name (unique). Capture id/pid so a
   // port-backed re-injection (below) can preserve them rather than blanking
   // them out — downstream code uses `session.id` as a lookup key.

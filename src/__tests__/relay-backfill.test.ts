@@ -1,7 +1,7 @@
 // Set STATE_DIR before any module-load happens — paths.ts evaluates the env
 // var at import time.
 import { join } from "path";
-import { tmpdir, homedir } from "os";
+import { tmpdir } from "os";
 import {
   mkdirSync,
   mkdtempSync,
@@ -19,10 +19,13 @@ import { describe, expect, test, beforeEach, afterAll } from "bun:test";
 // static imports are hoisted and would otherwise load paths.ts before
 // CLAUDE_TELEGRAM_STATE_DIR is set.
 const { backfillPortFileSessionIds } = await import("../relay/backfill");
+const { claudeProjectDir } = await import("../paths");
 
+// Underscores in the path are the regression: Claude encodes them as dashes,
+// so the on-disk project dir is `-tmp---backfill-test-proj--`, NOT the
+// slash-only `-tmp-__backfill_test_proj__` the old encoder produced.
 const PROJECT_CWD = "/tmp/__backfill_test_proj__";
-const PROJECT_ENCODED = PROJECT_CWD.replace(/\//g, "-");
-const PROJECT_DIR = join(homedir(), ".claude", "projects", PROJECT_ENCODED);
+const PROJECT_DIR = claudeProjectDir(PROJECT_CWD);
 
 function clearDir(dir: string) {
   try {
