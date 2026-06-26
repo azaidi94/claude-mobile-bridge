@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdir, rename, stat } from "fs/promises";
 import { homedir, tmpdir } from "os";
 import { dirname, join } from "path";
 import type { TopicMapping, TopicStore } from "../types";
+export type { TopicMapping };
 import { debug, warn } from "../logger";
 import { withFileLock } from "./file-lock";
 
