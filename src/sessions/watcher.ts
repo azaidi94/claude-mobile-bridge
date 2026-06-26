@@ -26,6 +26,7 @@ import { STATE_DIR } from "../paths";
 import { getTopicStore } from "../topics/topic-store";
 import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
+import { shadowCompareIdentities } from "./identity-shadow";
 
 const execAsync = promisify(exec);
 
@@ -782,6 +783,18 @@ async function doRefresh(): Promise<SessionDiff> {
     });
   } catch (err) {
     warn(`identity: invariant check failed: ${err}`);
+  }
+
+  // Shadow-only (WS-3a): does the new resolver reproduce the registry's ids?
+  try {
+    shadowCompareIdentities({
+      portFiles,
+      topics: getTopicStore().topics,
+      registryIdFor: (claudePid) =>
+        getSessions().find((s) => s.pid === claudePid)?.id || undefined,
+    });
+  } catch (err) {
+    warn(`identity-shadow: comparison failed: ${err}`);
   }
 
   // Validate active session

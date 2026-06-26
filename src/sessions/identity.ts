@@ -35,7 +35,7 @@ export function resolveIdentities(input: {
     else if ((idlessByCwd.get(r.cwd) ?? 0) > 1) provenance = "ambiguous";
     else provenance = "missing";
     return {
-      claudePid: r.ppid ?? 0,
+      claudePid: r.ppid ?? 0, // 0 = ppid absent; shadow/consumers treat this as unresolvable
       relayPid: r.pid,
       cwd: r.cwd,
       sessionId,
