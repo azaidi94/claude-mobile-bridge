@@ -17,6 +17,7 @@ import {
   bridgeTailToSse,
   handleTailEvent,
   isWatching,
+  reassertSessionTopic,
   sendWatchRelay,
 } from "./watch";
 import { globalEventBus } from "../web/sse";
@@ -89,6 +90,15 @@ export async function sendViaRelay(
   const sessionId = sctx?.sessionId;
   const sessionDir = sctx?.sessionDir || getWorkingDir();
   if (!sessionDir) return "unavailable";
+
+  // The message arrived with its origin topic — re-anchor the binding so a
+  // stale/wrong session→topic mapping (and any auto-watch bound to the wrong
+  // topic) self-heals toward where the user is actually talking. The reply
+  // destination is therefore never re-inferred from session identity. (D1)
+  if (threadId !== undefined && sctx?.sessionName) {
+    reassertSessionTopic(sctx.sessionName, chatId, threadId);
+  }
+
   const startedAt = Date.now();
 
   const client = await getRelayClient({

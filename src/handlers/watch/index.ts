@@ -69,3 +69,5 @@ export {
   handleWatch,
   startWatchingAndNotify,
 } from "./lifecycle";
+
+export { reassertSessionTopic } from "./rebind";
