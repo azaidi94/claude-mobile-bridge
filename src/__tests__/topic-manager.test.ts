@@ -111,6 +111,7 @@ mock.module("../settings", () => ({
   getAutoWatchOnSpawn: () => true,
   getDefaultModelSetting: () => undefined,
   getEnablePinnedStatus: () => true,
+  getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
   getCursorEnabled: () => true,

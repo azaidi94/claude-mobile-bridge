@@ -18,6 +18,7 @@ import {
   getWorkingDir,
   getAutoWatchOnSpawn,
   getEnablePinnedStatus,
+  getWatchImages,
   getContextNotifyStep,
   getOverrides,
 } from "../settings";
@@ -54,6 +55,7 @@ export function renderSettingsBody(): string {
   const workdir = getWorkingDir();
   const autowatch = getAutoWatchOnSpawn();
   const pinnedStatus = getEnablePinnedStatus();
+  const watchImages = getWatchImages();
   const modelDisplay = getCurrentModelDisplayName();
   const overrides = getOverrides();
 
@@ -83,6 +85,9 @@ export function renderSettingsBody(): string {
     `📌 Pinned Status: <code>${pinnedStatus ? "on" : "off"}</code>${marker(
       "enablePinnedStatus",
     )}`,
+    `🖼 Images:        <code>${watchImages ? "on" : "off"}</code>${marker(
+      "watchImages",
+    )}`,
     "",
     "━ Notifications ━",
     `🧠 Context notify: <code>${formatNotifyStep(
@@ -104,7 +109,10 @@ export function renderSettingsKeyboard(): {
         { text: "👁 Auto-watch", callback_data: "set:edit:autowatch" },
         { text: "🤖 Model", callback_data: "set:edit:model" },
       ],
-      [{ text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" }],
+      [
+        { text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" },
+        { text: "🖼 Images", callback_data: "set:edit:images" },
+      ],
       [{ text: "🧠 Context notify", callback_data: "set:edit:contextnotify" }],
     ],
   };

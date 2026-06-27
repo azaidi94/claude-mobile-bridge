@@ -30,6 +30,8 @@ export interface BridgeSettings {
   autoWatchOnSpawn?: boolean;
   defaultModel?: string;
   enablePinnedStatus?: boolean;
+  /** Surface transcript images (screenshots, image Reads, pasted images) to TG. */
+  watchImages?: boolean;
   /**
    * Routing mode. `true` = supergroup topics (DMs blocked).
    * `false` = private DM (group messages blocked).
@@ -82,6 +84,9 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.enablePinnedStatus === "boolean") {
     out.enablePinnedStatus = o.enablePinnedStatus;
+  }
+  if (typeof o.watchImages === "boolean") {
+    out.watchImages = o.watchImages;
   }
   if (typeof o.groupMode === "boolean") {
     out.groupMode = o.groupMode;
@@ -164,6 +169,10 @@ export function getDefaultModelSetting(): string | undefined {
 
 export function getEnablePinnedStatus(): boolean {
   return ensure().enablePinnedStatus ?? true;
+}
+
+export function getWatchImages(): boolean {
+  return ensure().watchImages ?? true;
 }
 
 /** Explicit group-mode override, or undefined for auto-detect. */

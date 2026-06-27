@@ -39,8 +39,10 @@ import {
   renderTool,
 } from "./tool-headers";
 import { renderToolResult } from "./tool-results";
+import { renderImage } from "./image";
 import { stopWatchTyping, touchWatchTyping } from "./typing";
 import { markWorking, markDone } from "../reactions";
+import { getWatchImages } from "../../settings";
 
 /**
  * Map a TailEvent to an SseEvent and emit it to the session's SSE bus.
@@ -217,6 +219,11 @@ export function handleTailEvent(
       // observation card in place; skip the generic result rendering.
       if (finalizeAskCard(botApi, state, event)) break;
       renderToolResult(botApi, state, event, threadId);
+      break;
+
+    case "image":
+      // Off = fully silent (no marker). Default on.
+      if (getWatchImages()) renderImage(botApi, state, event, threadId);
       break;
 
     case "permission_mode":

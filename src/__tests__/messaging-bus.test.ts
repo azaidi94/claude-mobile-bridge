@@ -407,6 +407,25 @@ describe("MessageBus.send — attachments", () => {
     });
     expect(api.sendVoice).toHaveBeenCalledTimes(1);
   });
+
+  test("in-memory bytes attachment sends without touching disk", async () => {
+    // Note: NO mockBunFile reset here — bytes must not hit Bun.file at all.
+    restoreBunFile();
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const r = await bus.send({
+      chatId: 1,
+      content: "🖼 cap",
+      format: "html",
+      attachment: {
+        kind: "photo",
+        bytes: Buffer.from("rawbytes"),
+        filename: "image.png",
+      },
+    });
+    expect("messageId" in r).toBe(true);
+    expect(api.sendPhoto).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

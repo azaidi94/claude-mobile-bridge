@@ -41,6 +41,11 @@ export interface TailDisplayState {
     toolUseId: string;
     questions: import("../../types").AskUserQuestionItem[];
   };
+  /**
+   * Hash of the last image surfaced to this topic. Used to skip byte-identical
+   * consecutive images (computer-use re-screenshotting an unchanged frame).
+   */
+  lastImageHash?: string;
   /** Watch-only: last permission mode emitted (for dedup). */
   lastPermissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
   /**

@@ -61,6 +61,19 @@ describe("settings getters (no file)", () => {
     const { getDefaultModelSetting } = await import("../settings");
     expect(getDefaultModelSetting()).toBeUndefined();
   });
+
+  test("getWatchImages defaults to true", async () => {
+    const { getWatchImages } = await import("../settings");
+    expect(getWatchImages()).toBe(true);
+  });
+
+  test("getWatchImages reflects a persisted false", async () => {
+    const { saveSetting, getWatchImages, _reloadForTests } =
+      await import("../settings");
+    await saveSetting({ watchImages: false });
+    _reloadForTests();
+    expect(getWatchImages()).toBe(false);
+  });
 });
 
 describe("saveSetting", () => {
