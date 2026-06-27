@@ -17,6 +17,7 @@ import {
   bridgeTailToSse,
   handleTailEvent,
   isWatching,
+  markRelayInflight,
   reassertSessionTopic,
   sendWatchRelay,
 } from "./watch";
@@ -122,9 +123,16 @@ export async function sendViaRelay(
 
   // Start JSONL tailer for live progress
   let tailer: SessionTailer | null = null;
+  // While this request-scoped tailer renders the turn to the origin topic,
+  // suppress any persistent auto-watch for the same session so it doesn't
+  // double-render the same JSONL to its (possibly different) bound topic. (D3)
+  let releaseInflight: () => void = () => {};
   if (sessionId) {
     const jsonlPath = await findSessionJsonlPath(sessionId);
     if (jsonlPath) {
+      if (sctx?.sessionName) {
+        releaseInflight = markRelayInflight(sctx.sessionName);
+      }
       tailer = new SessionTailer(
         jsonlPath,
         makeRelayTailHandler(ctx.api, displayState, sctx?.sessionName),
@@ -147,6 +155,7 @@ export async function sendViaRelay(
       sessionId,
     });
     tailer?.stop();
+    releaseInflight();
     cleanupCallbacks();
     typing.stop();
     return "failed";
@@ -177,6 +186,7 @@ export async function sendViaRelay(
   }
 
   tailer?.stop();
+  releaseInflight();
   cleanupCallbacks();
   typing.stop();
 

@@ -71,3 +71,5 @@ export {
 } from "./lifecycle";
 
 export { reassertSessionTopic } from "./rebind";
+
+export { markRelayInflight, isRelayInflight } from "./inflight-relay";

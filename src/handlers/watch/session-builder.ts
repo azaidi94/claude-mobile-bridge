@@ -28,6 +28,7 @@ import { stopWatching } from "./cleanup";
 import { maybeNotifyContextCrossing } from "./context-usage";
 import { setupCrossPostSubscription } from "./cross-post";
 import { bridgeTailToSse, handleTailEvent } from "./event-router";
+import { isRelayInflight } from "./inflight-relay";
 import { resolveWatchThread } from "./outbound-thread";
 import {
   _awaitSessionId,
@@ -156,6 +157,10 @@ export async function startAutoWatch(
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
+    // While a request-scoped relay tailer is rendering this session's turn to
+    // the origin topic, suppress this persistent watch's render so the same
+    // JSONL isn't double-streamed. Usage tracking above still runs. (D3)
+    if (isRelayInflight(watchState.sessionName)) return;
     // Resolve the destination live (D2): if D1 rebound this session to a new
     // topic, outbound follows immediately without a tailer restart. Falls back
     // to the captured threadId when the mapping is gone.
@@ -297,6 +302,10 @@ export async function startWatchingSession(
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
+    // While a request-scoped relay tailer is rendering this session's turn to
+    // the origin topic, suppress this persistent watch's render so the same
+    // JSONL isn't double-streamed. Usage tracking above still runs. (D3)
+    if (isRelayInflight(watchState.sessionName)) return;
     // Resolve the destination live (D2): if D1 rebound this session to a new
     // topic, outbound follows immediately without a tailer restart. Falls back
     // to the captured threadId when the mapping is gone.
