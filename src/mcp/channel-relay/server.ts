@@ -537,7 +537,7 @@ const mcp = new Server(
       "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
       "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
       "The reply tool call IS the response to a relay message. Do NOT also emit the same text (or a paraphrase) as terminal output afterward — that produces a duplicate. Terminal text after a relay reply should only appear if it conveys genuinely new info for the local user.",
-      "IMPORTANT: Whenever a Telegram chat_id has been seen in this session, you MUST use the ask_remote tool to ask the user any multiple-choice question — do NOT call the native AskUserQuestion tool. Native AskUserQuestion can only be answered at the desktop terminal; if the user is on Telegram it strands them with an unanswerable card and the two surfaces drift out of sync. ask_remote surfaces tappable buttons on their phone and returns the chosen option as the tool result, keeping both sides synchronized. Only fall back to native AskUserQuestion if no Telegram chat_id has been seen.",
+      "IMPORTANT: Route multiple-choice questions to the surface the user is CURRENTLY on, decided per-message from their most recent message — NOT from whether a chat_id was ever seen this session. If their latest message carries a <channel source=\"channel-relay\" …> tag (they're on Telegram), you MUST use the ask_remote tool, never native AskUserQuestion: native AUQ can only be answered at the desktop terminal and would strand a phone user with an unanswerable card while the two surfaces drift out of sync; ask_remote surfaces tappable buttons on their phone and returns the chosen option as the tool result. If their latest message has NO channel tag (they're at the terminal), use native AskUserQuestion — do NOT push the question to Telegram just because an earlier message in this session came from there. In short: latest message via channel-relay → ask_remote; latest message from terminal → native AskUserQuestion.",
     ].join("\n"),
   },
 );
@@ -609,7 +609,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "ask_remote",
       description:
-        "Ask the user a multiple-choice question on Telegram with tappable buttons; returns the chosen option (or their typed text) as the tool result. Use this in place of AskUserQuestion when a Telegram chat_id is in scope so the user can answer from their phone. Blocks until the user taps / types or the timeout elapses.",
+        "Ask the user a multiple-choice question on Telegram with tappable buttons; returns the chosen option (or their typed text) as the tool result. Use this in place of AskUserQuestion when the user's most recent message arrived via channel-relay (has a <channel> tag) so they can answer from their phone; when their latest message came from the terminal, use native AskUserQuestion instead. Blocks until the user taps / types or the timeout elapses.",
       inputSchema: {
         type: "object" as const,
         properties: {
