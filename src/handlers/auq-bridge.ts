@@ -291,6 +291,10 @@ export async function startBridgeFromRoute(requestId: string): Promise<void> {
           question: args.question,
           options: args.options,
           allowCustom: args.allowCustom,
+          // No tmux pane ⇒ the worker can't inject a tapped answer back into the
+          // desktop TUI, so render the card observe-only rather than show
+          // buttons that would resolve the bridge without reaching Claude.
+          observeOnly: !state.tmuxPane?.trim(),
         });
         return { messageId };
       },
