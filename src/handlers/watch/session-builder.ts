@@ -28,6 +28,7 @@ import { stopWatching } from "./cleanup";
 import { maybeNotifyContextCrossing } from "./context-usage";
 import { setupCrossPostSubscription } from "./cross-post";
 import { bridgeTailToSse, handleTailEvent } from "./event-router";
+import { resolveWatchThread } from "./outbound-thread";
 import {
   _awaitSessionId,
   _resolveLiveJsonlPath,
@@ -155,7 +156,10 @@ export async function startAutoWatch(
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    // Resolve the destination live (D2): if D1 rebound this session to a new
+    // topic, outbound follows immediately without a tailer restart. Falls back
+    // to the captured threadId when the mapping is gone.
+    handleTailEvent(botApi, watchState, event, resolveWatchThread(watchState));
     bridgeTailToSse(globalEventBus, watchState.sessionName, event);
   });
   watchState.tailer = tailer;
@@ -293,7 +297,10 @@ export async function startWatchingSession(
     if (event.type === "usage" && event.usage) {
       void maybeNotifyContextCrossing(botApi, watchState, event.usage);
     }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
+    // Resolve the destination live (D2): if D1 rebound this session to a new
+    // topic, outbound follows immediately without a tailer restart. Falls back
+    // to the captured threadId when the mapping is gone.
+    handleTailEvent(botApi, watchState, event, resolveWatchThread(watchState));
     bridgeTailToSse(globalEventBus, watchState.sessionName, event);
   });
   watchState.tailer = tailer;
