@@ -280,6 +280,8 @@ mock.module("../relay", () => ({
   getRelayDirs: mockGetRelayDirs,
   disconnectRelay: mockDisconnectRelay,
   scanPortFiles: mockScanPortFiles,
+  // terminal-inject.ts (pulled in via the command barrel) imports this.
+  selectRelayTarget: () => null,
 }));
 
 const mockFindSessionJsonlPath = mock(async () => "/tmp/mock-session.jsonl");

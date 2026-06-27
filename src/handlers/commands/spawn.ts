@@ -9,7 +9,7 @@
 import { access } from "fs/promises";
 import type { Context } from "grammy";
 import { escapeHtml } from "../../formatting";
-import { getAutoWatchOnSpawn } from "../../settings";
+import { getAutoWatchOnSpawn, getTerminal } from "../../settings";
 import {
   getSessions,
   setActiveSession,
@@ -36,6 +36,7 @@ import {
   buildDesktopShellCommand,
   openMacOSTerminalWithCommand,
 } from "./terminal-launchers";
+import { rememberCmuxWorkspace } from "./terminal-inject";
 
 /**
  * Opens a macOS Terminal (or iTerm) in `explicitPath` running Claude with relay
@@ -122,6 +123,13 @@ export async function spawnDesktopClaudeSession(
 
     const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
     const term = openMacOSTerminalWithCommand(shellCmd, explicitPath);
+    // cmux prints the new `workspace:N` ref on stdout — stash it so /clear and
+    // /compact can inject into this workspace later (keyed by canonical cwd).
+    // Gated on cmux: other launchers' stdout (e.g. osascript echo) could
+    // otherwise coincidentally contain a `workspace:…` token and be mis-stored.
+    if (term.ok && term.stdout && getTerminal() === "cmux") {
+      rememberCmuxWorkspace(spawnCwd, term.stdout);
+    }
     if (!term.ok) {
       warn("spawn: osascript failed", {
         opId,

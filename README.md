@@ -16,6 +16,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Voice, photos & documents** - Voice transcribed via OpenAI, photos/PDFs/text files analyzed
 - **Extended thinking** - "think" keyword for deeper reasoning, "ultrathink" for 50k tokens
 - **Interrupt with `!`** - Prefix message to interrupt current query
+- **Remote slash commands** - `/clear` and `/compact` are typed straight into the desktop session's TUI (these are Claude Code _client_ commands the relay can't trigger). Per-session terminal detection routes the injection: cmux (via the workspace id the relay stamps into its port file), iTerm2/Terminal (AppleScript into the tab whose tty matches), Ghostty (best-effort, frontmost window)
 - **MCP support** - Configure external tools in `mcp-config.ts`
 - **Interactive buttons** - Claude can present options as tappable buttons
 - **Remote-answerable AskUserQuestion** - Built-in `AskUserQuestion` cards relay to Telegram and the Web UI via a `PreToolUse` hook; tap an option on mobile (or answer locally) to resolve the desktop's clarifying question — first answer wins.
@@ -159,6 +160,7 @@ The bot works best in a **Telegram forum group** where each session gets its own
 | -------- | -------------------------------------------------- |
 | Sessions | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Inject   | `/clear`, `/compact`                               |
 | Files    | `/pwd`, `/cd`, `/ls`                               |
 | Quota    | `/usage`                                           |
 | Scripts  | `/execute`                                         |
