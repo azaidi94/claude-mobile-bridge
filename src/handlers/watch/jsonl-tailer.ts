@@ -20,13 +20,10 @@ import {
   findNewestSessionInDir,
   findSessionJsonlPath,
   getExpectedJsonlPath,
-  type TailEvent,
 } from "../../sessions/tailer";
-import { globalEventBus } from "../../web/sse";
-import { maybeNotifyContextCrossing } from "./context-usage";
-import { bridgeTailToSse, handleTailEvent } from "./event-router";
 import { killedSessionIds, watchKey, watches } from "./registry";
 import type { WatchState } from "./state";
+import { makeWatchTailHandler } from "./tail-handler";
 
 /**
  * Resolve a live JSONL path for a session that may not have written its file
@@ -320,13 +317,10 @@ export function setupIdDriftDetection(
     }
     watchState.tailer?.stop();
     forgetUsage(previousId);
-    const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
-      if (event.type === "usage" && event.usage) {
-        void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-      }
-      handleTailEvent(botApi, watchState, event, watchState.threadId);
-      bridgeTailToSse(globalEventBus, watchState.sessionName, event);
-    });
+    const newTailer = new SessionTailer(
+      newPath,
+      makeWatchTailHandler(botApi, watchState),
+    );
     // Tail the new JSONL from EOF. We deliberately do NOT read from offset 0
     // here: `findNewestSessionInDir` picks by mtime, so a resumed conversation
     // (claude --resume, --continue, picker reopen) appears as "newest" and
@@ -518,13 +512,10 @@ export async function rebindTailerPath(
       { severity: "debug" },
     );
   }
-  const newTailer = new SessionTailer(newPath, (event: TailEvent) => {
-    if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-    }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
-    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
-  });
+  const newTailer = new SessionTailer(
+    newPath,
+    makeWatchTailHandler(botApi, watchState),
+  );
   watchState.tailer = newTailer;
   watchState.speculativeTailerPath = false;
   await newTailer.start();

@@ -53,6 +53,21 @@ describe("reassertSessionTopic", () => {
     expect(getTopicBySession("S")?.topicId).toBe(7);
   });
 
+  test("refuses to steal a topic already mapped to a different session", async () => {
+    const { addTopicMapping, getTopicBySession } =
+      await import("../topics/topic-store");
+    const { reassertSessionTopic } = await import("../handlers/watch");
+    // X already owns topic 7; S is at 3. Re-anchoring S onto 7 must not create
+    // two mappings sharing topicId 7 (which would corrupt getSessionByTopic).
+    addTopicMapping(makeMapping({ sessionName: "X", topicId: 7 }));
+    addTopicMapping(makeMapping({ sessionName: "S", topicId: 3 }));
+
+    reassertSessionTopic("S", CHAT, 7);
+
+    expect(getTopicBySession("S")?.topicId).toBe(3);
+    expect(getTopicBySession("X")?.topicId).toBe(7);
+  });
+
   test("aligned store mapping is left untouched (idempotent)", async () => {
     const { addTopicMapping, getTopicBySession } =
       await import("../topics/topic-store");

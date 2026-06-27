@@ -8,6 +8,7 @@
 
 import { warn } from "../../logger";
 import {
+  getSessionByTopic,
   getTopicBySession,
   updateTopicMapping,
 } from "../../topics/topic-store";
@@ -58,6 +59,19 @@ export function reassertSessionTopic(
   if (plan.action !== "rebind") {
     // "noop": already aligned. "create": no mapping exists yet — we lack the
     // sessionDir/sessionId to forge one here; it's born at topic creation.
+    return;
+  }
+
+  // Don't steal topic T from a different session. Overwriting our mapping's
+  // topicId to T while another mapping already owns T would leave two mappings
+  // sharing one topicId and corrupt getSessionByTopic (it returns the first
+  // match). Surface the conflict loudly and leave store + watch untouched.
+  const occupant = getSessionByTopic(threadId);
+  if (occupant && occupant.sessionName !== sessionName) {
+    warn(
+      `identity: rebind blocked, topic ${threadId} mapped to ${occupant.sessionName}`,
+      { sessionName, conflictWith: occupant.sessionName, threadId, chatId },
+    );
     return;
   }
 

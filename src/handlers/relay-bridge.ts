@@ -127,81 +127,84 @@ export async function sendViaRelay(
   // suppress any persistent auto-watch for the same session so it doesn't
   // double-render the same JSONL to its (possibly different) bound topic. (D3)
   let releaseInflight: () => void = () => {};
-  if (sessionId) {
-    const jsonlPath = await findSessionJsonlPath(sessionId);
-    if (jsonlPath) {
-      if (sctx?.sessionName) {
-        releaseInflight = markRelayInflight(sctx.sessionName);
-      }
-      tailer = new SessionTailer(
-        jsonlPath,
-        makeRelayTailHandler(ctx.api, displayState, sctx?.sessionName),
-      );
-      await tailer.start();
-    }
-  }
 
-  const sent = client.sendMessage({
-    chat_id: String(chatId),
-    user: username,
-    text: message,
-    ...(imagePath ? { image_path: imagePath } : {}),
-  });
-  if (!sent) {
-    warn("relay: send failed, not connected", {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-    });
-    tailer?.stop();
-    releaseInflight();
-    cleanupCallbacks();
-    typing.stop();
-    return "failed";
-  }
-
-  let result: RelayResult = "delivered";
+  // Everything below the in-flight mark runs under try/finally so the mark,
+  // tailer, relay callbacks, and typing indicator are always torn down — even
+  // if tailer.start() or sendMessage throws. A leaked in-flight mark would
+  // suppress the session's persistent watch forever (until restart).
   try {
-    await waitForReply(client, displayState, String(chatId));
-  } catch (err) {
-    warn("relay: wait failed", err, {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-      finalReplyReceived: displayState.finalReplyReceived,
-      durationMs: elapsedMs(startedAt),
+    if (sessionId) {
+      const jsonlPath = await findSessionJsonlPath(sessionId);
+      if (jsonlPath) {
+        if (sctx?.sessionName) {
+          releaseInflight = markRelayInflight(sctx.sessionName);
+        }
+        tailer = new SessionTailer(
+          jsonlPath,
+          makeRelayTailHandler(ctx.api, displayState, sctx?.sessionName),
+        );
+        await tailer.start();
+      }
+    }
+
+    const sent = client.sendMessage({
+      chat_id: String(chatId),
+      user: username,
+      text: message,
+      ...(imagePath ? { image_path: imagePath } : {}),
     });
-    cleanupProgressMessages(ctx.api, displayState);
-    if (!displayState.finalReplyReceived) {
-      result = "failed";
-      warn("relay: delivery failed", {
+    if (!sent) {
+      warn("relay: send failed, not connected", {
         opId,
         chatId,
         sessionDir,
         sessionId,
       });
+      return "failed";
     }
+
+    let result: RelayResult = "delivered";
+    try {
+      await waitForReply(client, displayState, String(chatId));
+    } catch (err) {
+      warn("relay: wait failed", err, {
+        opId,
+        chatId,
+        sessionDir,
+        sessionId,
+        finalReplyReceived: displayState.finalReplyReceived,
+        durationMs: elapsedMs(startedAt),
+      });
+      cleanupProgressMessages(ctx.api, displayState);
+      if (!displayState.finalReplyReceived) {
+        result = "failed";
+        warn("relay: delivery failed", {
+          opId,
+          chatId,
+          sessionDir,
+          sessionId,
+        });
+      }
+    }
+
+    if (result === "delivered") {
+      info("relay: completed", {
+        opId,
+        chatId,
+        sessionDir,
+        sessionId,
+        durationMs: elapsedMs(startedAt),
+        path: imagePath ? "image" : "text",
+      });
+    }
+
+    return result;
+  } finally {
+    tailer?.stop();
+    releaseInflight();
+    cleanupCallbacks();
+    typing.stop();
   }
-
-  tailer?.stop();
-  releaseInflight();
-  cleanupCallbacks();
-  typing.stop();
-
-  if (result === "delivered") {
-    info("relay: completed", {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-      durationMs: elapsedMs(startedAt),
-      path: imagePath ? "image" : "text",
-    });
-  }
-
-  return result;
 }
 
 /**
