@@ -23,7 +23,8 @@ import { backfillPortFileSessionIds } from "../relay/backfill";
 import { STATE_DIR } from "../paths";
 // Imported from the leaf module (not the barrel) to avoid a topics→sessions
 // import cycle. Read-only: used to pin session names across restarts.
-import { getTopicStore } from "../topics/topic-store";
+import { getTopicStore, updateTopicMapping } from "../topics/topic-store";
+import { topicSessionIdRefreshPlan } from "./topic-id-refresh";
 import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
 import { shadowCompareIdentities } from "./identity-shadow";
@@ -701,6 +702,20 @@ async function doRefresh(): Promise<SessionDiff> {
   seedNamesFromTopicStore(priorNameById, getTopicStore().topics);
 
   const { sessions: discovered, portFiles } = await scanSessions();
+
+  // Re-anchor each topic's stored sessionId to its live port file (matched by
+  // topicName). After a desktop /clear the session id changes and the port file
+  // is refreshed, but the topic store keeps the old id — breaking sessionId-keyed
+  // routing (e.g. the AUQ bridge 404s, then the cwd fallback fails once the
+  // session works in a subdir). Sibling-safe: skips topics two live port files
+  // disagree on. Only writes on an actual change.
+  for (const { sessionName, sessionId } of topicSessionIdRefreshPlan(
+    portFiles,
+    getTopicStore().topics,
+  )) {
+    updateTopicMapping(sessionName, { sessionId });
+    info(`identity: topic ${sessionName} sessionId refreshed → ${sessionId}`);
+  }
 
   // Keep non-desktop sessions (telegram, cursor); only desktop sessions are
   // rebuilt from filesystem scan. Without this, every refresh drops the
