@@ -23,6 +23,8 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 
 ## Quick Start
 
+> **Shortcut:** already have the [Claude Code CLI](https://claude.com/code)? Clone the repo, run `bun install`, then open `claude` in the repo and run **`/setup`** — it walks the whole flow below interactively (`.env`, relay registration, optional hooks), idempotently. The manual steps follow for reference or if you'd rather do it by hand.
+
 ### 1. BotFather config
 
 1. Open @BotFather → `/newbot` (or select an existing bot) and grab the token

@@ -16,6 +16,8 @@
     "typecheck": "bunx tsc --noEmit",
     "smoke": "bun run scripts/smoke.ts",
     "install-hooks": "bash scripts/install-hooks.sh",
+    "register-hooks": "bun run scripts/register-hooks.ts",
+    "setup-auq-secret": "bun run scripts/setup-auq-secret.ts",
     "test": "bun run test:isolated",
     "test:isolated": "bash scripts/test-isolated.sh",
     "prepare": "husky"
