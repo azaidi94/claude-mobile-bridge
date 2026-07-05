@@ -107,6 +107,13 @@ export function buildTerminalSpawnArgs(
           `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`,
         ],
       };
+    case "cursor":
+      // Detect-only: `getTerminal()` never yields "cursor", so this is
+      // unreachable in prod — the bot can't spawn a session into a Cursor
+      // window. Present for switch exhaustiveness.
+      return {
+        error: "Cursor can't be used as a launch target for new sessions.",
+      };
   }
 }
 

@@ -28,6 +28,7 @@
  */
 
 import { realpathSync } from "fs";
+import { basename } from "path";
 import type { TerminalApp } from "../../config";
 import { getTerminal } from "../../settings";
 import { debug, warn } from "../../logger";
@@ -177,6 +178,121 @@ export function buildGhosttyKeystrokeScript(text: string): string {
   ].join("\n");
 }
 
+/** A keystroke chord parsed into AppleScript form: a key + System Events modifiers. */
+export interface ParsedChord {
+  key: string;
+  /** e.g. ["control down", "option down", "command down"] */
+  modifiers: string[];
+}
+
+/**
+ * Parse a chord like "ctrl+alt+cmd+t" into a key + AppleScript modifier list.
+ * Returns null for empty/keyless input (caller then skips the focus step).
+ */
+export function parseChord(raw: string | undefined): ParsedChord | null {
+  if (!raw) return null;
+  const parts = raw
+    .split("+")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const key = parts[parts.length - 1]!;
+  const mods: string[] = [];
+  for (const p of parts.slice(0, -1)) {
+    if (p === "ctrl" || p === "control") mods.push("control down");
+    else if (p === "alt" || p === "opt" || p === "option")
+      mods.push("option down");
+    else if (p === "cmd" || p === "command" || p === "meta")
+      mods.push("command down");
+    else if (p === "shift") mods.push("shift down");
+  }
+  if (!key || key.length === 0) return null;
+  return { key, modifiers: mods };
+}
+
+/**
+ * Build the System Events script that types `text` into the Cursor integrated
+ * terminal for the session whose workspace folder basename is `folderName`.
+ *
+ * Cursor can't be driven like iTerm2/Terminal (xterm.js, no tty-targeted
+ * AppleScript, no send-to-terminal CLI). And its terminal is a canvas, so it's
+ * NOT exposed as an accessibility element unless focused + in screen-reader
+ * mode — we can't locate it via AX. Instead we target the *window* by its title
+ * (`… — <folderName>`), raise it, and rely on keystrokes going to whatever is
+ * focused. To make "whatever is focused" reliably be the terminal (not an
+ * editor, and to reveal a hidden panel), we first send `focusChord` — a chord
+ * the user binds to `workbench.action.terminal.focus` in Cursor. Without that
+ * binding the chord is a harmless no-op and this degrades to best-effort (works
+ * only when the terminal already has focus).
+ *
+ * Window targeting is reliable ONLY when the folder hosts a single session —
+ * the caller must gate on that first. Returns a sentinel:
+ *   OK | ERR_NO_CURSOR | ERR_NO_WINDOW | ERR_MULTI_WINDOW | ERR_RAISE_FAILED |
+ *   ERR_NOT_TERMINAL_FOCUSED
+ *
+ * TWO safety gates, both types-nothing-on-failure (a clean refusal always beats
+ * a mis-injection): (1) the raised window must be frontmost; (2) after the focus
+ * chord, the process's focused UI element must be a terminal (its description
+ * starts with "Terminal ") — an editor reports "The editor is not accessible…",
+ * so if the chord is unbound and an editor has focus we refuse instead of typing
+ * `/clear` into a source file. `submit` appends Return (false = leave text
+ * unsent, used by the non-destructive smoke test).
+ */
+export function buildCursorInjectScript(
+  folderName: string,
+  text: string,
+  opts: { submit?: boolean; focusChord?: ParsedChord | null } = {},
+): string {
+  const { submit = true, focusChord = null } = opts;
+  const f = escapeAppleScriptDoubleQuoted(folderName);
+  const t = escapeAppleScriptDoubleQuoted(text);
+  const focusLines =
+    focusChord && focusChord.key
+      ? [
+          `    keystroke "${escapeAppleScriptDoubleQuoted(focusChord.key)}"${
+            focusChord.modifiers.length
+              ? ` using {${focusChord.modifiers.join(", ")}}`
+              : ""
+          }`,
+          `    delay 0.2`,
+        ]
+      : [];
+  return [
+    `tell application "System Events"`,
+    `  if not (exists process "Cursor") then return "ERR_NO_CURSOR"`,
+    `  tell process "Cursor"`,
+    `    set matches to {}`,
+    `    repeat with w in windows`,
+    `      try`,
+    `        if (name of w) ends with "${f}" then set end of matches to w`,
+    `      end try`,
+    `    end repeat`,
+    `    if (count of matches) is 0 then return "ERR_NO_WINDOW"`,
+    `    if (count of matches) > 1 then return "ERR_MULTI_WINDOW"`,
+    `    set frontmost to true`,
+    `    perform action "AXRaise" of (item 1 of matches)`,
+    `    delay 0.3`,
+    `    set fw to window 1`,
+    `    set okFront to false`,
+    `    try`,
+    `      if (name of fw) ends with "${f}" then set okFront to true`,
+    `    end try`,
+    `    if not okFront then return "ERR_RAISE_FAILED"`,
+    ...focusLines,
+    // Safety gate: only type if a terminal actually holds keyboard focus.
+    `    set focDesc to ""`,
+    `    try`,
+    `      set focDesc to description of (value of attribute "AXFocusedUIElement")`,
+    `    end try`,
+    `    if focDesc does not start with "Terminal " then return "ERR_NOT_TERMINAL_FOCUSED"`,
+    `    keystroke "${t}"`,
+    ...(submit ? [`    key code 36`] : []),
+    `  end tell`,
+    `end tell`,
+    `return "OK"`,
+  ].join("\n");
+}
+
 // ── tty resolution ──────────────────────────────────────────────────────
 
 /** One `ps` row: a process's parent pid and controlling tty (or null if none). */
@@ -263,6 +379,11 @@ export function detectTerminalApp(
     if (c.includes("cmux")) return "cmux";
     if (c.includes("iterm")) return "iterm2";
     if (c.includes("ghostty")) return "ghostty";
+    // Cursor hosts the session in its integrated terminal; its ancestry runs
+    // through `Cursor Helper: terminal pty-host` → `…/Cursor.app/…/Cursor`,
+    // both of which lowercase-contain "cursor". Match before the generic
+    // Terminal.app check (nothing else contains "cursor", so order is safe).
+    if (c.includes("cursor")) return "cursor";
     if (c.includes("terminal.app") || c.endsWith("/terminal"))
       return "terminal";
     cur = row.ppid;
@@ -324,6 +445,113 @@ export async function resolveCmuxWorkspace(
     debug(`inject: port-file scan failed: ${err}`);
   }
   return getCmuxWorkspace(sctx.sessionDir) ?? null;
+}
+
+/**
+ * Count how many live relay (Claude Code) sessions share `dir` as their cwd.
+ * Used to gate Cursor injection: same-folder siblings live as indistinguishable
+ * tabs in one Cursor window (identical titles, no pid→tab mapping), so we refuse
+ * rather than risk injecting into the wrong one.
+ */
+/**
+ * Default chord for focusing the Cursor integrated terminal before injecting.
+ * The user must bind THIS chord to `workbench.action.terminal.focus` in Cursor's
+ * keybindings.json for the focus guard to work; override via CURSOR_FOCUS_CHORD.
+ * Unbound → the chord is a harmless no-op and inject falls back to best-effort.
+ */
+const DEFAULT_CURSOR_FOCUS_CHORD = "ctrl+alt+cmd+t";
+
+export async function countSessionsInDir(
+  dir: string,
+  scan: () => Promise<PortFileData[]> = scanPortFiles,
+): Promise<number> {
+  const canon = canonical(dir);
+  try {
+    const files = await scan();
+    return files.filter((pf) => canonical(pf.cwd) === canon).length;
+  } catch {
+    // Scan failure → treat as "unknown, not provably safe": report >1 so the
+    // caller refuses rather than risk a mis-targeted inject.
+    return 2;
+  }
+}
+
+/**
+ * Inject `text` into a Cursor-hosted session's integrated terminal. Only works
+ * when the session is the sole occupant of its workspace folder (so the window
+ * title uniquely identifies it); otherwise refuses with a clear message. See
+ * `buildCursorInjectScript` for the targeting/safety mechanism.
+ */
+async function injectIntoCursor(
+  sctx: SessionContext,
+  text: string,
+): Promise<InjectResult> {
+  const app: TerminalApp = "cursor";
+  const folder = basename(canonical(sctx.sessionDir));
+
+  const siblings = await countSessionsInDir(sctx.sessionDir);
+  if (siblings > 1) {
+    return {
+      ok: false,
+      app,
+      reason: `${siblings} Claude sessions share this Cursor folder — can't target one. Run the command in the tab.`,
+    };
+  }
+
+  const focusChord = parseChord(
+    process.env.CURSOR_FOCUS_CHORD ?? DEFAULT_CURSOR_FOCUS_CHORD,
+  );
+  const r = runOsascript(buildCursorInjectScript(folder, text, { focusChord }));
+  if (!r.ok) {
+    warn(`inject: cursor osascript failed: ${r.stderr.slice(0, 200)}`);
+    return {
+      ok: false,
+      app,
+      reason: r.stderr.slice(0, 200) || "osascript failed.",
+    };
+  }
+  switch (r.stdout.trim()) {
+    case "OK":
+      return {
+        ok: true,
+        app,
+        note: `best-effort: sent to the Cursor window for "${folder}"`,
+      };
+    case "ERR_NO_CURSOR":
+      return { ok: false, app, reason: "Cursor isn't running." };
+    case "ERR_NO_WINDOW":
+      return {
+        ok: false,
+        app,
+        reason: `No Cursor window found for "${folder}" — is it open?`,
+      };
+    case "ERR_MULTI_WINDOW":
+      return {
+        ok: false,
+        app,
+        reason: `Multiple Cursor windows match "${folder}" — can't safely pick one.`,
+      };
+    case "ERR_RAISE_FAILED":
+      return {
+        ok: false,
+        app,
+        reason: `Couldn't bring the "${folder}" Cursor window to the front.`,
+      };
+    case "ERR_NOT_TERMINAL_FOCUSED":
+      return {
+        ok: false,
+        app,
+        reason: `Couldn't focus the terminal in the "${folder}" Cursor window (an editor had focus). Bind ${DEFAULT_CURSOR_FOCUS_CHORD} to "workbench.action.terminal.focus" in Cursor, or click the terminal, then retry.`,
+      };
+    default:
+      return {
+        ok: false,
+        app,
+        reason: r.stdout.trim()
+          ? `Unexpected Cursor response: ${r.stdout.trim().slice(0, 120)}`
+          : "No response from Cursor.",
+      };
+  }
 }
 
 /**
@@ -403,6 +631,10 @@ export async function sendKeysToSession(
       };
     }
     return { ok: true, app };
+  }
+
+  if (app === "cursor") {
+    return await injectIntoCursor(sctx, text);
   }
 
   // ghostty — no API to target a specific window, so this keystrokes into

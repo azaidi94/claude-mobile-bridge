@@ -14,6 +14,9 @@ import {
   buildCmuxInjectArgvs,
   buildTtyWriteScript,
   buildGhosttyKeystrokeScript,
+  buildCursorInjectScript,
+  parseChord,
+  countSessionsInDir,
   ttyChainForPid,
   resolveCmuxWorkspace,
   detectTerminalApp,
@@ -160,6 +163,97 @@ describe("buildGhosttyKeystrokeScript", () => {
   });
 });
 
+describe("parseChord", () => {
+  test("parses a full modifier chord into AppleScript form", () => {
+    expect(parseChord("ctrl+alt+cmd+t")).toEqual({
+      key: "t",
+      modifiers: ["control down", "option down", "command down"],
+    });
+  });
+
+  test("accepts modifier aliases and a bare key", () => {
+    expect(parseChord("control+option+command+j")).toEqual({
+      key: "j",
+      modifiers: ["control down", "option down", "command down"],
+    });
+    expect(parseChord("k")).toEqual({ key: "k", modifiers: [] });
+  });
+
+  test("returns null for empty/undefined", () => {
+    expect(parseChord("")).toBeNull();
+    expect(parseChord(undefined)).toBeNull();
+  });
+});
+
+describe("buildCursorInjectScript", () => {
+  const chord = parseChord("ctrl+alt+cmd+t");
+
+  test("targets the window by folder title and returns OK on success", () => {
+    const s = buildCursorInjectScript("saas-builder", "/clear", {
+      focusChord: chord,
+    });
+    // window match on the folder basename
+    expect(s).toContain(`(name of w) ends with "saas-builder"`);
+    // sentinels for the ambiguous / not-found cases
+    expect(s).toContain(`"ERR_NO_WINDOW"`);
+    expect(s).toContain(`"ERR_MULTI_WINDOW"`);
+    // verify-before-type guards
+    expect(s).toContain(`"ERR_RAISE_FAILED"`);
+    expect(s).toContain(`"ERR_NOT_TERMINAL_FOCUSED"`);
+    // only types when a terminal actually holds focus
+    expect(s).toContain(`does not start with "Terminal "`);
+    // sends the focus chord before typing
+    expect(s).toContain(
+      `keystroke "t" using {control down, option down, command down}`,
+    );
+    // types the text and submits with Return
+    expect(s).toContain(`keystroke "/clear"`);
+    expect(s).toContain(`key code 36`);
+    expect(s).toContain(`return "OK"`);
+  });
+
+  test("no focus chord → no focus keystroke (best-effort)", () => {
+    const s = buildCursorInjectScript("proj", "/clear", { focusChord: null });
+    expect(s).not.toContain(`using {`);
+    expect(s).toContain(`keystroke "/clear"`);
+  });
+
+  test("submit=false types the text but omits the Return key (smoke test)", () => {
+    const s = buildCursorInjectScript("proj", "marker", {
+      submit: false,
+      focusChord: null,
+    });
+    expect(s).toContain(`keystroke "marker"`);
+    expect(s).not.toContain(`key code 36`);
+  });
+
+  test("escapes double quotes in folder and text", () => {
+    const s = buildCursorInjectScript(`fo"o`, `ba"r`, { focusChord: null });
+    expect(s).toContain(`fo\\"o`);
+    expect(s).toContain(`ba\\"r`);
+  });
+});
+
+describe("countSessionsInDir", () => {
+  test("counts only port files whose cwd matches", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "a", cwd: "/tmp" }),
+      portFile({ sessionId: "b", cwd: "/tmp" }),
+      portFile({ sessionId: "c", cwd: "/other" }),
+    ];
+    expect(await countSessionsInDir("/tmp", scan)).toBe(2);
+    expect(await countSessionsInDir("/other", scan)).toBe(1);
+    expect(await countSessionsInDir("/nope", scan)).toBe(0);
+  });
+
+  test("fails closed (reports >1) when the scan throws", async () => {
+    const scan = async () => {
+      throw new Error("boom");
+    };
+    expect(await countSessionsInDir("/tmp", scan)).toBeGreaterThan(1);
+  });
+});
+
 describe("resolveCmuxWorkspace", () => {
   beforeEach(() => _resetCmuxRegistry());
 
@@ -269,6 +363,30 @@ describe("detectTerminalApp", () => {
         ppid: 1,
         comm: "/Applications/cmux.app/Contents/Resources/ghostty/bin/cmux",
       },
+    };
+    expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cmux");
+  });
+
+  test("detects Cursor's integrated terminal from its pty-host ancestry", () => {
+    // Observed ancestry: claude → bash → Cursor Helper: terminal pty-host → Cursor
+    const tree: Record<number, ProcRow> = {
+      10: { ppid: 9, comm: "claude" },
+      9: { ppid: 8, comm: "/opt/homebrew/bin/bash" },
+      8: {
+        ppid: 7,
+        comm: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/Contents/MacOS/Cursor Helper (Plugin)",
+      },
+      7: { ppid: 1, comm: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+    };
+    expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cursor");
+  });
+
+  test("prefers cmux over cursor when a session runs in cmux inside Cursor", () => {
+    // cmux is matched before cursor, so a cmux host wins even under Cursor.
+    const tree: Record<number, ProcRow> = {
+      10: { ppid: 9, comm: "claude" },
+      9: { ppid: 8, comm: "/Applications/cmux.app/Contents/MacOS/cmux" },
+      8: { ppid: 1, comm: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
     };
     expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cmux");
   });

@@ -93,8 +93,13 @@ export function isDesktopClaudeSpawnSupported(): boolean {
  *   - `iterm2`             — iTerm2 via AppleScript
  *   - `ghostty`            — Ghostty.app via `open -na --args -e`
  *   - `cmux`               — cmux.app via `cmux new-workspace` (must be running)
+ *
+ * `cursor` is detect-only (not a launchable default): a Claude session hosted
+ * in Cursor's integrated terminal. It cannot be a configured DESKTOP_TERMINAL_APP
+ * — `parseTerminalApp` never yields it — but `detectTerminalApp` returns it so
+ * injection can handle (or cleanly decline) Cursor-hosted sessions.
  */
-export type TerminalApp = "terminal" | "iterm2" | "ghostty" | "cmux";
+export type TerminalApp = "terminal" | "iterm2" | "ghostty" | "cmux" | "cursor";
 
 export function parseTerminalApp(raw: string): TerminalApp {
   const v = raw.trim().toLowerCase();
