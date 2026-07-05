@@ -19,7 +19,7 @@ import { bashSingleQuotedPath, escapeAppleScriptDoubleQuoted } from "./helpers";
 /** Fallback path for the cmux CLI when it isn't on PATH (installed via cmux.app). */
 const CMUX_APP_BIN = "/Applications/cmux.app/Contents/MacOS/cmux";
 
-function resolveCmuxBin(): string | null {
+export function resolveCmuxBin(): string | null {
   const onPath = Bun.which("cmux");
   if (onPath) return onPath;
   try {
@@ -120,6 +120,8 @@ export function openMacOSTerminalWithCommand(
 ): {
   ok: boolean;
   stderr: string;
+  /** stdout of the launcher — for cmux this carries the new `workspace:N` ref. */
+  stdout: string;
 } {
   const built = buildTerminalSpawnArgs(
     getTerminal(),
@@ -127,9 +129,10 @@ export function openMacOSTerminalWithCommand(
     explicitPath,
   );
   if ("error" in built) {
-    return { ok: false, stderr: built.error };
+    return { ok: false, stderr: built.error, stdout: "" };
   }
   const r = Bun.spawnSync(built.argv);
   const stderr = (r.stderr ?? Buffer.alloc(0)).toString().trim();
-  return { ok: r.exitCode === 0, stderr };
+  const stdout = (r.stdout ?? Buffer.alloc(0)).toString().trim();
+  return { ok: r.exitCode === 0, stderr, stdout };
 }

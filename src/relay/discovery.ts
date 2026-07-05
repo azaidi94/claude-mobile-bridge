@@ -27,6 +27,16 @@ export interface PortFileData {
   topicId?: number;
   /** Set by bot after Telegram forum topic is created (group setups only). */
   topicName?: string;
+  /**
+   * cmux workspace UUID, captured from the relay server's own environment
+   * (cmux injects `CMUX_WORKSPACE_ID` into every surface shell, which the
+   * claude process and its relay child inherit). Lets the bot inject slash
+   * commands into ANY cmux session — not just bot-spawned ones — via
+   * `cmux send --workspace <cmuxWorkspaceId>`. (Workspace, not surface:
+   * `--surface` is rejected for `new-workspace --command` surfaces.) Absent on
+   * non-cmux terminals.
+   */
+  cmuxWorkspaceId?: string;
 }
 
 export interface RelaySelector {

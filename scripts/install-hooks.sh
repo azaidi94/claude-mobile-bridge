@@ -16,17 +16,23 @@ for src in "$REPO_ROOT/hooks/"*; do
   echo "linked: $TARGET/$name → $src"
 done
 
+echo
+echo "Registering hook entries in ~/.claude/settings.json …"
+# Don't abort (set -e) if registration fails — the symlinks above are already in
+# place; register-hooks prints its own remediation and can be re-run on its own.
+bun run "$REPO_ROOT/scripts/register-hooks.ts" || \
+  echo "register-hooks: registration failed (see above). Symlinks are in place; fix the issue and re-run 'bun run register-hooks'."
+
 cat <<'EOF'
 
-Done.
+Done. Both hook entries are registered (idempotent — re-running is safe).
 
-To activate the AUQ remote bridge:
-  1. Ensure RELAY_AUQ_SECRET is set in .env AND exported in your shell profile.
-  2. Add the PreToolUse hook entry to ~/.claude/settings.json (see README).
-  3. Restart the bot.
+To activate the AUQ remote bridge (optional):
+  1. Run 'bun run setup-auq-secret' — writes the shared secret to .env AND your
+     shell profile (same value), then prints the 'source' command to reload it.
+  2. Restart the bot.
+  (Without the secret the PreToolUse hook just passes through to the local TUI.)
 
-To activate exact /clear follow for sessions sharing a directory:
-  1. Add the SessionStart hook entry to ~/.claude/settings.json (see README).
-     (Sessions launched via claude-relay-launch.sh get it auto-injected.)
-  2. Restart your Claude sessions so they load the hook (no hot-reload).
+Exact /clear follow (SessionStart) is active once you restart your Claude
+sessions so they load the hook (no hot-reload). The bot reloads on its own.
 EOF

@@ -23,6 +23,8 @@ export {
   handleCleanZombie,
   handleCron,
   handlePrompts,
+  handleClear,
+  handleCompact,
   handleSessions,
   offlineSessionCache,
   handlePwd,

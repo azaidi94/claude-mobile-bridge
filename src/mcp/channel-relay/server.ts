@@ -82,6 +82,12 @@ function writePortFile(port: number): void {
     sessionId: parentSessionId,
     cwd,
     startedAt: new Date().toISOString(),
+    // cmux injects CMUX_WORKSPACE_ID into each surface shell; inherited down to
+    // here. Lets the bot inject /clear & /compact into this session's cmux
+    // workspace. Omitted on non-cmux terminals.
+    ...(process.env.CMUX_WORKSPACE_ID
+      ? { cmuxWorkspaceId: process.env.CMUX_WORKSPACE_ID }
+      : {}),
   };
   writeFileSync(PORT_FILE, JSON.stringify(data, null, 2));
 }
