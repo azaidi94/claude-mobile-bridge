@@ -71,4 +71,4 @@ export { handleCron } from "./cron";
 
 export { handlePrompts } from "./prompts";
 
-export { handleClear, handleCompact } from "./inject";
+export { handleClear, handleCompact, handleContext } from "./inject";

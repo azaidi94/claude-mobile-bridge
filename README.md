@@ -16,7 +16,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
-- **Remote slash commands** — `/clear` and `/compact` typed straight into the desktop session's TUI.
+- **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
 - **MCP support** — configure external tools in `mcp-config.ts`.
@@ -96,7 +96,7 @@ That's the full setup. For optional integrations (remote-answerable questions, e
 | -------- | -------------------------------------------------- |
 | Sessions | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Inject   | `/clear`, `/compact`                               |
+| Inject   | `/clear`, `/compact`, `/context`                   |
 | Files    | `/pwd`, `/cd`, `/ls`                               |
 | Quota    | `/usage`                                           |
 | Scripts  | `/execute`                                         |

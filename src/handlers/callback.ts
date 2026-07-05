@@ -133,6 +133,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     ["stop_pick:", "handleStop"],
     ["clear_pick:", "handleClear"],
     ["compact_pick:", "handleCompact"],
+    ["context_pick:", "handleContext"],
   ] as const) {
     if (callbackData.startsWith(prefix)) {
       const sessionName = callbackData.slice(prefix.length);
