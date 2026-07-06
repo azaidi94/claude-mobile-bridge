@@ -201,7 +201,7 @@ async function post(
  * one, so the pinned message always reflects where the loop is at. Silent on
  * failure (missing pin rights shouldn't break the loop).
  */
-async function pinLatest(
+export async function pinLatest(
   api: Api,
   loop: RalphLoop,
   messageId: number,

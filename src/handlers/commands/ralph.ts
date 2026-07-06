@@ -44,6 +44,7 @@ import {
   stopRalphLoop,
   setRalphVerbose,
   killRalphTree,
+  pinLatest,
 } from "../../ralph/monitor";
 import {
   busReply,
@@ -408,16 +409,10 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
       format: "html",
     });
     // Pin the started message as the initial progress marker; each iteration
-    // beat repins over it (monitor.pinLatest), so the pinned message always
+    // beat repins over it (same pinLatest path), so the pinned message always
     // shows where the loop is at.
     if (res && "messageId" in res) {
-      loop.pinnedMessageId = res.messageId;
-      await updateLoop(loop.id, { pinnedMessageId: res.messageId });
-      await ctx.api
-        .pinChatMessage(loop.chatId, res.messageId, {
-          disable_notification: true,
-        })
-        .catch((err) => warn(`ralph: pin started failed: ${err}`));
+      await pinLatest(ctx.api, loop, res.messageId);
     }
   }
   info(`ralph: started loop ${loop.id} pid=${pid} repo=${repo}`);
