@@ -1034,6 +1034,19 @@ export async function handleSettingsCallback(
       return;
     }
 
+    if (field === "ralphverbose") {
+      const current = getOverrides().ralphVerboseDefault;
+      let next: boolean | undefined;
+      if (current === undefined) next = true;
+      else if (current === true) next = false;
+      else next = undefined;
+      await saveSetting({ ralphVerboseDefault: next });
+      await rerenderSettingsPanel(ctx);
+      const label = next === undefined ? "default (off)" : next ? "on" : "off";
+      await ctx.answerCallbackQuery({ text: `Ralph verbose: ${label}` });
+      return;
+    }
+
     if (field === "contextnotify") {
       const current = getContextNotifyStep();
       const order = [0, 10, 25, 50];
@@ -1114,6 +1127,8 @@ export async function handleSettingsCallback(
       await saveSetting({ enablePinnedStatus: undefined });
     } else if (field === "images") {
       await saveSetting({ watchImages: undefined });
+    } else if (field === "ralphverbose") {
+      await saveSetting({ ralphVerboseDefault: undefined });
     } else if (field === "contextnotify") {
       await saveSetting({ contextNotifyStep: undefined });
     } else if (field === "model") {

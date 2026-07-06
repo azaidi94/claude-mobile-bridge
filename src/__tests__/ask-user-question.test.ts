@@ -63,6 +63,7 @@ mock.module("../settings", () => ({
   getContextNotifyStep: () => 0,
   getCursorEnabled: () => true,
   getCursorSubscribedSession: () => undefined,
+  getRalphVerboseDefault: () => false,
 }));
 
 // Mock sessions module

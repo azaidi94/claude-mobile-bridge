@@ -55,6 +55,12 @@ export interface BridgeSettings {
    * survives restarts and re-wires once the window re-attaches.
    */
   cursorSubscribedSession?: string;
+  /**
+   * Default verbose (full-transcript) streaming for new /ralph loops.
+   * `undefined`/`false` = off (default). Per-loop `/ralph verbose on|off`
+   * still overrides at runtime.
+   */
+  ralphVerboseDefault?: boolean;
 }
 
 function resolveSettingsPath(): string {
@@ -101,6 +107,9 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.cursorSubscribedSession === "string") {
     out.cursorSubscribedSession = o.cursorSubscribedSession;
+  }
+  if (typeof o.ralphVerboseDefault === "boolean") {
+    out.ralphVerboseDefault = o.ralphVerboseDefault;
   }
   return out;
 }
@@ -191,6 +200,11 @@ export function getCursorEnabled(): boolean {
 /** Name of the subscribed Cursor session, or undefined if none. */
 export function getCursorSubscribedSession(): string | undefined {
   return ensure().cursorSubscribedSession;
+}
+
+/** Whether new /ralph loops start with verbose transcript streaming on. */
+export function getRalphVerboseDefault(): boolean {
+  return ensure().ralphVerboseDefault ?? false;
 }
 
 /**

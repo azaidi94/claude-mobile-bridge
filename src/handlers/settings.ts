@@ -20,6 +20,7 @@ import {
   getEnablePinnedStatus,
   getWatchImages,
   getContextNotifyStep,
+  getRalphVerboseDefault,
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
@@ -56,6 +57,7 @@ export function renderSettingsBody(): string {
   const autowatch = getAutoWatchOnSpawn();
   const pinnedStatus = getEnablePinnedStatus();
   const watchImages = getWatchImages();
+  const ralphVerbose = getRalphVerboseDefault();
   const modelDisplay = getCurrentModelDisplayName();
   const overrides = getOverrides();
 
@@ -88,6 +90,9 @@ export function renderSettingsBody(): string {
     `🖼 Images:        <code>${watchImages ? "on" : "off"}</code>${marker(
       "watchImages",
     )}`,
+    `🔁 Ralph verbose: <code>${ralphVerbose ? "on" : "off"}</code>${marker(
+      "ralphVerboseDefault",
+    )}`,
     "",
     "━ Notifications ━",
     `🧠 Context notify: <code>${formatNotifyStep(
@@ -113,7 +118,10 @@ export function renderSettingsKeyboard(): {
         { text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" },
         { text: "🖼 Images", callback_data: "set:edit:images" },
       ],
-      [{ text: "🧠 Context notify", callback_data: "set:edit:contextnotify" }],
+      [
+        { text: "🔁 Ralph verbose", callback_data: "set:edit:ralphverbose" },
+        { text: "🧠 Context notify", callback_data: "set:edit:contextnotify" },
+      ],
     ],
   };
 }

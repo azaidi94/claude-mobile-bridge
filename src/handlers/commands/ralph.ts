@@ -23,7 +23,7 @@ import {
   isDesktopClaudeSpawnSupported,
 } from "../../config";
 import { STATE_DIR } from "../../paths";
-import { getWorkingDir } from "../../settings";
+import { getWorkingDir, getRalphVerboseDefault } from "../../settings";
 import { isAuthorized } from "../../security";
 import { escapeHtml } from "../../formatting";
 import { getMessageBus } from "../../messaging";
@@ -261,7 +261,7 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     chatId: undefined,
     runDir,
     tailOffset: 0,
-    verbose: false,
+    verbose: getRalphVerboseDefault(),
     startedAt: new Date().toISOString(),
   });
   if (!added.ok) {
