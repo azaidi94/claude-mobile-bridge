@@ -447,6 +447,58 @@ export async function resolveCmuxWorkspace(
   return getCmuxWorkspace(sctx.sessionDir) ?? null;
 }
 
+/** A tmux injection target: the pane id, and the socket path if non-default. */
+export interface TmuxTarget {
+  pane: string;
+  socket?: string;
+}
+
+/**
+ * Resolve the tmux pane (+ socket) for `sctx` from the relay port files, or null
+ * if the session isn't running under tmux. Mirrors `resolveCmuxWorkspace`:
+ * exact-sessionId match first, then a UNIQUE same-cwd match carrying a pane (so
+ * a drifted sessionId still resolves, but ambiguous siblings never mis-target).
+ */
+export async function resolveTmuxTarget(
+  sctx: SessionContext,
+  scan: () => Promise<PortFileData[]> = scanPortFiles,
+): Promise<TmuxTarget | null> {
+  try {
+    const alive = await scan();
+    const byId = selectRelayTarget(alive, {
+      sessionId: sctx.sessionId,
+      sessionDir: sctx.sessionDir,
+      claudePid: sctx.sessionPid,
+    });
+    if (byId?.tmuxPane) return { pane: byId.tmuxPane, socket: byId.tmuxSocket };
+    const dir = canonical(sctx.sessionDir);
+    const byDir = alive.filter(
+      (pf) => canonical(pf.cwd) === dir && pf.tmuxPane,
+    );
+    if (byDir.length === 1)
+      return { pane: byDir[0]!.tmuxPane!, socket: byDir[0]!.tmuxSocket };
+  } catch (err) {
+    debug(`inject: tmux target scan failed: ${err}`);
+  }
+  return null;
+}
+
+/**
+ * Two argv batches to type `text` then submit it in a tmux pane. `-l` sends the
+ * text literally so a leading `/` and special chars aren't parsed as key names;
+ * `Enter` is a separate send-keys so it's interpreted as the Return key.
+ */
+export function buildTmuxSendArgs(
+  target: TmuxTarget,
+  text: string,
+): string[][] {
+  const base = target.socket ? ["tmux", "-S", target.socket] : ["tmux"];
+  return [
+    [...base, "send-keys", "-t", target.pane, "-l", text],
+    [...base, "send-keys", "-t", target.pane, "Enter"],
+  ];
+}
+
 /**
  * Count how many live relay (Claude Code) sessions share `dir` as their cwd.
  * Used to gate Cursor injection: same-folder siblings live as indistinguishable
@@ -563,6 +615,25 @@ export async function sendKeysToSession(
   sctx: SessionContext,
   text: string,
 ): Promise<InjectResult> {
+  // Preferred path: if the session runs under tmux, inject via `tmux send-keys`.
+  // It's accessibility- and focus-free and terminal-agnostic (works in Cursor,
+  // iTerm, Ghostty…), so it wins over every host-specific fallback below.
+  const tmux = await resolveTmuxTarget(sctx);
+  if (tmux) {
+    for (const argv of buildTmuxSendArgs(tmux, text)) {
+      const r = Bun.spawnSync(argv);
+      if (r.exitCode !== 0) {
+        const err = (r.stderr ?? Buffer.alloc(0)).toString().trim();
+        return {
+          ok: false,
+          app: "tmux",
+          reason: `tmux send-keys failed (${err || "pane gone?"}).`,
+        };
+      }
+    }
+    return { ok: true, app: "tmux", note: `sent to tmux pane ${tmux.pane}` };
+  }
+
   // Route per-session: the terminal app is a global *default*, but each session
   // may run in a different app. Detect this session's actual host from its
   // process ancestry; fall back to the global setting when pid is unknown or

@@ -37,6 +37,17 @@ export interface PortFileData {
    * non-cmux terminals.
    */
   cmuxWorkspaceId?: string;
+  /**
+   * tmux pane id (`%N`) the claude process runs in, captured from the relay
+   * server's own environment (`$TMUX_PANE`, inherited from the tmux pane down
+   * to the claude process and its relay child). Paired with `tmuxSocket`, it
+   * lets the bot inject slash commands via `tmux -S <socket> send-keys -t
+   * <pane>` — accessibility-free, focus-free, and terminal-agnostic (works in
+   * Cursor, iTerm, Ghostty…). Absent when claude isn't running under tmux.
+   */
+  tmuxPane?: string;
+  /** tmux socket path (first field of `$TMUX`), pairs with `tmuxPane`. */
+  tmuxSocket?: string;
 }
 
 export interface RelaySelector {

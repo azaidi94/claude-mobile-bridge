@@ -108,11 +108,12 @@ export function buildTerminalSpawnArgs(
         ],
       };
     case "cursor":
-      // Detect-only: `getTerminal()` never yields "cursor", so this is
-      // unreachable in prod — the bot can't spawn a session into a Cursor
-      // window. Present for switch exhaustiveness.
+    case "tmux":
+      // Detect-only: `getTerminal()` never yields these, so unreachable in prod
+      // — the bot can't spawn a session into a Cursor window, and "tmux" only
+      // labels an inject route. Present for switch exhaustiveness.
       return {
-        error: "Cursor can't be used as a launch target for new sessions.",
+        error: `${terminalApp} can't be used as a launch target for new sessions.`,
       };
   }
 }

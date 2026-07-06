@@ -16,6 +16,8 @@ import {
   buildGhosttyKeystrokeScript,
   buildCursorInjectScript,
   parseChord,
+  resolveTmuxTarget,
+  buildTmuxSendArgs,
   countSessionsInDir,
   ttyChainForPid,
   resolveCmuxWorkspace,
@@ -231,6 +233,69 @@ describe("buildCursorInjectScript", () => {
     const s = buildCursorInjectScript(`fo"o`, `ba"r`, { focusChord: null });
     expect(s).toContain(`fo\\"o`);
     expect(s).toContain(`ba\\"r`);
+  });
+});
+
+describe("resolveTmuxTarget", () => {
+  test("prefers the pane+socket from the exact sessionId match", async () => {
+    const scan = async () => [
+      portFile({
+        sessionId: "sid-1",
+        tmuxPane: "%3",
+        tmuxSocket: "/tmp/tmux-501/claude",
+      }),
+    ];
+    expect(await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan)).toEqual(
+      {
+        pane: "%3",
+        socket: "/tmp/tmux-501/claude",
+      },
+    );
+  });
+
+  test("recovers by unique cwd match when the sessionId has drifted", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "old", cwd: "/tmp", tmuxPane: "%7" }),
+    ];
+    expect(await resolveTmuxTarget(sctx({ sessionId: "new" }), scan)).toEqual({
+      pane: "%7",
+      socket: undefined,
+    });
+  });
+
+  test("does NOT cwd-match when two panes share the cwd (ambiguous)", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "a", cwd: "/tmp", tmuxPane: "%1" }),
+      portFile({ sessionId: "b", cwd: "/tmp", tmuxPane: "%2" }),
+    ];
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "new" }), scan),
+    ).toBeNull();
+  });
+
+  test("returns null when the session isn't under tmux", async () => {
+    const scan = async () => [portFile({ sessionId: "sid-1" })]; // no tmuxPane
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
+    ).toBeNull();
+  });
+});
+
+describe("buildTmuxSendArgs", () => {
+  test("sends literal text then a separate Enter, targeting the pane on its socket", () => {
+    expect(
+      buildTmuxSendArgs({ pane: "%3", socket: "/tmp/s" }, "/clear"),
+    ).toEqual([
+      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "-l", "/clear"],
+      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "Enter"],
+    ]);
+  });
+
+  test("omits -S when no socket is known (default server)", () => {
+    expect(buildTmuxSendArgs({ pane: "%9" }, "/compact")).toEqual([
+      ["tmux", "send-keys", "-t", "%9", "-l", "/compact"],
+      ["tmux", "send-keys", "-t", "%9", "Enter"],
+    ]);
   });
 });
 

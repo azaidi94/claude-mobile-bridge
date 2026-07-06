@@ -88,6 +88,19 @@ function writePortFile(port: number): void {
     ...(process.env.CMUX_WORKSPACE_ID
       ? { cmuxWorkspaceId: process.env.CMUX_WORKSPACE_ID }
       : {}),
+    // tmux injects TMUX_PANE (the pane id) and TMUX (socket,pid,session) into
+    // every pane's shell; inherited down to claude and this relay child. Lets
+    // the bot inject /clear & /compact via `tmux send-keys` — accessibility- and
+    // focus-free, works in any host terminal (Cursor included). Omitted outside
+    // tmux. TMUX's first comma-field is the socket path.
+    ...(process.env.TMUX_PANE
+      ? {
+          tmuxPane: process.env.TMUX_PANE,
+          ...(process.env.TMUX
+            ? { tmuxSocket: process.env.TMUX.split(",")[0] }
+            : {}),
+        }
+      : {}),
   };
   writeFileSync(PORT_FILE, JSON.stringify(data, null, 2));
 }

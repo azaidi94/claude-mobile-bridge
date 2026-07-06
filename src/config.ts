@@ -94,12 +94,19 @@ export function isDesktopClaudeSpawnSupported(): boolean {
  *   - `ghostty`            — Ghostty.app via `open -na --args -e`
  *   - `cmux`               — cmux.app via `cmux new-workspace` (must be running)
  *
- * `cursor` is detect-only (not a launchable default): a Claude session hosted
- * in Cursor's integrated terminal. It cannot be a configured DESKTOP_TERMINAL_APP
- * — `parseTerminalApp` never yields it — but `detectTerminalApp` returns it so
- * injection can handle (or cleanly decline) Cursor-hosted sessions.
+ * `cursor` and `tmux` are detect-only (not launchable defaults): `cursor` is a
+ * session hosted in Cursor's integrated terminal; `tmux` labels an injection
+ * that went through `tmux send-keys` (the preferred, terminal-agnostic path).
+ * Neither can be a configured DESKTOP_TERMINAL_APP — `parseTerminalApp` never
+ * yields them — but they appear in inject results / detection.
  */
-export type TerminalApp = "terminal" | "iterm2" | "ghostty" | "cmux" | "cursor";
+export type TerminalApp =
+  | "terminal"
+  | "iterm2"
+  | "ghostty"
+  | "cmux"
+  | "cursor"
+  | "tmux";
 
 export function parseTerminalApp(raw: string): TerminalApp {
   const v = raw.trim().toLowerCase();
