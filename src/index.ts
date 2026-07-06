@@ -12,9 +12,18 @@ setupBotLogRotation(
 );
 
 import { run } from "@grammyjs/runner";
-import { startCursorBridge, stopCursorBridge } from "./cursor";
+import {
+  startCursorBridge,
+  stopCursorBridge,
+  setCursorSubscription,
+} from "./cursor";
 import { TELEGRAM_TOKEN, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { getWorkingDir, getAutoWatchOnSpawn } from "./settings";
+import {
+  getWorkingDir,
+  getAutoWatchOnSpawn,
+  getCursorEnabled,
+  getCursorSubscribedSession,
+} from "./settings";
 import { setRestartFn } from "./lifecycle";
 import { unlinkSync, readFileSync, existsSync } from "fs";
 import {
@@ -56,7 +65,6 @@ import {
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
-import { backfillPortFileSessionIds } from "./relay/backfill";
 import { info, warn, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
@@ -295,25 +303,26 @@ const notifyHandler = createNotificationHandler(
     }
   },
 );
+// sessionId backfill for id-less port files now runs inside the watcher's
+// refresh cycle (see doRefresh), so it covers both startup and any session
+// that appears later — no separate startup sweep needed here.
 await startWatcher(notifyHandler);
 
-// Backfill sessionId on any existing relay port files that lack it (relay
-// processes started before the discovery-loop race fix, or any with a still-
-// undiscovered JSONL at startup). Runs once, idempotent.
-await backfillPortFileSessionIds();
-
-// Cursor integration is opt-out. Set CURSOR_BRIDGE_ENABLED=false (or
-// 0/no/off) to skip CDP target polling — useful when Cursor isn't
-// running or the user only wants the Claude Code bridge.
-const cursorBridgeEnabled = !["false", "0", "no", "off"].includes(
+// Cursor integration is opt-out. Disabled if CURSOR_BRIDGE_ENABLED env var
+// is false/0/no/off, OR if the user has toggled it off via /cursor off.
+const envDisabled = ["false", "0", "no", "off"].includes(
   (process.env.CURSOR_BRIDGE_ENABLED ?? "").toLowerCase(),
 );
+const cursorBridgeEnabled = !envDisabled && getCursorEnabled();
 if (cursorBridgeEnabled) {
   startCursorBridge(
     primaryChatId !== undefined
       ? { api: bot.api, chatId: primaryChatId }
       : undefined,
   );
+  // Restore the persisted single-session subscription so forwarding resumes
+  // once that window re-attaches. Undefined → nothing forwarded until picked.
+  setCursorSubscription(getCursorSubscribedSession() ?? null);
 } else {
   info("cursor-bridge: disabled via CURSOR_BRIDGE_ENABLED");
 }
@@ -340,8 +349,14 @@ try {
 
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
+  // Don't reconcile (create topics for) cursor sessions other than the
+  // subscribed one — cursor topics are created on demand via /cursor. The
+  // subscribed one is kept so its existing topic is re-validated on restart.
+  const subscribedCursor = getCursorSubscribedSession();
   await topicManager.reconcile(
-    sessions.map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
+    sessions
+      .filter((s) => s.source !== "cursor" || s.name === subscribedCursor)
+      .map((s) => ({ name: s.name, dir: s.dir, id: s.id })),
   );
 
   // Start auto-watch and ping relay for all online sessions with topics
@@ -375,6 +390,7 @@ await bot.api.setMyCommands([
   { command: "execute", description: "Start/stop configured scripts" },
   { command: "settings", description: "Persistent settings panel" },
   { command: "groupmode", description: "Toggle group vs private routing" },
+  { command: "cursor", description: "Enable or disable Cursor AI bridge" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
   { command: "ralph", description: "Run a ralph loop (afk_tasks.sh)" },

@@ -65,6 +65,12 @@ export { handleApp } from "./app";
 
 export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
 
+export {
+  handleCursorBridge,
+  handleCursorBridgeCallback,
+  handleCursorSubscribe,
+} from "./cursor-bridge";
+
 export { handleCleanZombie } from "./cleanzombie";
 
 export { handleCron } from "./cron";

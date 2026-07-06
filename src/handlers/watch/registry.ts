@@ -62,6 +62,19 @@ export function findWatchByDir(cwd: string): WatchState | null {
   return null;
 }
 
+/**
+ * Return the active watch for a given Claude sessionId, or null. Sibling-safe:
+ * prefer this over `findWatchByDir` when an exact sessionId is known so two
+ * sessions in the same folder don't cross-wire.
+ */
+export function findWatchBySessionId(sessionId: string): WatchState | null {
+  if (!sessionId) return null;
+  for (const [, w] of watches) {
+    if (w.sessionId === sessionId) return w;
+  }
+  return null;
+}
+
 /** Return the active watch for a given topic, if any. */
 export function getWatch(
   chatId: number,

@@ -544,6 +544,13 @@ export async function sendBridgeQuestion(
     question: string;
     options: Array<{ label: string; description?: string }>;
     allowCustom: boolean;
+    /**
+     * No tmux pane was captured for this session, so a tapped answer can't be
+     * injected back into the desktop TUI. Render the card observe-only: no
+     * answer keyboard (tapping would resolve the bridge without ever reaching
+     * Claude) and a footer telling the user to answer at the desktop.
+     */
+    observeOnly?: boolean;
   },
 ): Promise<number> {
   const trimmedQuestion = truncate(args.question, MAX_QUESTION_CHARS);
@@ -554,16 +561,22 @@ export async function sendBridgeQuestion(
         ? truncate(o.description, MAX_OPTION_DESC_CHARS)
         : undefined,
   }));
-  const html = formatQuestion(trimmedQuestion, trimmedOptions);
-  const keyboard = buildBridgeKeyboard(
-    args.requestId,
-    args.questionIndex,
-    trimmedOptions,
-    args.allowCustom,
-  );
+  const html =
+    formatQuestion(trimmedQuestion, trimmedOptions) +
+    (args.observeOnly
+      ? "\n\nℹ️ <i>observe-only — answer at the desktop (no tmux pane to deliver a remote answer)</i>"
+      : "");
+  const keyboard = args.observeOnly
+    ? undefined
+    : buildBridgeKeyboard(
+        args.requestId,
+        args.questionIndex,
+        trimmedOptions,
+        args.allowCustom,
+      );
   const sent = await api.sendMessage(args.chatId, html, {
     parse_mode: "HTML",
-    reply_markup: keyboard,
+    ...(keyboard ? { reply_markup: keyboard } : {}),
     ...(args.threadId !== undefined
       ? { message_thread_id: args.threadId }
       : {}),

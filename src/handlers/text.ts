@@ -46,7 +46,7 @@ import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
 import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
-import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
+import { isGeneralTopic, isSessionTopic } from "../topics";
 import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
@@ -514,12 +514,10 @@ export async function handleText(
 
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
-    if (isTopicChat(ctx)) {
-      const topicCtx = isSessionTopic(ctx);
-      if (topicCtx) {
-        updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
-      }
-    }
+    // The desktop session's new id after /clear is re-anchored into the topic
+    // store by the watcher (topicSessionIdRefreshPlan) from the live port file.
+    // The previous attempt to clear it here was a no-op anyway — updateTopicMapping
+    // skips `undefined` and guards against wiping a stored sessionId.
     if (state) {
       state.clearSession();
     }

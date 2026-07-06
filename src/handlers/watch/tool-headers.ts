@@ -6,7 +6,11 @@
  */
 
 import type { Api } from "grammy";
-import { escapeHtml, formatAskUserQuestion } from "../../formatting";
+import {
+  escapeHtml,
+  formatAskUserQuestion,
+  formatAskUserQuestionAnswered,
+} from "../../formatting";
 import { debug } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import type { TailEvent } from "../../sessions/tailer";
@@ -124,7 +128,8 @@ export function renderAskUserQuestion(
   if (state.currentTextMsg && !state.segmentDone) {
     finalizeTextMessage(botApi, state);
   }
-  const html = formatAskUserQuestion(event.questions ?? []);
+  const questions = event.questions ?? [];
+  const html = formatAskUserQuestion(questions);
   getMessageBus()
     .send({
       chatId,
@@ -138,6 +143,47 @@ export function renderAskUserQuestion(
       const stub = busStubMessage(chatId, r.messageId);
       state.currentToolMsg = stub;
       trackProgress(stub);
+      // Remember this card so the matching tool_result (answered at the
+      // desktop) can edit it into a resolved state instead of leaving it
+      // dangling out-of-sync.
+      if (event.toolUseId) {
+        state.pendingAskCard = {
+          messageId: r.messageId,
+          toolUseId: event.toolUseId,
+          questions,
+        };
+      }
     })
     .catch((err) => debug(`tail ask_user_question: ${err}`));
+}
+
+/**
+ * If a tool_result resolves the pending native AskUserQuestion card, edit that
+ * card into a "✅ Answered at the desktop" state and return true (so the caller
+ * skips the normal tool_result rendering). Returns false when the result is
+ * unrelated to any pending AUQ card.
+ */
+export function finalizeAskCard(
+  botApi: Api,
+  state: TailDisplayState,
+  event: TailEvent,
+): boolean {
+  const pending = state.pendingAskCard;
+  if (!pending || !event.toolUseId || event.toolUseId !== pending.toolUseId) {
+    return false;
+  }
+
+  const { chatId } = state;
+  const html = formatAskUserQuestionAnswered(pending.questions, event.content);
+  botApi
+    .editMessageText(chatId, pending.messageId, html, { parse_mode: "HTML" })
+    .catch((err) => debug(`tail ask finalize: ${err}`));
+
+  // The card now holds a final resolved state — detach it from currentToolMsg
+  // so the next tool/text event doesn't delete it.
+  if (state.currentToolMsg?.message_id === pending.messageId) {
+    state.currentToolMsg = null;
+  }
+  state.pendingAskCard = undefined;
+  return true;
 }

@@ -26,7 +26,7 @@ import {
   getSessionState,
   dropSessionState,
 } from "../../sessions/session-state";
-import { getRelayDirs, disconnectRelay } from "../../relay";
+import { disconnectRelay } from "../../relay";
 import { stopWatchByName } from "../watch";
 import { info, warn } from "../../logger";
 import {
@@ -344,62 +344,14 @@ export async function handleList(ctx: Context): Promise<void> {
     return;
   }
 
-  // Resolve branches and relay status for all sessions
-  const [branches, relayDirs] = await Promise.all([
-    Promise.all(sessions.map((s) => getGitBranch(s.dir))),
-    getRelayDirs(),
+  // Tiny title + one Switch button per session. No per-session meta text —
+  // the buttons are the selector (same treatment as /cursor).
+  const buttons = sessions.map((s) => [
+    { text: s.name, callback_data: `switch:${s.name}` },
   ]);
-  const relayDirSet = new Set(relayDirs);
 
-  const lines: string[] = ["📋 <b>Sessions</b>\n"];
-
-  if (isTopicChat(ctx)) {
-    // Topic mode: show sessions as status list (user navigates by opening topics)
-    for (let i = 0; i < sessions.length; i++) {
-      const s = sessions[i]!;
-      const hasRelay = relayDirSet.has(s.dir);
-      const emoji = hasRelay ? "🟢" : "🔴";
-      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-      lines.push(
-        `${emoji} <b>${escapeHtml(s.name)}</b>\n  <code>${escapeHtml(dir)}</code>`,
-      );
-      const branch = branches[i];
-      if (branch) lines.push(`  🌿 ${escapeHtml(branch)}`);
-      lines.push("");
-    }
-    await busReply(ctx, lines.join("\n"), "html");
-  } else {
-    // v1 behavior: show sessions with Switch buttons. The "active" marker
-    // is no longer rendered after task 7g — there is no global active pointer.
-    for (let i = 0; i < sessions.length; i++) {
-      const s = sessions[i]!;
-      const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
-      const ago = formatTimeAgo(s.lastActivity);
-      const branch = branches[i];
-      const hasRelay = relayDirSet.has(s.dir);
-
-      const meta = [
-        dir,
-        branch ? `🌿 ${branch}` : null,
-        hasRelay ? "📡" : null,
-        ago,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      lines.push(`• <b>${s.name}</b>`, `   ${meta}`, "");
-    }
-
-    const buttons = sessions.map((s) => [
-      {
-        text: s.name,
-        callback_data: `switch:${s.name}`,
-      },
-    ]);
-
-    await busReply(ctx, lines.join("\n"), {
-      format: "html",
-      replyMarkup:
-        buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
-    });
-  }
+  await busReply(ctx, "📋 <b>Sessions</b>", {
+    format: "html",
+    replyMarkup: { inline_keyboard: buttons },
+  });
 }

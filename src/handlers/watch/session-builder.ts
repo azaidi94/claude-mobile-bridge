@@ -20,14 +20,12 @@ import {
   getGitBranch,
 } from "../../sessions";
 import { getCurrentModelDisplayName } from "../../session";
-import { SessionTailer, type TailEvent } from "../../sessions/tailer";
+import { SessionTailer } from "../../sessions/tailer";
 import { getRelayClient } from "../../relay";
 import { getMessageBus } from "../../messaging";
-import { globalEventBus } from "../../web/sse";
 import { stopWatching } from "./cleanup";
-import { maybeNotifyContextCrossing } from "./context-usage";
 import { setupCrossPostSubscription } from "./cross-post";
-import { bridgeTailToSse, handleTailEvent } from "./event-router";
+import { makeWatchTailHandler } from "./tail-handler";
 import {
   _awaitSessionId,
   _resolveLiveJsonlPath,
@@ -151,13 +149,10 @@ export async function startAutoWatch(
       { severity: "debug" },
     );
   }
-  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-    }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
-    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
-  });
+  const tailer = new SessionTailer(
+    jsonlPath,
+    makeWatchTailHandler(botApi, watchState),
+  );
   watchState.tailer = tailer;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
@@ -289,13 +284,10 @@ export async function startWatchingSession(
       { severity: "debug" },
     );
   }
-  const tailer = new SessionTailer(jsonlPath, (event: TailEvent) => {
-    if (event.type === "usage" && event.usage) {
-      void maybeNotifyContextCrossing(botApi, watchState, event.usage);
-    }
-    handleTailEvent(botApi, watchState, event, watchState.threadId);
-    bridgeTailToSse(globalEventBus, watchState.sessionName, event);
-  });
+  const tailer = new SessionTailer(
+    jsonlPath,
+    makeWatchTailHandler(botApi, watchState),
+  );
   watchState.tailer = tailer;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();

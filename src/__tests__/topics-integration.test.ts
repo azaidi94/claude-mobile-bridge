@@ -56,6 +56,7 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
   getTerminal: () => "Terminal" as const,
   getWorkingDir: () => "/tmp",
   getAutoWatchOnSpawn: () => true,

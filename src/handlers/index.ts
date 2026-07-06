@@ -19,6 +19,7 @@ export {
   handleRefresh,
   handlePin,
   handleGroupMode,
+  handleCursorBridge,
   handleCleanZombie,
   handleCron,
   handleRalph,

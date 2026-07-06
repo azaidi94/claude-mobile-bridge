@@ -41,6 +41,7 @@ import {
   handleRefresh,
   handlePin,
   handleGroupMode,
+  handleCursorBridge,
   handleCleanZombie,
   handleCron,
   handleRalph,
@@ -289,6 +290,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("unwatch", withSctx(handleUnwatch));
   bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
+  bot.command("cursor", handleCursorBridge);
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("cron", withSctx(handleCron));
   bot.command("ralph", handleRalph);

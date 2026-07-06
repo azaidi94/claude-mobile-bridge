@@ -3,7 +3,7 @@
  * desktop Claude session.
  */
 
-import type { Context } from "grammy";
+import type { Api, Context } from "grammy";
 import type { SessionContext } from "../sessions/context";
 import { getWorkingDir } from "../settings";
 import type { RelayClient, RelayDisplayState } from "../relay";
@@ -13,13 +13,43 @@ import {
   wireRelayDisplay,
   cleanupProgressMessages,
 } from "../relay";
-import { handleTailEvent, isWatching, sendWatchRelay } from "./watch";
+import {
+  bridgeTailToSse,
+  handleTailEvent,
+  isWatching,
+  markRelayInflight,
+  reassertSessionTopic,
+  sendWatchRelay,
+} from "./watch";
+import { globalEventBus } from "../web/sse";
+import type { TailEvent } from "../sessions/tailer";
 import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
 import { debug, elapsedMs, info, warn } from "../logger";
 
 export type RelayResult = "delivered" | "unavailable" | "failed";
+
+/**
+ * Build the relay-mode JSONL tailer callback. Besides driving the live TG
+ * display via `handleTailEvent`, it forwards every event to `globalEventBus`
+ * via `bridgeTailToSse` — mirroring the /watch-mode tailers. Without the bus
+ * feed, an AUQ bridge's `attachBusCancellation` never sees the local terminal
+ * `tool_result`, so a native AskUserQuestion answered at the desktop leaves the
+ * Telegram card blocked. `relay_reply` is skipped because the TCP relay
+ * (wireRelayDisplay) owns the final reply.
+ */
+export function makeRelayTailHandler(
+  api: Api,
+  displayState: RelayDisplayState,
+  sessionName: string | undefined,
+): (event: TailEvent) => void {
+  return (event) => {
+    if (event.type === "relay_reply") return;
+    handleTailEvent(api, displayState, event);
+    if (sessionName) bridgeTailToSse(globalEventBus, sessionName, event);
+  };
+}
 
 export async function sendViaRelay(
   ctx: Context,
@@ -31,6 +61,20 @@ export async function sendViaRelay(
   threadId?: number,
   sctx?: SessionContext,
 ): Promise<RelayResult> {
+  // The message arrived with its origin topic — re-anchor the binding so a
+  // stale/wrong session→topic mapping (and any auto-watch bound to the wrong
+  // topic) self-heals toward where the user is actually talking. Done BEFORE
+  // the isWatching early-return below so the store still heals on the
+  // watch-delivery path (where the session's own watch already sits on this
+  // topic but the persisted mapping hasn't caught up). Idempotent: a no-op when
+  // already aligned, and refuses to steal a topic held by a different session.
+  // The reply destination is therefore never re-inferred from session
+  // identity. (D1) Cursor sessions are excluded — they don't flow through the
+  // CC relay and kept their prior no-reassert behavior.
+  if (threadId !== undefined && sctx?.sessionName && sctx.source !== "cursor") {
+    reassertSessionTopic(sctx.sessionName, chatId, threadId);
+  }
+
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
   if (threadId !== undefined && isWatching(chatId, threadId)) {
@@ -61,6 +105,7 @@ export async function sendViaRelay(
   const sessionId = sctx?.sessionId;
   const sessionDir = sctx?.sessionDir || getWorkingDir();
   if (!sessionDir) return "unavailable";
+
   const startedAt = Date.now();
 
   const client = await getRelayClient({
@@ -84,78 +129,88 @@ export async function sendViaRelay(
 
   // Start JSONL tailer for live progress
   let tailer: SessionTailer | null = null;
-  if (sessionId) {
-    const jsonlPath = await findSessionJsonlPath(sessionId);
-    if (jsonlPath) {
-      tailer = new SessionTailer(jsonlPath, (event) => {
-        // TCP relay (wireRelayDisplay) owns the final reply; skip relay_reply
-        // from the tailer to avoid sending the same message twice.
-        if (event.type === "relay_reply") return;
-        handleTailEvent(ctx.api, displayState, event);
-      });
-      await tailer.start();
-    }
-  }
+  // While this request-scoped tailer renders the turn to the origin topic,
+  // suppress any persistent auto-watch for the same session so it doesn't
+  // double-render the same JSONL to its (possibly different) bound topic. (D3)
+  let releaseInflight: () => void = () => {};
 
-  const sent = client.sendMessage({
-    chat_id: String(chatId),
-    user: username,
-    text: message,
-    ...(imagePath ? { image_path: imagePath } : {}),
-  });
-  if (!sent) {
-    warn("relay: send failed, not connected", {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-    });
-    tailer?.stop();
-    cleanupCallbacks();
-    typing.stop();
-    return "failed";
-  }
-
-  let result: RelayResult = "delivered";
+  // Everything below the in-flight mark runs under try/finally so the mark,
+  // tailer, relay callbacks, and typing indicator are always torn down — even
+  // if tailer.start() or sendMessage throws. A leaked in-flight mark would
+  // suppress the session's persistent watch forever (until restart).
   try {
-    await waitForReply(client, displayState, String(chatId));
-  } catch (err) {
-    warn("relay: wait failed", err, {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-      finalReplyReceived: displayState.finalReplyReceived,
-      durationMs: elapsedMs(startedAt),
+    if (sessionId) {
+      const jsonlPath = await findSessionJsonlPath(sessionId);
+      if (jsonlPath) {
+        if (sctx?.sessionName) {
+          releaseInflight = markRelayInflight(sctx.sessionName);
+        }
+        tailer = new SessionTailer(
+          jsonlPath,
+          makeRelayTailHandler(ctx.api, displayState, sctx?.sessionName),
+        );
+        await tailer.start();
+      }
+    }
+
+    const sent = client.sendMessage({
+      chat_id: String(chatId),
+      user: username,
+      text: message,
+      ...(imagePath ? { image_path: imagePath } : {}),
     });
-    cleanupProgressMessages(ctx.api, displayState);
-    if (!displayState.finalReplyReceived) {
-      result = "failed";
-      warn("relay: delivery failed", {
+    if (!sent) {
+      warn("relay: send failed, not connected", {
         opId,
         chatId,
         sessionDir,
         sessionId,
       });
+      return "failed";
     }
+
+    let result: RelayResult = "delivered";
+    try {
+      await waitForReply(client, displayState, String(chatId));
+    } catch (err) {
+      warn("relay: wait failed", err, {
+        opId,
+        chatId,
+        sessionDir,
+        sessionId,
+        finalReplyReceived: displayState.finalReplyReceived,
+        durationMs: elapsedMs(startedAt),
+      });
+      cleanupProgressMessages(ctx.api, displayState);
+      if (!displayState.finalReplyReceived) {
+        result = "failed";
+        warn("relay: delivery failed", {
+          opId,
+          chatId,
+          sessionDir,
+          sessionId,
+        });
+      }
+    }
+
+    if (result === "delivered") {
+      info("relay: completed", {
+        opId,
+        chatId,
+        sessionDir,
+        sessionId,
+        durationMs: elapsedMs(startedAt),
+        path: imagePath ? "image" : "text",
+      });
+    }
+
+    return result;
+  } finally {
+    tailer?.stop();
+    releaseInflight();
+    cleanupCallbacks();
+    typing.stop();
   }
-
-  tailer?.stop();
-  cleanupCallbacks();
-  typing.stop();
-
-  if (result === "delivered") {
-    info("relay: completed", {
-      opId,
-      chatId,
-      sessionDir,
-      sessionId,
-      durationMs: elapsedMs(startedAt),
-      path: imagePath ? "image" : "text",
-    });
-  }
-
-  return result;
 }
 
 /**

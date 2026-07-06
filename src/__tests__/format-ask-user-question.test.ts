@@ -4,7 +4,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { formatAskUserQuestion } from "../formatting";
+import {
+  formatAskUserQuestion,
+  formatAskUserQuestionAnswered,
+} from "../formatting";
 import type { AskUserQuestionItem } from "../types";
 
 describe("formatAskUserQuestion", () => {
@@ -161,5 +164,45 @@ describe("formatAskUserQuestion", () => {
     expect(html).toContain("❓ <b>Claude is asking</b>");
     expect(html).toContain("(no options visible)");
     expect(html).toContain("<i>Answer at the desktop.</i>");
+  });
+});
+
+describe("formatAskUserQuestionAnswered", () => {
+  test("renders resolved card with parsed question→answer pairs", () => {
+    const result =
+      'Your questions have been answered: "How should I remove commit 36b980d?"="Discard entirely". You can now continue with these answers in mind.';
+    const html = formatAskUserQuestionAnswered([], result);
+    expect(html).toContain("✅ <b>Answered at the desktop</b>");
+    expect(html).toContain("How should I remove commit 36b980d?");
+    expect(html).toContain("Discard entirely");
+    // The old "answer at the desktop" prompt must be gone — this is resolved.
+    expect(html).not.toContain("Answer at the desktop.");
+  });
+
+  test("renders multiple answered pairs", () => {
+    const result =
+      'Your questions have been answered: "Port?"="8080" "Database?"="Postgres".';
+    const html = formatAskUserQuestionAnswered([], result);
+    expect(html).toContain("Port?");
+    expect(html).toContain("8080");
+    expect(html).toContain("Database?");
+    expect(html).toContain("Postgres");
+  });
+
+  test("escapes HTML in parsed pairs", () => {
+    const result = 'answered: "<q>"="<a>".';
+    const html = formatAskUserQuestionAnswered([], result);
+    expect(html).not.toMatch(/<q>|<a>/);
+    expect(html).toContain("&lt;q&gt;");
+    expect(html).toContain("&lt;a&gt;");
+  });
+
+  test("falls back to question text when no pairs parse", () => {
+    const html = formatAskUserQuestionAnswered(
+      [{ question: "Which port?", options: [{ label: "8080" }] }],
+      "(no machine-readable answer here)",
+    );
+    expect(html).toContain("✅ <b>Answered at the desktop</b>");
+    expect(html).toContain("Which port?");
   });
 });
