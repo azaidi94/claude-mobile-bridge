@@ -61,6 +61,20 @@ export async function sendViaRelay(
   threadId?: number,
   sctx?: SessionContext,
 ): Promise<RelayResult> {
+  // The message arrived with its origin topic — re-anchor the binding so a
+  // stale/wrong session→topic mapping (and any auto-watch bound to the wrong
+  // topic) self-heals toward where the user is actually talking. Done BEFORE
+  // the isWatching early-return below so the store still heals on the
+  // watch-delivery path (where the session's own watch already sits on this
+  // topic but the persisted mapping hasn't caught up). Idempotent: a no-op when
+  // already aligned, and refuses to steal a topic held by a different session.
+  // The reply destination is therefore never re-inferred from session
+  // identity. (D1) Cursor sessions are excluded — they don't flow through the
+  // CC relay and kept their prior no-reassert behavior.
+  if (threadId !== undefined && sctx?.sessionName && sctx.source !== "cursor") {
+    reassertSessionTopic(sctx.sessionName, chatId, threadId);
+  }
+
   // Watch's JSONL tailer + wireRelayDisplay TCP would both send the reply;
   // route through sendWatchRelay to avoid the duplicate display path.
   if (threadId !== undefined && isWatching(chatId, threadId)) {
@@ -91,14 +105,6 @@ export async function sendViaRelay(
   const sessionId = sctx?.sessionId;
   const sessionDir = sctx?.sessionDir || getWorkingDir();
   if (!sessionDir) return "unavailable";
-
-  // The message arrived with its origin topic — re-anchor the binding so a
-  // stale/wrong session→topic mapping (and any auto-watch bound to the wrong
-  // topic) self-heals toward where the user is actually talking. The reply
-  // destination is therefore never re-inferred from session identity. (D1)
-  if (threadId !== undefined && sctx?.sessionName) {
-    reassertSessionTopic(sctx.sessionName, chatId, threadId);
-  }
 
   const startedAt = Date.now();
 

@@ -246,7 +246,7 @@ describe("POST /api/auq-bridge", () => {
       body: JSON.stringify({
         request_id: "auq_2",
         tool_use_id: "toolu_y",
-        session_id: "sid",
+        session_id: "id1",
         cwd: "/repo/saas",
         questions: [
           { question: "Q", options: [{ label: "A" }, { label: "B" }] },
@@ -257,6 +257,30 @@ describe("POST /api/auq-bridge", () => {
     const body = (await res.json()) as { request_id: string; chatId: number };
     expect(body.request_id).toBe("auq_2");
     expect(body.chatId).toBe(100);
+  });
+
+  test("sibling with no watch does NOT cross-deliver to the other session's watch", async () => {
+    // Only session id1 has a watch in /repo/saas. Session id2 (same folder, no
+    // watch of its own) posts an AUQ. The id lookup misses; the cwd fallback
+    // must NOT hand id2's question to id1's topic — that's the sibling
+    // cross-wire this route exists to prevent. Expect 404 (no route for id2)
+    // rather than a misroute into id1's chat.
+    const app = await buildApp();
+    const res = await app.request("/api/auq-bridge", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({
+        request_id: "auq_cross",
+        tool_use_id: "toolu_cross",
+        session_id: "id2",
+        cwd: "/repo/saas",
+        questions: [{ question: "Q", options: [{ label: "A" }] }],
+      }),
+    });
+    expect(res.status).toBe(404);
   });
 });
 

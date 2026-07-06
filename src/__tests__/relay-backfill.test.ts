@@ -135,6 +135,36 @@ describe("backfillPortFileSessionIds", () => {
     expect(after.sessionId).toBeUndefined();
   });
 
+  // Regression for the backfill-vs-hook race: the port file has NO sessionId at
+  // snapshot time (so backfill deems it eligible), but the SessionStart hook
+  // writes the authoritative id while backfill's async JSONL lookup is still in
+  // flight. Backfill's later write must not clobber it. The guard lives in
+  // updatePortFile({ preserveExisting: ["sessionId"] }): its synchronous
+  // read-then-write drops sessionId when one is already on disk. Exercised
+  // directly here since the timing gap can't be injected deterministically.
+  test("updatePortFile preserveExisting does not clobber a sessionId written mid-flight", async () => {
+    const { updatePortFile } = await import("../relay/discovery");
+    const real = "aaaaaaaa-1111-2222-3333-444444444444"; // hook's authoritative id
+    const guess = "bbbbbbbb-9999-8888-7777-666666666666"; // backfill's stale guess
+    writePortFile(`channel-relay-race-${process.pid}.json`, {
+      port: 1,
+      pid: process.pid,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+      sessionId: real, // hook landed it before backfill's write runs
+    });
+
+    await updatePortFile(
+      process.pid,
+      { sessionId: guess },
+      { preserveExisting: ["sessionId"] },
+    );
+
+    expect(
+      readPortFile(`channel-relay-race-${process.pid}.json`).sessionId,
+    ).toBe(real);
+  });
+
   // Never guess across siblings: two id-less LIVE relays in one cwd must get
   // NEITHER backfilled. Writing a mtime-guessed id into a sibling's port file
   // (persisted, authoritative-looking) is the misroute bug — worse than the

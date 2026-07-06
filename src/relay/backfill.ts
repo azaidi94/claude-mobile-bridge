@@ -126,8 +126,15 @@ export async function backfillPortFileSessionIds(): Promise<void> {
       if (!id) continue;
       claimed.add(id);
       // Await the write so the next scan (callers typically do one
-      // immediately) sees the merged sessionId on disk.
-      await updatePortFile(pf.pid, { sessionId: id });
+      // immediately) sees the merged sessionId on disk. preserveExisting guards
+      // the backfill-vs-hook race: if the SessionStart hook wrote the real id
+      // while our async mtime lookup was in flight, we must not clobber it with
+      // this guess — the guarded merge drops sessionId when one is already set.
+      await updatePortFile(
+        pf.pid,
+        { sessionId: id },
+        { preserveExisting: ["sessionId"] },
+      );
       backfilled++;
       info(
         `backfill: wrote sessionId=${id} into port file for pid=${pf.pid} cwd=${pf.cwd}`,

@@ -89,9 +89,18 @@ export function classifyTranscript(lines: string[]): {
 
 const MAX_TAIL_BYTES = 5_000_000;
 
-/** Locate <id>.jsonl under ~/.claude/projects/* and return its trailing lines. */
-function readTranscriptTail(sessionId: string): string[] {
-  const root = join(homedir(), ".claude", "projects");
+/**
+ * Locate <id>.jsonl under ~/.claude/projects/* and return its trailing lines,
+ * plus whether the read was truncated (the file was larger than `maxBytes`).
+ * `truncated` lets the caller tell a genuine "last surface was local" apart
+ * from a "no surface marker in the window" default — a single turn emitting
+ * >maxBytes of tool JSONL can push the last channel prompt out of the tail.
+ */
+export function readTranscriptTail(
+  sessionId: string,
+  maxBytes: number,
+  root: string = join(homedir(), ".claude", "projects"),
+): { lines: string[]; truncated: boolean } {
   let path: string | null = null;
   for (const dir of readdirSync(root)) {
     const candidate = join(root, dir, `${sessionId}.jsonl`);
@@ -103,9 +112,9 @@ function readTranscriptTail(sessionId: string): string[] {
       // not here
     }
   }
-  if (!path) return [];
+  if (!path) return { lines: [], truncated: false };
   const size = statSync(path).size;
-  const start = Math.max(0, size - MAX_TAIL_BYTES);
+  const start = Math.max(0, size - maxBytes);
   const len = size - start;
   const buf = Buffer.alloc(len);
   const fd = openSync(path, "r");
@@ -117,7 +126,7 @@ function readTranscriptTail(sessionId: string): string[] {
   const lines = buf.toString("utf-8").split("\n");
   // Drop a leading partial line if we started mid-file.
   if (start > 0) lines.shift();
-  return lines.filter((l) => l.length > 0);
+  return { lines: lines.filter((l) => l.length > 0), truncated: start > 0 };
 }
 
 function allow(): void {
@@ -160,8 +169,20 @@ async function main(): Promise<void> {
     };
     if (input?.tool_name !== "AskUserQuestion") return allow();
     if (!input.session_id) return allow();
-    const lines = readTranscriptTail(input.session_id);
-    const { surface, chatId } = classifyTranscript(lines);
+    const tail = readTranscriptTail(input.session_id, MAX_TAIL_BYTES);
+    let { surface, chatId } = classifyTranscript(tail.lines);
+    // A "local" verdict off a truncated tail can be a false default: the last
+    // channel prompt may have been pushed out of the window by a huge single
+    // turn. Re-read the whole transcript before allowing the native picker, so
+    // "last surface wins" isn't silently flipped to allow. (remote verdicts are
+    // already authoritative — the marker is in the newest bytes.)
+    if (surface === "local" && tail.truncated) {
+      const full = readTranscriptTail(
+        input.session_id,
+        Number.MAX_SAFE_INTEGER,
+      );
+      ({ surface, chatId } = classifyTranscript(full.lines));
+    }
     if (surface === "remote") return deny(chatId);
     return allow();
   } catch {

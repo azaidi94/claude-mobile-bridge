@@ -54,9 +54,25 @@ export function createAuqBridgeRouter(): Hono {
     //  2. Topic store mapping — by session_id, then by sessionDir (group-forum
     //     mode: each session has its own topic, no /watch required). Without
     //     this, AUQs from sessions with a topic but no watch silently 404.
-    const watch =
-      (body.session_id ? findWatchBySessionId(body.session_id) : null) ??
-      findWatchByDir(body.cwd);
+    // When session_id was posted but missed the id lookup, a match found purely
+    // by cwd is only safe if it isn't a *different* session sharing the folder.
+    // A candidate whose own sessionId is set and differs is a sibling cross-wire
+    // (session B's AUQ landing in session A's topic) — reject it and fall
+    // through (topic lookup, then 404) rather than misroute. A candidate with no
+    // sessionId yet is the same session pre-id, so it's still accepted.
+    const crossesSession = (candidateSessionId: string | undefined): boolean =>
+      Boolean(
+        body.session_id &&
+        candidateSessionId &&
+        candidateSessionId !== body.session_id,
+      );
+
+    let watch =
+      (body.session_id ? findWatchBySessionId(body.session_id) : null) ?? null;
+    if (!watch) {
+      const byDir = findWatchByDir(body.cwd);
+      if (byDir && !crossesSession(byDir.sessionId)) watch = byDir;
+    }
     let chatId: number;
     let threadId: number;
     let sessionName: string;
@@ -65,9 +81,13 @@ export function createAuqBridgeRouter(): Hono {
       threadId = watch.threadId;
       sessionName = watch.sessionName;
     } else {
-      const topic =
+      let topic =
         (body.session_id ? getTopicBySessionId(body.session_id) : undefined) ??
-        getTopicBySessionDir(body.cwd);
+        undefined;
+      if (!topic) {
+        const byDir = getTopicBySessionDir(body.cwd);
+        if (byDir && !crossesSession(byDir.sessionId)) topic = byDir;
+      }
       const store = getTopicStore();
       if (!topic || !store.chatId) {
         return c.json({ error: "no watch or topic for cwd" }, 404);

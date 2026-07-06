@@ -408,9 +408,11 @@ async function wireCrossPost(
  * full title.
  */
 function deriveSessionName(title: string): string {
-  const dashSplit = title.split(/\s[—–-]\s/);
-  const last = dashSplit[dashSplit.length - 1] ?? title;
-  const candidate = last.trim().slice(0, 40).replace(/\s+/g, "-").toLowerCase();
+  // Reuse extractWorkspaceName so the generated name matches what directory
+  // resolution sees — it drops the trailing " [SSH: …]"/" [WSL: …]" tag Cursor
+  // appends to remote windows (otherwise the name keeps an ugly bracket
+  // fragment while dir matching resolves cleanly).
+  const candidate = extractWorkspaceName(title).slice(0, 40);
   return candidate ? `cursor-${candidate}` : "cursor-ide";
 }
 

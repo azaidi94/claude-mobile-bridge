@@ -1,8 +1,12 @@
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   classifyOrigin,
   extractChannelChatId,
   classifyTranscript,
+  readTranscriptTail,
 } from "../../hooks/claude-remote-auq-gate";
 
 function userLine(
@@ -91,5 +95,45 @@ describe("classifyTranscript (last surface wins)", () => {
   test("empty / unparseable transcript defaults to local", () => {
     expect(classifyTranscript([])).toEqual({ surface: "local" });
     expect(classifyTranscript(["not json", "{bad"]).surface).toBe("local");
+  });
+});
+
+describe("readTranscriptTail truncation (last-surface must survive a huge turn)", () => {
+  test("a channel marker pushed out of the tail is missed by the tail but found on full read", () => {
+    // os.homedir() honours $HOME first on POSIX; test:isolated gives each file
+    // its own process, so overriding HOME here is safe and restored after.
+    const root = mkdtempSync(join(tmpdir(), "auq-proj-"));
+    {
+      const sid = "11111111-1111-1111-1111-111111111111";
+      const proj = join(root, "proj");
+      mkdirSync(proj, { recursive: true });
+      const channel = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: TG_TAG }] },
+        origin: { kind: "channel" },
+      });
+      // Many origin-less tool_result turns after the channel prompt — a single
+      // huge remote turn. None carry origin.kind, so only the channel line
+      // determines the surface.
+      const filler = JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", content: "x".repeat(2000) }],
+        },
+      });
+      const lines = [channel, ...Array(50).fill(filler)];
+      writeFileSync(join(proj, `${sid}.jsonl`), lines.join("\n") + "\n");
+
+      // Small window → truncated, and the leading channel marker falls out.
+      const tail = readTranscriptTail(sid, 5000, root);
+      expect(tail.truncated).toBe(true);
+      expect(classifyTranscript(tail.lines).surface).toBe("local");
+
+      // Full read recovers the marker → the gate's fallback sees "remote".
+      const full = readTranscriptTail(sid, Number.MAX_SAFE_INTEGER, root);
+      expect(full.truncated).toBe(false);
+      expect(classifyTranscript(full.lines).surface).toBe("remote");
+    }
   });
 });

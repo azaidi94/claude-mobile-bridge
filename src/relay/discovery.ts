@@ -175,9 +175,10 @@ const updatePortFileQueue = new Map<number, Promise<void>>();
 export function updatePortFile(
   relayPid: number,
   updates: Partial<PortFileData>,
+  opts?: { preserveExisting?: (keyof PortFileData)[] },
 ): Promise<void> {
   const prev = updatePortFileQueue.get(relayPid) ?? Promise.resolve();
-  const next = prev.then(() => doUpdatePortFile(relayPid, updates));
+  const next = prev.then(() => doUpdatePortFile(relayPid, updates, opts));
   updatePortFileQueue.set(
     relayPid,
     next.finally(() => {
@@ -195,6 +196,7 @@ export function updatePortFile(
 function doUpdatePortFile(
   relayPid: number,
   updates: Partial<PortFileData>,
+  opts?: { preserveExisting?: (keyof PortFileData)[] },
 ): void {
   let targetFile: string | null = null;
   try {
@@ -213,7 +215,16 @@ function doUpdatePortFile(
   try {
     const raw = readFileSync(targetFile, "utf-8");
     const current = JSON.parse(raw) as PortFileData;
-    const merged = { ...current, ...updates };
+    // Drop any field the caller marked preserve-if-set that already holds a
+    // truthy value on disk. This read+write is synchronous (no await gap), so
+    // it atomically resolves the backfill-vs-hook race: the SessionStart hook's
+    // authoritative sessionId, once written, is never overwritten by backfill's
+    // later mtime-guessed id.
+    const effective: Partial<PortFileData> = { ...updates };
+    for (const k of opts?.preserveExisting ?? []) {
+      if (current[k]) delete effective[k];
+    }
+    const merged = { ...current, ...effective };
     const tmpFile = `${targetFile}.tmp`;
     writeFileSync(tmpFile, JSON.stringify(merged, null, 2));
     renameSync(tmpFile, targetFile);
