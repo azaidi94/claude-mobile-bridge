@@ -128,6 +128,7 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
 }));
 
 // Mock handlers to avoid complex dependencies
@@ -149,8 +150,10 @@ mock.module("../handlers", () => ({
   handlePlan: mock(() => {}),
   handlePin: mock(() => {}),
   handleGroupMode: mock(() => {}),
+  handleCursorBridge: mock(() => {}),
   handleCleanZombie: mock(() => {}),
   handleCron: mock(() => {}),
+  handleRalph: mock(() => {}),
   handlePrompts: mock(() => {}),
   handleClear: mock(() => {}),
   handleCompact: mock(() => {}),

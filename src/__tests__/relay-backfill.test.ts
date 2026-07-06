@@ -1,7 +1,7 @@
 // Set STATE_DIR before any module-load happens — paths.ts evaluates the env
 // var at import time.
 import { join } from "path";
-import { tmpdir, homedir } from "os";
+import { tmpdir } from "os";
 import {
   mkdirSync,
   mkdtempSync,
@@ -19,10 +19,13 @@ import { describe, expect, test, beforeEach, afterAll } from "bun:test";
 // static imports are hoisted and would otherwise load paths.ts before
 // CLAUDE_TELEGRAM_STATE_DIR is set.
 const { backfillPortFileSessionIds } = await import("../relay/backfill");
+const { claudeProjectDir } = await import("../paths");
 
+// Underscores in the path are the regression: Claude encodes them as dashes,
+// so the on-disk project dir is `-tmp---backfill-test-proj--`, NOT the
+// slash-only `-tmp-__backfill_test_proj__` the old encoder produced.
 const PROJECT_CWD = "/tmp/__backfill_test_proj__";
-const PROJECT_ENCODED = PROJECT_CWD.replace(/\//g, "-");
-const PROJECT_DIR = join(homedir(), ".claude", "projects", PROJECT_ENCODED);
+const PROJECT_DIR = claudeProjectDir(PROJECT_CWD);
 
 function clearDir(dir: string) {
   try {
@@ -130,5 +133,74 @@ describe("backfillPortFileSessionIds", () => {
     await backfillPortFileSessionIds();
     const after = readPortFile(`channel-relay-eeee-${process.pid}.json`);
     expect(after.sessionId).toBeUndefined();
+  });
+
+  // Regression for the backfill-vs-hook race: the port file has NO sessionId at
+  // snapshot time (so backfill deems it eligible), but the SessionStart hook
+  // writes the authoritative id while backfill's async JSONL lookup is still in
+  // flight. Backfill's later write must not clobber it. The guard lives in
+  // updatePortFile({ preserveExisting: ["sessionId"] }): its synchronous
+  // read-then-write drops sessionId when one is already on disk. Exercised
+  // directly here since the timing gap can't be injected deterministically.
+  test("updatePortFile preserveExisting does not clobber a sessionId written mid-flight", async () => {
+    const { updatePortFile } = await import("../relay/discovery");
+    const real = "aaaaaaaa-1111-2222-3333-444444444444"; // hook's authoritative id
+    const guess = "bbbbbbbb-9999-8888-7777-666666666666"; // backfill's stale guess
+    writePortFile(`channel-relay-race-${process.pid}.json`, {
+      port: 1,
+      pid: process.pid,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+      sessionId: real, // hook landed it before backfill's write runs
+    });
+
+    await updatePortFile(
+      process.pid,
+      { sessionId: guess },
+      { preserveExisting: ["sessionId"] },
+    );
+
+    expect(
+      readPortFile(`channel-relay-race-${process.pid}.json`).sessionId,
+    ).toBe(real);
+  });
+
+  // Never guess across siblings: two id-less LIVE relays in one cwd must get
+  // NEITHER backfilled. Writing a mtime-guessed id into a sibling's port file
+  // (persisted, authoritative-looking) is the misroute bug — worse than the
+  // in-memory guess. Exact pid routing handles siblings; the hook / relay
+  // self-discovery supply their real ids.
+  test("does not backfill ambiguous same-cwd siblings", async () => {
+    const a = process.pid;
+    const b = process.ppid; // also a live process
+    writePortFile(`channel-relay-siba-${a}.json`, {
+      port: 1,
+      pid: a,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    writePortFile(`channel-relay-sibb-${b}.json`, {
+      port: 2,
+      pid: b,
+      cwd: PROJECT_CWD,
+      startedAt: new Date(NOW - 60_000).toISOString(),
+    });
+    writeFileSync(
+      join(PROJECT_DIR, "11111111-1111-1111-1111-111111111111.jsonl"),
+      "x\n",
+    );
+    writeFileSync(
+      join(PROJECT_DIR, "22222222-2222-2222-2222-222222222222.jsonl"),
+      "x\n",
+    );
+
+    await backfillPortFileSessionIds();
+
+    expect(
+      readPortFile(`channel-relay-siba-${a}.json`).sessionId,
+    ).toBeUndefined();
+    expect(
+      readPortFile(`channel-relay-sibb-${b}.json`).sessionId,
+    ).toBeUndefined();
   });
 });

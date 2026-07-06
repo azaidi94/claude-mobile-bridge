@@ -17,6 +17,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
 - **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI.
+- **[Ralph loops](docs/ralph-loops.md)** — `/ralph <repo>` runs an autonomous issue-crunching loop in a desktop terminal; distilled per-iteration beats stream to a dedicated topic.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
 - **MCP support** — configure external tools in `mcp-config.ts`.
@@ -92,28 +93,30 @@ That's the full setup. For optional integrations (remote-answerable questions, e
 
 ## Commands
 
-| Category | Commands                                           |
-| -------- | -------------------------------------------------- |
-| Sessions | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
-| Control  | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Inject   | `/clear`, `/compact`, `/context`                   |
-| Files    | `/pwd`, `/cd`, `/ls`                               |
-| Quota    | `/usage`                                           |
-| Scripts  | `/execute`                                         |
-| Mini App | `/app`                                             |
-| Settings | `/settings`                                        |
+| Category   | Commands                                           |
+| ---------- | -------------------------------------------------- |
+| Sessions   | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
+| Control    | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
+| Inject     | `/clear`, `/compact`, `/context`                   |
+| Automation | `/ralph <path> [N]`, `/cron`                       |
+| Files      | `/pwd`, `/cd`, `/ls`                               |
+| Quota      | `/usage`                                           |
+| Scripts    | `/execute`                                         |
+| Mini App   | `/app`                                             |
+| Settings   | `/settings`                                        |
 
 ## Documentation
 
-| Doc                                          | What's in it                                                                        |
-| -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [Channel Relay](docs/channel-relay.md)       | Message running desktop sessions without disconnecting; remote-use setup            |
-| [Sessions & shell scripts](docs/sessions.md) | Auto-discovery, `/new`, terminal picker, resuming offline sessions, `/execute`      |
-| [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth   |
-| [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`) |
-| [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                             |
-| [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                           |
-| [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging            |
+| Doc                                          | What's in it                                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [Channel Relay](docs/channel-relay.md)       | Message running desktop sessions without disconnecting; remote-use setup                   |
+| [Sessions & shell scripts](docs/sessions.md) | Auto-discovery, `/new`, terminal picker, resuming offline sessions, `/execute`             |
+| [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth          |
+| [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)        |
+| [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization |
+| [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                    |
+| [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                  |
+| [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging                   |
 
 ## Development
 

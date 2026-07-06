@@ -142,6 +142,21 @@ export const DESKTOP_CLAUDE_DEFAULT_ARGS =
 export const DESKTOP_CLAUDE_COMMAND_TEMPLATE =
   process.env.DESKTOP_CLAUDE_COMMAND?.trim() || "";
 
+// ============== Ralph Loops ==============
+
+/**
+ * Alternative loop script for `/ralph`. Empty = the vendored
+ * `scripts/ralph/afk_tasks.sh`. Set to keep using a personal copy (e.g.
+ * `~/.claude/scripts/ralph/afk_tasks.sh`).
+ */
+export const RALPH_SCRIPT = process.env.RALPH_SCRIPT?.trim() || "";
+
+/**
+ * Alternative prompt file for the vendored loop. Empty = the vendored
+ * `scripts/ralph/prompt_tasks.md`. A repo's `plans/prompt_tasks.md` still wins.
+ */
+export const RALPH_PROMPT = process.env.RALPH_PROMPT?.trim() || "";
+
 // ============== MCP Configuration ==============
 
 // MCP servers loaded from mcp-config.ts

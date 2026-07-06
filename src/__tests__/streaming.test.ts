@@ -89,6 +89,7 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
 }));
 
 // ============== StreamingState Tests ==============

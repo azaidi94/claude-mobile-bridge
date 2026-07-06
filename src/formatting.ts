@@ -726,6 +726,47 @@ export function formatAskUserQuestion(
 }
 
 /**
+ * Format a resolved `AskUserQuestion` — the user answered at the desktop's
+ * native picker, so we edit the original observation card into this "done"
+ * state instead of leaving it dangling out-of-sync. `resultText` is the tool
+ * result string (e.g. `... "Q?"="A" ...`); we parse the `"question"="answer"`
+ * pairs from it, falling back to the original questions when none parse.
+ */
+export function formatAskUserQuestionAnswered(
+  questions: AskUserQuestionItem[],
+  resultText: string,
+): string {
+  const header = "✅ <b>Answered at the desktop</b>";
+
+  const pairs: Array<{ q: string; a: string }> = [];
+  const re = /"([^"]*)"\s*=\s*"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(resultText)) !== null) {
+    pairs.push({ q: m[1] ?? "", a: m[2] ?? "" });
+  }
+
+  const blocks: string[] = [];
+  if (pairs.length > 0) {
+    for (const { q, a } of pairs) {
+      const lines: string[] = [];
+      if (q) lines.push(`<b>Q:</b> ${escapeHtml(q)}`);
+      lines.push(`   ✅ <b>${escapeHtml(a)}</b>`);
+      blocks.push(lines.join("\n"));
+    }
+  } else if (questions && questions.length > 0) {
+    // No machine-readable answer — at least show what was asked so the card
+    // isn't ambiguous about which question resolved.
+    for (const item of questions) {
+      blocks.push(`<b>Q:</b> ${escapeHtml(item.question)}`);
+    }
+  }
+
+  const body =
+    blocks.length > 0 ? blocks.join("\n\n") : "<i>(answer recorded)</i>";
+  return `${header}\n\n${body}`;
+}
+
+/**
  * Render a 10-cell progress bar. Glyphs are customizable so different surfaces
  * (usage panel, context bar) can share the clamp/round math but keep their look.
  */

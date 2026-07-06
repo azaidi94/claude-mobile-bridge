@@ -7,6 +7,7 @@ export {
   removeTopicMapping,
   getTopicBySession,
   getTopicBySessionDir,
+  getTopicBySessionId,
   getSessionByTopic,
   updateTopicMapping,
   clearTopicStore,

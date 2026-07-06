@@ -46,12 +46,13 @@ import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
 import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
-import { isGeneralTopic, isSessionTopic, updateTopicMapping } from "../topics";
+import { isGeneralTopic, isSessionTopic } from "../topics";
 import { getSession } from "../sessions";
 import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
 import { markReceived } from "./reactions";
+import { isRalphLoopTopic } from "../ralph/store";
 
 /**
  * Bus-routed reply helper. Use for plain or HTML text replies including
@@ -99,6 +100,14 @@ export async function handleText(
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
+    return;
+  }
+
+  // 1.01. Ralph loop topic is output-only (invariant 2). The topic bypasses
+  // topic-store, so without this guard its messages would fall through to the
+  // active session's context. Uses the sync cache — hot path, must not await.
+  if (isRalphLoopTopic(ctx.chat?.id, ctx.message?.message_thread_id)) {
+    await busReply(ctx, "🔁 loop topic is output-only.");
     return;
   }
 
@@ -505,12 +514,10 @@ export async function handleText(
 
   // 4. Handle /clear locally (SDK doesn't support it)
   if (message.trim() === "/clear") {
-    if (isTopicChat(ctx)) {
-      const topicCtx = isSessionTopic(ctx);
-      if (topicCtx) {
-        updateTopicMapping(topicCtx.sessionName, { sessionId: undefined });
-      }
-    }
+    // The desktop session's new id after /clear is re-anchored into the topic
+    // store by the watcher (topicSessionIdRefreshPlan) from the live port file.
+    // The previous attempt to clear it here was a no-op anyway — updateTopicMapping
+    // skips `undefined` and guards against wiping a stored sessionId.
     if (state) {
       state.clearSession();
     }

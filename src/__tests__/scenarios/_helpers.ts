@@ -150,7 +150,16 @@ export function makeContext(opts: MakeContextOpts): unknown {
 /* -------------------------------------------------------------------------- */
 
 export function projectDirFor(cwd: string): string {
-  return join(homedir(), ".claude", "projects", cwd.replace(/\//g, "-"));
+  // Must mirror production's claudeProjectDir (paths.ts): Claude encodes every
+  // non-alphanumeric char as a dash, not just slashes. Inlined rather than
+  // imported because importing paths.ts here would evaluate STATE_DIR before
+  // setupIsolatedStateDir sets the env (see the dynamic-import note above).
+  return join(
+    homedir(),
+    ".claude",
+    "projects",
+    cwd.replace(/[^a-zA-Z0-9]/g, "-"),
+  );
 }
 
 export function writeFakeJsonl(cwd: string, sessionId: string): string {

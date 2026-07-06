@@ -73,6 +73,8 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
+  getCursorSubscribedSession: () => undefined,
 }));
 
 // Mock sessions module
@@ -706,9 +708,13 @@ describe("commands: /list", () => {
 
     await handleList(ctx as any);
 
-    const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("project-1");
-    expect(text).toContain("project-2");
+    // Session names live in the selection buttons, not the body text.
+    const keyboard = ctx._replies[0]?.options?.reply_markup as {
+      inline_keyboard: { text: string }[][];
+    };
+    const labels = keyboard.inline_keyboard.flat().map((b) => b.text);
+    expect(labels).toContain("project-1");
+    expect(labels).toContain("project-2");
   });
 
   test("handleList renders sessions (no active marker post-7g)", async () => {
@@ -722,8 +728,11 @@ describe("commands: /list", () => {
 
     await handleList(ctx as any);
 
-    const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("active-project");
+    const keyboard = ctx._replies[0]?.options?.reply_markup as {
+      inline_keyboard: { text: string }[][];
+    };
+    const labels = keyboard.inline_keyboard.flat().map((b) => b.text);
+    expect(labels).toContain("active-project");
   });
 
   test("handleList includes inline keyboard buttons", async () => {
@@ -744,7 +753,7 @@ describe("commands: /list", () => {
     expect(keyboard?.inline_keyboard.length).toBeGreaterThan(0);
   });
 
-  test("handleList shows time ago for sessions", async () => {
+  test("handleList body is a tiny title only (no per-session meta)", async () => {
     const { handleList } = await import("../handlers/commands");
     mockSessions.push({
       name: "recent",
@@ -756,8 +765,10 @@ describe("commands: /list", () => {
     await handleList(ctx as any);
 
     const text = ctx._replies[0]?.text || "";
-    // Should contain some time indicator (just now, Xm ago, etc)
-    expect(text).toMatch(/(just now|ago)/);
+    expect(text).toContain("Sessions");
+    // Meta (dir / branch / time-ago) is intentionally gone — buttons select.
+    expect(text).not.toMatch(/ago/);
+    expect(text).not.toContain("/tmp/recent");
   });
 });
 
@@ -1622,64 +1633,26 @@ describe("commands: parsing", () => {
 // ============== formatTimeAgo Helper Tests ==============
 
 describe("commands: formatTimeAgo helper", () => {
-  // The formatTimeAgo function is private, but we can test it indirectly via /list
-
-  beforeEach(resetMocks);
+  // /list no longer renders time-ago, so test formatTimeAgo directly.
 
   test("shows 'just now' for very recent activity", async () => {
-    const { handleList } = await import("../handlers/commands");
-    mockSessions.push({
-      name: "recent",
-      dir: "/tmp/recent",
-      lastActivity: Date.now() - 10000,
-    });
-    const ctx = createMockContext({ userId: 123456 });
-
-    await handleList(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("just now");
+    const { formatTimeAgo } = await import("../formatting");
+    expect(formatTimeAgo(Date.now() - 10000)).toContain("just now");
   });
 
   test("shows minutes for activity within hour", async () => {
-    const { handleList } = await import("../handlers/commands");
-    mockSessions.push({
-      name: "minutes",
-      dir: "/tmp/minutes",
-      lastActivity: Date.now() - 5 * 60000,
-    });
-    const ctx = createMockContext({ userId: 123456 });
-
-    await handleList(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("m ago");
+    const { formatTimeAgo } = await import("../formatting");
+    expect(formatTimeAgo(Date.now() - 5 * 60000)).toContain("m ago");
   });
 
   test("shows hours for activity within day", async () => {
-    const { handleList } = await import("../handlers/commands");
-    mockSessions.push({
-      name: "hours",
-      dir: "/tmp/hours",
-      lastActivity: Date.now() - 3 * 3600000,
-    });
-    const ctx = createMockContext({ userId: 123456 });
-
-    await handleList(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("h ago");
+    const { formatTimeAgo } = await import("../formatting");
+    expect(formatTimeAgo(Date.now() - 3 * 3600000)).toContain("h ago");
   });
 
   test("shows days for old activity", async () => {
-    const { handleList } = await import("../handlers/commands");
-    mockSessions.push({
-      name: "days",
-      dir: "/tmp/days",
-      lastActivity: Date.now() - 3 * 86400000,
-    });
-    const ctx = createMockContext({ userId: 123456 });
-
-    await handleList(ctx as any);
-
-    expect(ctx._replies[0]?.text).toContain("d ago");
+    const { formatTimeAgo } = await import("../formatting");
+    expect(formatTimeAgo(Date.now() - 3 * 86400000)).toContain("d ago");
   });
 });
 
@@ -1729,9 +1702,12 @@ describe("commands: edge cases", () => {
 
     await handleList(ctx as any);
 
-    const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("project-0");
-    expect(text).toContain("project-9");
+    const keyboard = ctx._replies[0]?.options?.reply_markup as {
+      inline_keyboard: { text: string }[][];
+    };
+    const labels = keyboard.inline_keyboard.flat().map((b) => b.text);
+    expect(labels).toContain("project-0");
+    expect(labels).toContain("project-9");
   });
 
   test("status with very long error truncates", async () => {
@@ -1750,26 +1726,6 @@ describe("commands: edge cases", () => {
     // Error should be truncated (max 50 chars in display)
     const text = ctx._replies[0]?.text || "";
     expect(text.includes("a".repeat(51))).toBe(false);
-  });
-
-  test("home directory path is abbreviated with ~", async () => {
-    const { handleList } = await import("../handlers/commands");
-    // The /list home abbreviation collapses a macOS home (/Users/<name>) to
-    // "~". Use a fixed /Users path so this exercises that regex regardless of
-    // the runner's own $HOME — CI is Linux ($HOME=/home/runner), where the
-    // macOS-only regex would otherwise never match and the assertion would fail.
-    mockSessions.push({
-      name: "home-project",
-      dir: "/Users/testuser/projects/test",
-      lastActivity: Date.now(),
-    });
-    const ctx = createMockContext({ userId: 123456 });
-
-    await handleList(ctx as any);
-
-    const text = ctx._replies[0]?.text || "";
-    expect(text).toContain("~");
-    expect(text).toContain("projects/test");
   });
 });
 

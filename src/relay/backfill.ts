@@ -17,18 +17,13 @@
  */
 
 import { readdir, readFile, stat } from "fs/promises";
-import { homedir } from "os";
 import { join } from "path";
-import { STATE_DIR } from "../paths";
+import { STATE_DIR, claudeProjectDir } from "../paths";
 import { updatePortFile, isProcessAlive, type PortFileData } from "./discovery";
 import { info, warn } from "../logger";
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function claudeProjectDir(workingDir: string): string {
-  return join(homedir(), ".claude", "projects", workingDir.replace(/\//g, "-"));
-}
 
 async function findUnclaimedSessionId(
   projectDir: string,
@@ -104,9 +99,23 @@ export async function backfillPortFileSessionIds(): Promise<void> {
     for (const pf of ports) {
       if (pf.sessionId) claimed.add(pf.sessionId);
     }
+    // Count live relays per cwd. Never guess an id for a relay that shares its
+    // cwd with another live relay (siblings): a mtime-guessed JSONL routinely
+    // grabs the sibling's transcript, and writing it into the port file
+    // persists the misroute. Only lone relays are safe to back-fill; siblings
+    // get their real id from the SessionStart hook / relay self-discovery, and
+    // exact pid routing handles them meanwhile. (Mirrors resolveIdentities'
+    // `ambiguous` rule — the single never-guess-across-siblings principle.)
+    const liveRelaysPerCwd = new Map<string, number>();
+    for (const pf of ports) {
+      if (isProcessAlive(pf.pid)) {
+        liveRelaysPerCwd.set(pf.cwd, (liveRelaysPerCwd.get(pf.cwd) ?? 0) + 1);
+      }
+    }
     for (const pf of ports) {
       if (pf.sessionId) continue;
       if (!isProcessAlive(pf.pid)) continue;
+      if ((liveRelaysPerCwd.get(pf.cwd) ?? 0) > 1) continue; // ambiguous sibling
       const startedAtMs = Date.parse(pf.startedAt);
       if (Number.isNaN(startedAtMs)) continue;
       const id = await findUnclaimedSessionId(
@@ -117,8 +126,15 @@ export async function backfillPortFileSessionIds(): Promise<void> {
       if (!id) continue;
       claimed.add(id);
       // Await the write so the next scan (callers typically do one
-      // immediately) sees the merged sessionId on disk.
-      await updatePortFile(pf.pid, { sessionId: id });
+      // immediately) sees the merged sessionId on disk. preserveExisting guards
+      // the backfill-vs-hook race: if the SessionStart hook wrote the real id
+      // while our async mtime lookup was in flight, we must not clobber it with
+      // this guess — the guarded merge drops sessionId when one is already set.
+      await updatePortFile(
+        pf.pid,
+        { sessionId: id },
+        { preserveExisting: ["sessionId"] },
+      );
       backfilled++;
       info(
         `backfill: wrote sessionId=${id} into port file for pid=${pf.pid} cwd=${pf.cwd}`,

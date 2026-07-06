@@ -17,7 +17,7 @@ const SYNC_INTERVAL_MS = 5_000;
 const TOPIC_WAIT_MS = 30_000;
 const TOPIC_POLL_MS = 1_000;
 
-interface TelegramForward {
+export interface TelegramForward {
   api: Api;
   chatId: number;
 }
@@ -32,7 +32,20 @@ const bridges = new Map<string, ActiveBridge>();
 const crossPostUnsubs = new Map<string, () => void>();
 let syncTimer: Timer | null = null;
 let stopped = false;
+let running = false;
 let telegramForward: TelegramForward | undefined;
+
+/**
+ * The single Cursor session whose AI replies are cross-posted to Telegram.
+ * `null` = nothing subscribed: bridges still attach to all windows (so they're
+ * listable/injectable and topics exist), but no events are forwarded. Set via
+ * `setCursorSubscription` (the /cursor list picker) and restored from settings
+ * on startup.
+ */
+let subscribedSession: string | null = null;
+
+/** In-flight CDP sync, so a manual refresh and the timer don't race. */
+let syncInFlight: Promise<void> | null = null;
 
 /**
  * Session names of Cursor windows with a currently-connected bridge. This is
@@ -45,13 +58,22 @@ export function getActiveCursorSessionNames(): Set<string> {
 }
 
 export function startCursorBridge(opts?: TelegramForward): void {
-  stopped = false;
   telegramForward = opts;
+  // Idempotent: a second call (e.g. /cursor re-running while already live)
+  // just refreshes the forward target — starting another sync chain would
+  // leave two overlapping setTimeout loops running.
+  if (running) return;
+  running = true;
+  stopped = false;
   void syncBridges();
 }
 
 export function stopCursorBridge(): void {
   stopped = true;
+  running = false;
+  // Clearing the subscription is part of "off" — nothing forwards until the
+  // user picks a session again from the /cursor list.
+  subscribedSession = null;
   if (syncTimer) {
     clearTimeout(syncTimer);
     syncTimer = null;
@@ -63,6 +85,52 @@ export function stopCursorBridge(): void {
     removeSession(sessionName);
   }
   bridges.clear();
+}
+
+/** True when the bridge is attached and polling CDP targets. */
+export function isCursorBridgeRunning(): boolean {
+  return running;
+}
+
+/** Name of the currently-subscribed Cursor session, or null. */
+export function getCursorSubscription(): string | null {
+  return subscribedSession;
+}
+
+/**
+ * Set the single Cursor session whose AI replies forward to Telegram (or null
+ * to forward nothing). Unwires the cross-post for every other session and
+ * wires the new one if its bridge is already attached; otherwise `attachBridge`
+ * wires it on the next sync tick once the window connects.
+ */
+export function setCursorSubscription(sessionName: string | null): void {
+  subscribedSession = sessionName;
+
+  // Drop cross-post for any session that is no longer the subscribed one.
+  for (const [name, unsub] of crossPostUnsubs) {
+    if (name !== sessionName) {
+      unsub();
+      crossPostUnsubs.delete(name);
+    }
+  }
+
+  if (!sessionName || !telegramForward) return;
+  if (crossPostUnsubs.has(sessionName)) return; // already wired
+  const attached = [...bridges.values()].some(
+    (b) => b.sessionName === sessionName,
+  );
+  if (attached) void wireCrossPost(sessionName, telegramForward);
+}
+
+/**
+ * Run one CDP target sync immediately and await it. Lets the /cursor command
+ * populate the session list right after (re)starting the bridge, instead of
+ * waiting up to SYNC_INTERVAL_MS for the timer. Reuses the in-flight sync when
+ * one is already running so the two paths never mutate `bridges` concurrently.
+ */
+export async function refreshCursorTargets(): Promise<void> {
+  if (stopped) return;
+  await runSyncOnce();
 }
 
 /**
@@ -107,6 +175,32 @@ function isComposerTarget(t: CdpTarget): boolean {
 async function syncBridges(): Promise<void> {
   if (stopped) return;
 
+  await runSyncOnce();
+
+  if (!stopped) {
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => void syncBridges(), SYNC_INTERVAL_MS);
+  }
+}
+
+/**
+ * One CDP reconciliation pass (no timer scheduling). Guarded so the periodic
+ * timer and an explicit `refreshCursorTargets()` share a single in-flight run
+ * rather than mutating `bridges` concurrently.
+ */
+function runSyncOnce(): Promise<void> {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = (async () => {
+    try {
+      await reconcileBridges();
+    } finally {
+      syncInFlight = null;
+    }
+  })();
+  return syncInFlight;
+}
+
+async function reconcileBridges(): Promise<void> {
   try {
     const targets = await listCdpTargets(CURSOR_CDP_PORT);
     const composerTargets = targets.filter(isComposerTarget);
@@ -156,10 +250,6 @@ async function syncBridges(): Promise<void> {
   } catch (err) {
     warn(`cursor-bridge: target sync failed: ${(err as Error).message}`);
   }
-
-  if (!stopped) {
-    syncTimer = setTimeout(() => void syncBridges(), SYNC_INTERVAL_MS);
-  }
 }
 
 async function attachBridge(target: CdpTarget): Promise<void> {
@@ -200,7 +290,10 @@ async function attachBridge(target: CdpTarget): Promise<void> {
     bridges.set(target.id, { bridge, sessionName: finalName });
     info(`cursor-bridge: connected to "${finalName}" via CDP`);
 
-    if (telegramForward) {
+    // Only forward to Telegram for the subscribed session. Other windows stay
+    // attached (listable + injectable) but silent until the user picks them
+    // from the /cursor list.
+    if (telegramForward && finalName === subscribedSession) {
       void wireCrossPost(finalName, telegramForward);
     }
   } catch (err) {
@@ -315,9 +408,11 @@ async function wireCrossPost(
  * full title.
  */
 function deriveSessionName(title: string): string {
-  const dashSplit = title.split(/\s[—–-]\s/);
-  const last = dashSplit[dashSplit.length - 1] ?? title;
-  const candidate = last.trim().slice(0, 40).replace(/\s+/g, "-").toLowerCase();
+  // Reuse extractWorkspaceName so the generated name matches what directory
+  // resolution sees — it drops the trailing " [SSH: …]"/" [WSL: …]" tag Cursor
+  // appends to remote windows (otherwise the name keeps an ugly bracket
+  // fragment while dir matching resolves cleanly).
+  const candidate = extractWorkspaceName(title).slice(0, 40);
   return candidate ? `cursor-${candidate}` : "cursor-ide";
 }
 

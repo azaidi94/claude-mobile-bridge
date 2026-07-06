@@ -114,6 +114,7 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
   getOverrides: () => ({}),
   saveSetting: async () => {},
   _reloadForTests: () => {},

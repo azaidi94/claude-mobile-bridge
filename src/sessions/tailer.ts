@@ -12,6 +12,7 @@ import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
 import type { AskUserQuestionItem, TokenUsage } from "../types";
 import { PROJECTS_DIR } from "./watcher";
+import { encodeClaudeProjectDir } from "../paths";
 
 const POLL_INTERVAL_MS = 2_000;
 const ASK_USER_QUESTION_TOOL = "AskUserQuestion";
@@ -707,6 +708,7 @@ export class SessionTailer {
                 type: "ask_user_question",
                 content: "",
                 questions,
+                toolUseId: block.id,
               });
               continue;
             }
@@ -807,9 +809,13 @@ export class SessionTailer {
   }
 }
 
-/** Encode a cwd into the directory-name segment Claude Code uses under ~/.claude/projects/. */
+/**
+ * Encode a cwd into the directory-name segment Claude Code uses under
+ * ~/.claude/projects/. Delegates to the single shared encoder in paths.ts —
+ * Claude replaces EVERY non-alphanumeric char (incl. `_`), not just `/` and `.`.
+ */
 export function encodeProjectPath(cwd: string): string {
-  return cwd.replace(/[/.]/g, "-");
+  return encodeClaudeProjectDir(cwd);
 }
 
 /** Claude encodes the project dir by replacing `/` and `.` in the cwd with `-`. */

@@ -73,6 +73,8 @@ mock.module("../settings", () => ({
   getWatchImages: () => true,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
+  getCursorEnabled: () => true,
+  getCursorSubscribedSession: () => undefined,
 }));
 
 // Mock sessions module
