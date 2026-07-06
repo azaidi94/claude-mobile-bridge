@@ -29,6 +29,7 @@ import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
 import { shadowCompareIdentities } from "./identity-shadow";
 import { resolveIdentities, type ResolvedIdentity } from "./identity";
+import { setCurrentSnapshot } from "./resolve-session";
 
 const execAsync = promisify(exec);
 
@@ -446,6 +447,7 @@ async function scanSessions(): Promise<{
     // still supplies the lone-relay (`missing`) JSONL back-fill; `ambiguous`
     // (a cwd with >1 relay) resolves empty so exact pid (ppid) routing wins.
     const identities = resolveIdentities({ aliveRelays: pfs, topics: [] });
+    setCurrentSnapshot({ aliveRelays: pfs, topics: getTopicStore().topics });
     const identityByRelayPid = new Map(identities.map((i) => [i.relayPid, i]));
     const relayIds = pickRelayIds(
       pfs.map((pf) => identityByRelayPid.get(pf.pid)),

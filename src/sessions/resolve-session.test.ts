@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { makeRecord, type SessionRecord } from "./resolve-session";
 import { resolveSession, type ResolveSnapshot } from "./resolve-session";
+import { setCurrentSnapshot, getCurrentSnapshot } from "./resolve-session";
 
 test("makeRecord defaults launchId to null (P1: never populated)", () => {
   const r: SessionRecord = makeRecord({
@@ -70,4 +71,10 @@ test("by cwd, lone id-less relay → resolved with sessionId null (routes by pid
   );
   expect(r.status).toBe("resolved");
   if (r.status === "resolved") expect(r.record.sessionId).toBeNull();
+});
+
+test("current snapshot round-trips", () => {
+  const s = { aliveRelays: [], topics: [] };
+  setCurrentSnapshot(s);
+  expect(getCurrentSnapshot()).toBe(s);
 });

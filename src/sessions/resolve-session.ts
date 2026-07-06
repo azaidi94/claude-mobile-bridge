@@ -93,3 +93,11 @@ export function resolveSession(
       return { status: "miss" }; // P1: launchId never populated
   }
 }
+
+let _current: ResolveSnapshot = { aliveRelays: [], topics: [] };
+export function setCurrentSnapshot(snap: ResolveSnapshot): void {
+  _current = snap;
+}
+export function getCurrentSnapshot(): ResolveSnapshot {
+  return _current;
+}
