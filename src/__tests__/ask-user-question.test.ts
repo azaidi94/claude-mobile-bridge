@@ -64,6 +64,7 @@ mock.module("../settings", () => ({
   getCursorEnabled: () => true,
   getCursorSubscribedSession: () => undefined,
   getRalphVerboseDefault: () => false,
+  getDefaultRalphLabel: () => "",
 }));
 
 // Mock sessions module

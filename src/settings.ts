@@ -61,6 +61,13 @@ export interface BridgeSettings {
    * still overrides at runtime.
    */
   ralphVerboseDefault?: boolean;
+  /**
+   * Default GitHub issue label new /ralph loops scope to. Empty/undefined =
+   * no `--label` (the script decides scope — the neutral default so custom
+   * RALPH_SCRIPTs that don't use labels are unaffected). `-l <x>` overrides
+   * per-run; `-l -` forces no label even when this is set.
+   */
+  defaultRalphLabel?: string;
 }
 
 function resolveSettingsPath(): string {
@@ -110,6 +117,9 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.ralphVerboseDefault === "boolean") {
     out.ralphVerboseDefault = o.ralphVerboseDefault;
+  }
+  if (typeof o.defaultRalphLabel === "string") {
+    out.defaultRalphLabel = o.defaultRalphLabel;
   }
   return out;
 }
@@ -205,6 +215,11 @@ export function getCursorSubscribedSession(): string | undefined {
 /** Whether new /ralph loops start with verbose transcript streaming on. */
 export function getRalphVerboseDefault(): boolean {
   return ensure().ralphVerboseDefault ?? false;
+}
+
+/** Default issue label for new /ralph loops; "" = no label filter. */
+export function getDefaultRalphLabel(): string {
+  return ensure().defaultRalphLabel ?? "";
 }
 
 /**

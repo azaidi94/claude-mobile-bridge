@@ -21,6 +21,7 @@ import {
   getWatchImages,
   getContextNotifyStep,
   getRalphVerboseDefault,
+  getDefaultRalphLabel,
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
@@ -30,7 +31,7 @@ import { getMessageBus } from "../messaging";
  * Map of chat IDs awaiting a text reply for a settings field.
  * Consumed by text.ts before its normal routing.
  */
-export const pendingSettingsInput = new Map<string, "workdir">(); // pendingKey -> field
+export const pendingSettingsInput = new Map<string, "workdir" | "ralphlabel">(); // pendingKey -> field
 
 export const TERMINAL_LABELS: Record<string, string> = {
   terminal: "Terminal.app",
@@ -58,6 +59,7 @@ export function renderSettingsBody(): string {
   const pinnedStatus = getEnablePinnedStatus();
   const watchImages = getWatchImages();
   const ralphVerbose = getRalphVerboseDefault();
+  const ralphLabel = getDefaultRalphLabel();
   const modelDisplay = getCurrentModelDisplayName();
   const overrides = getOverrides();
 
@@ -93,6 +95,9 @@ export function renderSettingsBody(): string {
     `🔁 Ralph verbose: <code>${ralphVerbose ? "on" : "off"}</code>${marker(
       "ralphVerboseDefault",
     )}`,
+    `🏷 Ralph label:   <code>${
+      ralphLabel ? escapeHtml(ralphLabel) : "all issues"
+    }</code>${marker("defaultRalphLabel")}`,
     "",
     "━ Notifications ━",
     `🧠 Context notify: <code>${formatNotifyStep(
@@ -120,8 +125,9 @@ export function renderSettingsKeyboard(): {
       ],
       [
         { text: "🔁 Ralph verbose", callback_data: "set:edit:ralphverbose" },
-        { text: "🧠 Context notify", callback_data: "set:edit:contextnotify" },
+        { text: "🏷 Ralph label", callback_data: "set:edit:ralphlabel" },
       ],
+      [{ text: "🧠 Context notify", callback_data: "set:edit:contextnotify" }],
     ],
   };
 }

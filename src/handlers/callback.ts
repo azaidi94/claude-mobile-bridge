@@ -65,6 +65,7 @@ import {
   getOverrides,
   getEnablePinnedStatus,
   getContextNotifyStep,
+  getDefaultRalphLabel,
 } from "../settings";
 import type { TerminalApp } from "../config";
 import { debug, error as logError, info, warn } from "../logger";
@@ -1013,6 +1014,32 @@ export async function handleSettingsCallback(
       return;
     }
 
+    if (field === "ralphlabel") {
+      pendingSettingsInput.set(pendingKey(chatId, threadId), "ralphlabel");
+      const cur = getDefaultRalphLabel();
+      await ctx.editMessageText(
+        `🏷 <b>Reply with a GitHub label</b> for new /ralph loops (or <code>-</code> for no filter / <code>/cancel</code>):\n\nCurrent: <code>${
+          cur ? escapeHtml(cur) : "all issues"
+        }</code>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "↺ Reset to default",
+                  callback_data: "set:reset:ralphlabel",
+                },
+                { text: "← Cancel", callback_data: "set:back" },
+              ],
+            ],
+          },
+        },
+      );
+      await ctx.answerCallbackQuery({ text: "Reply with a label" });
+      return;
+    }
+
     if (field === "autowatch") {
       // Cycle: default(undefined) → off(false) → on(true) → default
       const current = getOverrides().autoWatchOnSpawn;
@@ -1148,6 +1175,9 @@ export async function handleSettingsCallback(
       await saveSetting({ watchImages: undefined });
     } else if (field === "ralphverbose") {
       await saveSetting({ ralphVerboseDefault: undefined });
+    } else if (field === "ralphlabel") {
+      await saveSetting({ defaultRalphLabel: undefined });
+      pendingSettingsInput.delete(pendingKey(chatId, threadId));
     } else if (field === "contextnotify") {
       await saveSetting({ contextNotifyStep: undefined });
     } else if (field === "model") {

@@ -19,8 +19,11 @@ One loop runs at a time.
 Flags:
 
 - `-pr` — PR mode (the loop opens PRs instead of squash-merging to the base branch).
-- `-l <label>` — only work issues carrying the given GitHub label.
-- `~` in `<path>` is expanded. The path must be an existing **git repo** on the bot host.
+- `-l <label>` — only work issues carrying the given GitHub label. Defaults to the
+  `Ralph label` setting in `/settings` (blank ⇒ no filter, i.e. all open issues).
+  `-l -` forces no filter for one run even when a default is set.
+- Relative `<path>` resolves against the `Working dir` setting (like `/new`); `~` is
+  expanded. The path must be an existing **git repo** on the bot host.
 
 ## What the topic shows
 

@@ -107,6 +107,30 @@ describe("expandHome", () => {
   });
 });
 
+describe("resolveRalphLabel", () => {
+  it("falls back to the configured default when -l absent", async () => {
+    const { cmd } = await loadCmd();
+    expect(cmd.resolveRalphLabel(undefined, "ralph")).toBe("ralph");
+    expect(cmd.resolveRalphLabel(undefined, "  spaced  ")).toBe("spaced");
+  });
+
+  it("treats empty/blank default as no label", async () => {
+    const { cmd } = await loadCmd();
+    expect(cmd.resolveRalphLabel(undefined, "")).toBeUndefined();
+    expect(cmd.resolveRalphLabel(undefined, "   ")).toBeUndefined();
+  });
+
+  it("`-l -` forces no label even with a default set", async () => {
+    const { cmd } = await loadCmd();
+    expect(cmd.resolveRalphLabel("-", "ralph")).toBeUndefined();
+  });
+
+  it("an explicit label overrides the default", async () => {
+    const { cmd } = await loadCmd();
+    expect(cmd.resolveRalphLabel("bug", "ralph")).toBe("bug");
+  });
+});
+
 describe("handleRalph", () => {
   it("rejects unauthorized users", async () => {
     const { cmd } = await loadCmd();

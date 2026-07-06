@@ -221,6 +221,21 @@ export async function handleText(
       );
       return;
     }
+    if (field === "ralphlabel") {
+      const raw = message.trim();
+      // "-" clears the filter (loops run over all issues by default).
+      const value = raw === "-" ? "" : raw;
+      await saveSetting({ defaultRalphLabel: value || undefined });
+      pendingSettingsInput.delete(_settingsPK);
+      await busReply(
+        ctx,
+        value
+          ? `✅ Ralph label set: <code>${escapeHtml(value)}</code>`
+          : "✅ Ralph label cleared — loops run over all issues.",
+        { format: "html", threadId },
+      );
+      return;
+    }
   }
 
   // 1.5. Check for pending plan feedback

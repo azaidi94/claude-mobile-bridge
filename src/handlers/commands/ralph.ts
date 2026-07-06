@@ -23,7 +23,11 @@ import {
   isDesktopClaudeSpawnSupported,
 } from "../../config";
 import { STATE_DIR } from "../../paths";
-import { getWorkingDir, getRalphVerboseDefault } from "../../settings";
+import {
+  getWorkingDir,
+  getRalphVerboseDefault,
+  getDefaultRalphLabel,
+} from "../../settings";
 import { isAuthorized } from "../../security";
 import { escapeHtml } from "../../formatting";
 import { getMessageBus } from "../../messaging";
@@ -55,6 +59,8 @@ const USAGE = [
   "<code>/ralph</code> — status",
   "<code>/ralph stop</code> — stop the running loop",
   "<code>/ralph verbose on|off</code> — stream the full transcript",
+  "",
+  "<i>-l scopes to a GitHub label (default from /settings); -l - forces all issues.</i>",
 ].join("\n");
 
 // Path to the vendored runner, resolved relative to this source file:
@@ -175,6 +181,22 @@ export function expandHome(p: string): string {
   return p;
 }
 
+/**
+ * Resolve the effective issue label for a loop:
+ *   undefined (no -l)  → the configured default (empty ⇒ no label)
+ *   "-"   (-l -)       → force no label, overriding the default
+ *   other (-l foo)     → that label
+ * Returns undefined when no label should be passed to the script.
+ */
+export function resolveRalphLabel(
+  passed: string | undefined,
+  configuredDefault: string,
+): string | undefined {
+  if (passed === undefined) return configuredDefault.trim() || undefined;
+  if (passed === "-") return undefined;
+  return passed;
+}
+
 async function startCmd(ctx: Context, args: string): Promise<void> {
   if (!isDesktopClaudeSpawnSupported()) {
     await busReply(
@@ -202,6 +224,7 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     await busReply(ctx, `❌ ${parsed.error}\n\n${USAGE}`, "html");
     return;
   }
+  const label = resolveRalphLabel(parsed.label, getDefaultRalphLabel());
 
   // Resolve relative paths against the configured working dir (~/Dev), matching
   // /new — a bare `foo` means <workingDir>/foo, not cwd/foo. expandHome first so
@@ -255,7 +278,7 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     repoPath: repo,
     iterations: parsed.iterations,
     prMode: parsed.prMode,
-    label: parsed.label,
+    label,
     pid: undefined,
     topicId: undefined,
     chatId: undefined,
@@ -331,11 +354,14 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     return;
   }
 
+  const scope = loop.label
+    ? `label <code>${escapeHtml(loop.label)}</code>`
+    : "all open issues";
   await busReply(
     ctx,
     `🔁 Launching ralph on <code>${escapeHtml(basename(repo))}</code> — ${
       loop.iterations
-    } iterations, ${loop.prMode ? "PR" : "direct"} mode. Watching for beats…`,
+    } iterations, ${loop.prMode ? "PR" : "direct"} mode, ${scope}. Watching for beats…`,
     "html",
   );
 
