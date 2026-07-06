@@ -48,6 +48,18 @@ describe("sanitizeTelegramHtml", () => {
     expect(out).toBe("<b>1 &amp; 2 &lt; 3</b>");
   });
 
+  test("preserves pre-escaped entities in text (no double-escape)", () => {
+    // Hand-authored HTML with `&lt;path&gt;` must survive verbatim, not become
+    // a literal `&lt;path&gt;` (which is `&amp;lt;…` on the wire).
+    const out = sanitizeTelegramHtml("<b>Automation</b> /ralph &lt;path&gt;");
+    expect(out).toBe("<b>Automation</b> /ralph &lt;path&gt;");
+    expect(out).not.toContain("&amp;lt;");
+  });
+
+  test("raw & next to a non-entity word still escapes", () => {
+    expect(sanitizeTelegramHtml("<b>AT&T</b>")).toBe("<b>AT&amp;T</b>");
+  });
+
   test("preserves <pre> with newlines for code blocks", () => {
     const out = sanitizeTelegramHtml("<pre>line1\nline2</pre>");
     expect(out).toBe("<pre>line1\nline2</pre>");

@@ -17,6 +17,18 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+// Like escapeHtml, but leaves already-formed HTML entities (&lt; &amp; &#39; …)
+// intact so hand-authored Telegram HTML containing e.g. `&lt;path&gt;` isn't
+// double-escaped into a literal `&lt;path&gt;`. A raw `&` (not starting a valid
+// entity) still escapes.
+export function escapeHtmlText(text: string): string {
+  return text
+    .replace(/&(?![a-zA-Z][a-zA-Z0-9]*;|#\d+;|#[xX][0-9a-fA-F]+;)/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 /**
  * Telegram's allowed HTML tag set. Anything outside this is stripped (escaped)
  * by sanitizeTelegramHtml. Source: https://core.telegram.org/bots/api#html-style
@@ -70,8 +82,10 @@ export function sanitizeTelegramHtml(text: string): string {
   let lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = tagRe.exec(text)) !== null) {
-    // Escape everything between the previous tag and this one.
-    result += escapeHtml(text.slice(lastIndex, m.index));
+    // Escape everything between the previous tag and this one. Preserve existing
+    // entities so hand-authored `&lt;path&gt;` survives (else it double-escapes
+    // to a literal `&lt;path&gt;`).
+    result += escapeHtmlText(text.slice(lastIndex, m.index));
     const tagName = m[1]!.toLowerCase();
     if (TELEGRAM_HTML_TAGS.has(tagName)) {
       if (tagName === "a") {
@@ -95,7 +109,7 @@ export function sanitizeTelegramHtml(text: string): string {
     }
     lastIndex = m.index + m[0].length;
   }
-  result += escapeHtml(text.slice(lastIndex));
+  result += escapeHtmlText(text.slice(lastIndex));
   return result;
 }
 
