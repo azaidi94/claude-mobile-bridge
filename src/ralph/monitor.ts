@@ -173,14 +173,15 @@ async function ghIssueSummary(loop: RalphLoop): Promise<IssueSummary | null> {
   }
 }
 
-function post(
+/** Post a beat; returns the sent message id (undefined on drop/error). */
+async function post(
   api: Api,
   loop: RalphLoop,
   content: string,
   replyMarkup?: InlineKeyboardMarkup,
-): Promise<unknown> {
-  if (loop.chatId === undefined) return Promise.resolve();
-  return getMessageBus()
+): Promise<number | undefined> {
+  if (loop.chatId === undefined) return undefined;
+  const res = await getMessageBus()
     .send({
       chatId: loop.chatId,
       threadId: loop.topicId,
@@ -188,7 +189,69 @@ function post(
       format: "html",
       replyMarkup,
     })
-    .catch((err) => warn(`ralph: post failed: ${err}`));
+    .catch((err) => {
+      warn(`ralph: post failed: ${err}`);
+      return undefined;
+    });
+  return res && "messageId" in res ? res.messageId : undefined;
+}
+
+/**
+ * Pin `messageId` as the topic's current-progress marker and unpin the previous
+ * one, so the pinned message always reflects where the loop is at. Silent on
+ * failure (missing pin rights shouldn't break the loop).
+ */
+async function pinLatest(
+  api: Api,
+  loop: RalphLoop,
+  messageId: number,
+): Promise<void> {
+  if (loop.chatId === undefined) return;
+  const prev = loop.pinnedMessageId;
+  try {
+    await api.pinChatMessage(loop.chatId, messageId, {
+      disable_notification: true,
+    });
+    loop.pinnedMessageId = messageId;
+    await updateLoop(loop.id, { pinnedMessageId: messageId });
+    if (prev !== undefined && prev !== messageId) {
+      await api.unpinChatMessage(loop.chatId, prev).catch(() => {});
+    }
+  } catch (err) {
+    warn(`ralph: pin failed: ${err}`);
+  }
+}
+
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+/** Final wrap-up block shown above the delete-topic button. */
+function completionSummary(
+  loop: RalphLoop,
+  final: IssueSummary | null,
+): string {
+  const lines = ["📋 <b>Loop summary</b>"];
+  lines.push(
+    `⏱ ran for ${fmtDuration(Date.now() - Date.parse(loop.startedAt))}`,
+  );
+  const done = loop.lastIteration?.n ?? 0;
+  lines.push(`🔁 ${done}/${loop.iterations} iterations`);
+  if (loop.initialIssueCount !== undefined && final) {
+    const closed = Math.max(0, loop.initialIssueCount - final.count);
+    lines.push(`✅ ${closed} issue${closed === 1 ? "" : "s"} closed`);
+  }
+  if (final) {
+    lines.push(
+      `📊 ${final.count} issue${final.count === 1 ? "" : "s"} still open`,
+    );
+  }
+  return lines.join("\n");
 }
 
 // Terminal reasons where the loop finished its work (vs. stopped/crashed) —
@@ -309,6 +372,12 @@ async function handleEvent(
       loop.lastIteration = { n: ev.n, total: ev.total };
       await updateLoop(loop.id, { lastIteration: loop.lastIteration });
       const summary = await ghIssueSummary(loop);
+      // Baseline the open-issue count on the first iteration we can read it, so
+      // finalize can report how many closed over the run.
+      if (summary && loop.initialIssueCount === undefined) {
+        loop.initialIssueCount = summary.count;
+        await updateLoop(loop.id, { initialIssueCount: summary.count });
+      }
       let content = `🔄 iter ${ev.n}/${ev.total}`;
       if (summary) {
         content += ` · ${summary.count} issue${summary.count === 1 ? "" : "s"} open`;
@@ -318,7 +387,9 @@ async function handleEvent(
           )}`;
         }
       }
-      await post(api, loop, content);
+      // Pin each iteration beat so the pinned message tracks current progress.
+      const id = await post(api, loop, content);
+      if (id !== undefined) await pinLatest(api, loop, id);
       if (loop.verbose) void attachVerboseWatch(api, loop);
       return;
     }
@@ -384,21 +455,25 @@ async function finalize(
   // Suppress once more so the winding-down claude's port-file reaping doesn't
   // fire a stray 🔴 broadcast after the loop ends.
   suppressDirNotifications(loop.repoPath, SUPPRESS_FINAL_MS);
-  // Offer a delete-topic button once the loop finished on its own — but only
-  // when we have a real forum topic (fallback-to-invoking-chat loops have no
-  // topicId, so there's nothing to delete). Attach it to the LAST message.
-  const delMarkup =
-    loop.topicId !== undefined && isNaturalCompletion(reason)
-      ? deleteTopicKeyboard(loop)
-      : undefined;
   const summary = await ghIssueSummary(loop);
-  await post(api, loop, finalBeat, summary ? undefined : delMarkup);
-  if (summary) {
+  await post(api, loop, finalBeat);
+  // On a natural finish (and only with a real forum topic to delete), post a
+  // wrap-up block carrying the delete-topic button, and pin it so the topic's
+  // pinned message is the final outcome. Otherwise keep the old bare remaining
+  // count with no button.
+  if (loop.topicId !== undefined && isNaturalCompletion(reason)) {
+    const id = await post(
+      api,
+      loop,
+      completionSummary(loop, summary),
+      deleteTopicKeyboard(loop),
+    );
+    if (id !== undefined) await pinLatest(api, loop, id);
+  } else if (summary) {
     await post(
       api,
       loop,
       `📊 ${summary.count} open issue${summary.count === 1 ? "" : "s"} remaining`,
-      delMarkup,
     );
   }
   await flush();

@@ -375,12 +375,24 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     loop.iterations
   } iterations · ${loop.prMode ? "PR" : "direct"} mode`;
   if (loop.chatId !== undefined) {
-    await getMessageBus().send({
+    const res = await getMessageBus().send({
       chatId: loop.chatId,
       threadId: loop.topicId,
       content: started,
       format: "html",
     });
+    // Pin the started message as the initial progress marker; each iteration
+    // beat repins over it (monitor.pinLatest), so the pinned message always
+    // shows where the loop is at.
+    if (res && "messageId" in res) {
+      loop.pinnedMessageId = res.messageId;
+      await updateLoop(loop.id, { pinnedMessageId: res.messageId });
+      await ctx.api
+        .pinChatMessage(loop.chatId, res.messageId, {
+          disable_notification: true,
+        })
+        .catch((err) => warn(`ralph: pin started failed: ${err}`));
+    }
   }
   info(`ralph: started loop ${loop.id} pid=${pid} repo=${repo}`);
 }

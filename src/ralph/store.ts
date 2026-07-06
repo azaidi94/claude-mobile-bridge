@@ -32,6 +32,10 @@ export interface RalphLoop {
   tailOffset: number; // resume point into run.log
   lastIteration?: { n: number; total: number };
   verbose: boolean;
+  /** Message id of the currently-pinned progress beat, so we can repin. */
+  pinnedMessageId?: number;
+  /** Open-issue count captured at the first iteration, to compute closed. */
+  initialIssueCount?: number;
   startedAt: string; // ISO
   endedAt?: string;
   endReason?: string; // "complete" | "max-iterations" | "no-issues" | "stopped" | "exit:<code>" | "process-died"

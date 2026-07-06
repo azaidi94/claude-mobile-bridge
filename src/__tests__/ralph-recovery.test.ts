@@ -4,11 +4,12 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const sends: { content: string; replyMarkup?: unknown }[] = [];
+let nextMessageId = 1;
 mock.module("../messaging", () => ({
   getMessageBus: () => ({
     send: async (m: { content: string; replyMarkup?: unknown }) => {
       sends.push(m);
-      return { messageId: 1 };
+      return { messageId: nextMessageId++ };
     },
     edit: async () => ({}),
   }),
@@ -22,6 +23,7 @@ beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), "ralph-rec-"));
   process.env.RALPH_STORE_PATH = join(testDir, "ralph.json");
   sends.length = 0;
+  nextMessageId = 1;
 });
 
 afterEach(() => {
@@ -66,7 +68,16 @@ describe("recoverRalphOnBoot", () => {
       startedAt: "2026-07-05T00:00:00.000Z",
     });
 
-    const fakeApi = {} as any;
+    const pins: number[] = [];
+    const unpins: number[] = [];
+    const fakeApi = {
+      pinChatMessage: async (_c: number, id: number) => {
+        pins.push(id);
+      },
+      unpinChatMessage: async (_c: number, id: number) => {
+        unpins.push(id);
+      },
+    } as any;
     await monitor.recoverRalphOnBoot(fakeApi);
 
     // No longer active; finalized as completed via the marker.
@@ -80,10 +91,21 @@ describe("recoverRalphOnBoot", () => {
     expect(beat).toContain("offline");
     expect(beat).toContain("COMPLETE");
 
-    // Natural completion → a delete-topic button rides the last message.
+    // A wrap-up summary block was posted above the button.
+    expect(beat).toContain("Loop summary");
+    expect(beat).toContain("ran for");
+    expect(beat).toContain("3/10 iterations");
+
+    // Natural completion → a delete-topic button rides the summary message.
     const markup = JSON.stringify(sends.map((s) => s.replyMarkup));
     expect(markup).toContain("ralph:deltopic:rec1");
     expect(markup).toContain("Delete topic");
+
+    // The summary block was pinned as the topic's final marker. (Recovery
+    // finalizes straight from the log tail, so no earlier beat was pinned here.)
+    expect(pins.length).toBe(1);
+    expect(unpins).toEqual([]);
+    expect(loop.pinnedMessageId).toBe(pins[0]);
   });
 
   it("does not offer delete-topic when the loop process just died", async () => {
