@@ -328,6 +328,16 @@ if (primaryChatId !== undefined) {
   startCronScheduler(bot.api, primaryChatId);
 }
 
+// Recover any active ralph loop: resume monitoring a live one, or finalize one
+// that ended while the bridge was offline. Hydrates the store's sync cache
+// (used by the text-handler output-only guard) as a side effect.
+try {
+  const { recoverRalphOnBoot } = await import("./ralph/monitor");
+  await recoverRalphOnBoot(bot.api);
+} catch (err) {
+  warn(`ralph: boot recovery failed: ${err}`);
+}
+
 if (topicManager && primaryChatId !== undefined) {
   const sessions = getSessions();
   await topicManager.reconcile(
@@ -367,6 +377,7 @@ await bot.api.setMyCommands([
   { command: "groupmode", description: "Toggle group vs private routing" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
+  { command: "ralph", description: "Run a ralph loop (afk_tasks.sh)" },
   { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "clear", description: "Send /clear to the desktop session" },
   { command: "compact", description: "Send /compact to the desktop session" },
@@ -447,6 +458,7 @@ const stopRunner = () => {
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
     stopCursorBridge();
+    import("./ralph/monitor").then((m) => m.stopRalphMonitor()).catch(() => {});
     runner.stop();
   }
 };
@@ -454,11 +466,16 @@ const stopRunner = () => {
 /** Best-effort flush of cron + prompt stores before shutdown. */
 async function flushStores(): Promise<void> {
   try {
-    const [{ flush: flushCron }, { flush: flushPrompts }] = await Promise.all([
+    const [
+      { flush: flushCron },
+      { flush: flushPrompts },
+      { flush: flushRalph },
+    ] = await Promise.all([
       import("./cron/store"),
       import("./prompts/store"),
+      import("./ralph/store"),
     ]);
-    await Promise.all([flushCron(), flushPrompts()]);
+    await Promise.all([flushCron(), flushPrompts(), flushRalph()]);
   } catch (err) {
     warn(`shutdown flush: ${err}`);
   }

@@ -69,6 +69,8 @@ export { handleCleanZombie } from "./cleanzombie";
 
 export { handleCron } from "./cron";
 
+export { handleRalph } from "./ralph";
+
 export { handlePrompts } from "./prompts";
 
 export { handleClear, handleCompact } from "./inject";

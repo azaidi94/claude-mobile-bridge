@@ -43,6 +43,7 @@ import {
   handleGroupMode,
   handleCleanZombie,
   handleCron,
+  handleRalph,
   handlePrompts,
   handleClear,
   handleCompact,
@@ -290,6 +291,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("groupmode", handleGroupMode);
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("cron", withSctx(handleCron));
+  bot.command("ralph", handleRalph);
   bot.command("prompts", withSctx(handlePrompts));
   bot.command("clear", withSctx(handleClear));
   bot.command("compact", withSctx(handleCompact));

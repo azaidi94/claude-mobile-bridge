@@ -24,6 +24,7 @@ import {
   warn,
 } from "../logger";
 import { getMessageBus } from "../messaging";
+import { isRalphLoopTopic } from "../ralph/store";
 
 function busReply(
   ctx: Context,
@@ -171,6 +172,16 @@ export async function handlePhoto(
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
+    return;
+  }
+
+  // Ralph loop topic is output-only (invariant 2). It bypasses topic-store,
+  // so sctx is undefined and the photo would fall through to default-session
+  // routing without this guard.
+  if (isRalphLoopTopic(chatId, ctx.message?.message_thread_id)) {
+    await busReply(ctx, "🔁 loop topic is output-only.", {
+      threadId: ctx.message?.message_thread_id,
+    });
     return;
   }
 

@@ -21,6 +21,7 @@ export {
   handleGroupMode,
   handleCleanZombie,
   handleCron,
+  handleRalph,
   handlePrompts,
   handleClear,
   handleCompact,

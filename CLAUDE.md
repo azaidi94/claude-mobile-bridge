@@ -20,6 +20,8 @@ bun run test         # Run tests
 
 **Adding topic-aware commands**: Use `isSessionTopic(ctx)` to detect topic context, `showSessionPicker(ctx, action)` for General-context pickers. Pass `threadId` through to streaming/relay.
 
+**Ralph loops**: `/ralph` runs `afk_tasks.sh` in a desktop terminal; `src/ralph/` tails its log and posts beats. The loop topic is NOT in topic-store (created raw via `createForumTopic`) — see `docs/ralph-loops.md`.
+
 ## Configuration
 
 Configure via `.env` (see `.env.example`). MCP servers defined in `mcp-config.ts` (copy from `mcp-config.example.ts`).

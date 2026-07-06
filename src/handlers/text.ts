@@ -52,6 +52,7 @@ import { escapeHtml } from "../formatting";
 import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
 import { markReceived } from "./reactions";
+import { isRalphLoopTopic } from "../ralph/store";
 
 /**
  * Bus-routed reply helper. Use for plain or HTML text replies including
@@ -99,6 +100,14 @@ export async function handleText(
   // 1. Authorization check
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await busReply(ctx, "Unauthorized. Contact the bot owner for access.");
+    return;
+  }
+
+  // 1.01. Ralph loop topic is output-only (invariant 2). The topic bypasses
+  // topic-store, so without this guard its messages would fall through to the
+  // active session's context. Uses the sync cache — hot path, must not await.
+  if (isRalphLoopTopic(ctx.chat?.id, ctx.message?.message_thread_id)) {
+    await busReply(ctx, "🔁 loop topic is output-only.");
     return;
   }
 
