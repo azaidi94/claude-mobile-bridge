@@ -67,7 +67,7 @@ import {
   getContextNotifyStep,
 } from "../settings";
 import type { TerminalApp } from "../config";
-import { debug, error as logError, info } from "../logger";
+import { debug, error as logError, info, warn } from "../logger";
 import {
   getExecuteCommands,
   startProcess,
@@ -745,6 +745,25 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // /cursor selector: cursor:<off>
   if (callbackData.startsWith("cursor:")) {
     await handleCursorBridgeCallback(ctx, callbackData.slice(7));
+    return;
+  }
+
+  // Ralph loop controls: ralph:deltopic:<loopId> — delete the finished loop's
+  // forum topic. The button lives in the topic, so threadId identifies it.
+  if (callbackData.startsWith("ralph:deltopic")) {
+    if (threadId === undefined) {
+      await ctx.answerCallbackQuery({ text: "No topic to delete" });
+      return;
+    }
+    try {
+      await ctx.api.deleteForumTopic(chatId, threadId);
+      await ctx.answerCallbackQuery({ text: "Topic deleted" });
+    } catch (err) {
+      warn(`ralph: delete topic failed: ${err}`);
+      await ctx.answerCallbackQuery({
+        text: "Couldn't delete — check bot admin rights",
+      });
+    }
     return;
   }
 

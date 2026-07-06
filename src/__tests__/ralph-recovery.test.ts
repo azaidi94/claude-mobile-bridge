@@ -3,10 +3,10 @@ import { tmpdir } from "os";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
-const sends: { content: string }[] = [];
+const sends: { content: string; replyMarkup?: unknown }[] = [];
 mock.module("../messaging", () => ({
   getMessageBus: () => ({
-    send: async (m: { content: string }) => {
+    send: async (m: { content: string; replyMarkup?: unknown }) => {
       sends.push(m);
       return { messageId: 1 };
     },
@@ -79,5 +79,43 @@ describe("recoverRalphOnBoot", () => {
     const beat = sends.map((s) => s.content).join("\n");
     expect(beat).toContain("offline");
     expect(beat).toContain("COMPLETE");
+
+    // Natural completion → a delete-topic button rides the last message.
+    const markup = JSON.stringify(sends.map((s) => s.replyMarkup));
+    expect(markup).toContain("ralph:deltopic:rec1");
+    expect(markup).toContain("Delete topic");
+  });
+
+  it("does not offer delete-topic when the loop process just died", async () => {
+    const store = await import("../ralph/store");
+    store._resetRalphStoreForTesting();
+    const monitor = await import("../ralph/monitor");
+
+    const runDir = join(testDir, "run2");
+    mkdirSync(runDir, { recursive: true });
+    // No terminal marker — the pid is simply gone → "process-died", not natural.
+    writeFileSync(join(runDir, "run.log"), "=== Iteration 1/10 ===\n");
+
+    await store.addLoop({
+      id: "rec2",
+      repoPath: runDir,
+      iterations: 10,
+      prMode: false,
+      runDir,
+      tailOffset: 0,
+      verbose: false,
+      chatId: 789,
+      topicId: 7,
+      pid: await deadPid(),
+      state: "running",
+      startedAt: "2026-07-05T00:00:00.000Z",
+    });
+
+    await monitor.recoverRalphOnBoot({} as any);
+
+    const loop = (await store.getLoops())[0]!;
+    expect(loop.endReason).toBe("process-died");
+    const markup = JSON.stringify(sends.map((s) => s.replyMarkup));
+    expect(markup).not.toContain("deltopic");
   });
 });

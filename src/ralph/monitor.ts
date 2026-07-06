@@ -13,6 +13,7 @@
  */
 
 import type { Api } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import { join } from "path";
 import { open, stat, readFile } from "fs/promises";
 import { realpathSync } from "fs";
@@ -172,7 +173,12 @@ async function ghIssueSummary(loop: RalphLoop): Promise<IssueSummary | null> {
   }
 }
 
-function post(api: Api, loop: RalphLoop, content: string): Promise<unknown> {
+function post(
+  api: Api,
+  loop: RalphLoop,
+  content: string,
+  replyMarkup?: InlineKeyboardMarkup,
+): Promise<unknown> {
   if (loop.chatId === undefined) return Promise.resolve();
   return getMessageBus()
     .send({
@@ -180,8 +186,28 @@ function post(api: Api, loop: RalphLoop, content: string): Promise<unknown> {
       threadId: loop.topicId,
       content,
       format: "html",
+      replyMarkup,
     })
     .catch((err) => warn(`ralph: post failed: ${err}`));
+}
+
+// Terminal reasons where the loop finished its work (vs. stopped/crashed) —
+// the topic has served its purpose, so offer a one-tap delete.
+function isNaturalCompletion(reason: string): boolean {
+  return (
+    reason === "complete" ||
+    reason === "no-issues" ||
+    reason === "max-iterations"
+  );
+}
+
+/** Inline "delete topic" button; callback handled in handlers/callback.ts. */
+function deleteTopicKeyboard(loop: RalphLoop): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "🗑 Delete topic", callback_data: `ralph:deltopic:${loop.id}` }],
+    ],
+  };
 }
 
 // ---- verbose transcript watch ----------------------------------------------
@@ -358,13 +384,21 @@ async function finalize(
   // Suppress once more so the winding-down claude's port-file reaping doesn't
   // fire a stray 🔴 broadcast after the loop ends.
   suppressDirNotifications(loop.repoPath, SUPPRESS_FINAL_MS);
-  await post(api, loop, finalBeat);
+  // Offer a delete-topic button once the loop finished on its own — but only
+  // when we have a real forum topic (fallback-to-invoking-chat loops have no
+  // topicId, so there's nothing to delete). Attach it to the LAST message.
+  const delMarkup =
+    loop.topicId !== undefined && isNaturalCompletion(reason)
+      ? deleteTopicKeyboard(loop)
+      : undefined;
   const summary = await ghIssueSummary(loop);
+  await post(api, loop, finalBeat, summary ? undefined : delMarkup);
   if (summary) {
     await post(
       api,
       loop,
       `📊 ${summary.count} open issue${summary.count === 1 ? "" : "s"} remaining`,
+      delMarkup,
     );
   }
   await flush();
