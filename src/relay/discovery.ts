@@ -13,6 +13,8 @@ import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 import { attachAskRemoteToRelay } from "../handlers/relay-ask";
+import { shadowResolveSession } from "../sessions/identity-shadow";
+import { getCurrentSnapshot, type Handle } from "../sessions/resolve-session";
 
 export interface PortFileData {
   port: number;
@@ -390,7 +392,7 @@ function cacheKey(selector: RelaySelector): string | null {
   return null;
 }
 
-export function selectRelayTarget(
+function _selectRelayTargetImpl(
   alive: PortFileData[],
   selector: RelaySelector,
 ): PortFileData | null {
@@ -430,6 +432,38 @@ export function selectRelayTarget(
   }
 
   return null;
+}
+
+/**
+ * Shadow-instrumented wrapper (observe-only, no migration): delegates to
+ * `_selectRelayTargetImpl` for the real, unchanged behavior, then reports the
+ * chosen answer to `resolveSession` for comparison. Never affects the return
+ * value — `shadowResolveSession` swallows its own errors.
+ */
+export function selectRelayTarget(
+  alive: PortFileData[],
+  selector: RelaySelector,
+): PortFileData | null {
+  const chosen = _selectRelayTargetImpl(alive, selector);
+
+  const handle: Handle | null = selector.sessionId
+    ? { by: "sessionId", sessionId: selector.sessionId }
+    : selector.claudePid
+      ? { by: "pid", pid: selector.claudePid }
+      : selector.sessionDir
+        ? { by: "cwd", cwd: selector.sessionDir }
+        : null;
+
+  if (handle) {
+    shadowResolveSession(
+      "selectRelayTarget",
+      chosen?.sessionId ?? null,
+      handle,
+      getCurrentSnapshot(),
+    );
+  }
+
+  return chosen;
 }
 
 export async function getRelayDirs(): Promise<string[]> {
