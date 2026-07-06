@@ -17,13 +17,16 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Like escapeHtml, but leaves already-formed HTML entities (&lt; &amp; &#39; …)
-// intact so hand-authored Telegram HTML containing e.g. `&lt;path&gt;` isn't
-// double-escaped into a literal `&lt;path&gt;`. A raw `&` (not starting a valid
-// entity) still escapes.
+// Like escapeHtml, but leaves already-formed HTML entities intact so
+// hand-authored Telegram HTML containing e.g. `&lt;path&gt;` isn't
+// double-escaped into a literal `&lt;path&gt;`. Only Telegram's supported named
+// entities (&amp; &lt; &gt; &quot;) plus numeric refs are preserved — any other
+// entity-shaped token (e.g. &copy;, &mdash;, or prose like `R&D;`) still escapes
+// to `&amp;…`, because Telegram rejects unsupported named entities with a 400
+// (can't parse entities), which would degrade the whole message to plain text.
 export function escapeHtmlText(text: string): string {
   return text
-    .replace(/&(?![a-zA-Z][a-zA-Z0-9]*;|#\d+;|#[xX][0-9a-fA-F]+;)/g, "&amp;")
+    .replace(/&(?!(?:amp|lt|gt|quot);|#\d+;|#[xX][0-9a-fA-F]+;)/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");

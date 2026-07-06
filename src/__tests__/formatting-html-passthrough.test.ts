@@ -60,6 +60,27 @@ describe("sanitizeTelegramHtml", () => {
     expect(sanitizeTelegramHtml("<b>AT&T</b>")).toBe("<b>AT&amp;T</b>");
   });
 
+  test("unsupported named entities are escaped, not passed through", () => {
+    // Telegram only accepts &lt; &gt; &amp; &quot; + numeric refs. Anything else
+    // (&copy;, &mdash;, &nbsp;) must escape to &amp;… or Telegram 400s and the
+    // message degrades to plain text.
+    expect(sanitizeTelegramHtml("<b>a &copy; b &mdash; c</b>")).toBe(
+      "<b>a &amp;copy; b &amp;mdash; c</b>",
+    );
+  });
+
+  test("entity-shaped prose (R&D;) escapes rather than being preserved", () => {
+    expect(sanitizeTelegramHtml("<i>R&D; spend</i>")).toBe(
+      "<i>R&amp;D; spend</i>",
+    );
+  });
+
+  test("numeric character references are preserved", () => {
+    expect(sanitizeTelegramHtml("<b>quote &#39; and &#x2764;</b>")).toBe(
+      "<b>quote &#39; and &#x2764;</b>",
+    );
+  });
+
   test("preserves <pre> with newlines for code blocks", () => {
     const out = sanitizeTelegramHtml("<pre>line1\nline2</pre>");
     expect(out).toBe("<pre>line1\nline2</pre>");
