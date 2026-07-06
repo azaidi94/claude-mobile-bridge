@@ -12,7 +12,7 @@
  */
 
 import { homedir } from "os";
-import { basename, join } from "path";
+import { basename, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { access } from "fs/promises";
 import type { Context } from "grammy";
@@ -23,6 +23,7 @@ import {
   isDesktopClaudeSpawnSupported,
 } from "../../config";
 import { STATE_DIR } from "../../paths";
+import { getWorkingDir } from "../../settings";
 import { isAuthorized } from "../../security";
 import { escapeHtml } from "../../formatting";
 import { getMessageBus } from "../../messaging";
@@ -202,7 +203,12 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     return;
   }
 
-  const repo = tryRealpathSync(expandHome(parsed.path));
+  // Resolve relative paths against the configured working dir (~/Dev), matching
+  // /new — a bare `foo` means <workingDir>/foo, not cwd/foo. expandHome first so
+  // `~`-paths and absolutes stay absolute (resolve() leaves absolutes intact).
+  const repo = tryRealpathSync(
+    resolve(getWorkingDir(), expandHome(parsed.path)),
+  );
   // dir exists?
   try {
     await access(repo);
