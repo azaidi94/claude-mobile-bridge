@@ -300,6 +300,10 @@ async function scanSessions(): Promise<{
 
   // Scan port files early for disambiguation
   const portFiles = await scanPortFiles(true);
+  setCurrentSnapshot({
+    aliveRelays: portFiles,
+    topics: getTopicStore().topics,
+  });
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
   );
@@ -447,7 +451,6 @@ async function scanSessions(): Promise<{
     // still supplies the lone-relay (`missing`) JSONL back-fill; `ambiguous`
     // (a cwd with >1 relay) resolves empty so exact pid (ppid) routing wins.
     const identities = resolveIdentities({ aliveRelays: pfs, topics: [] });
-    setCurrentSnapshot({ aliveRelays: pfs, topics: getTopicStore().topics });
     const identityByRelayPid = new Map(identities.map((i) => [i.relayPid, i]));
     const relayIds = pickRelayIds(
       pfs.map((pf) => identityByRelayPid.get(pf.pid)),
