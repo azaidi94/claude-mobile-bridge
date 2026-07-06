@@ -19,6 +19,7 @@ export {
   _getWatchForTests,
   _registerWatchForTests,
   findWatchByDir,
+  findWatchBySessionId,
   getWatch,
   isWatching,
   isWatchingAny,
@@ -68,3 +69,7 @@ export {
   handleWatch,
   startWatchingAndNotify,
 } from "./lifecycle";
+
+export { reassertSessionTopic } from "./rebind";
+
+export { markRelayInflight, isRelayInflight } from "./inflight-relay";

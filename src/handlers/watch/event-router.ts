@@ -33,6 +33,7 @@ import {
   resetDisplaySegment,
 } from "./text-renderer";
 import {
+  finalizeAskCard,
   renderAskUserQuestion,
   renderThinking,
   renderTool,
@@ -214,6 +215,9 @@ export function handleTailEvent(
       break;
 
     case "tool_result":
+      // A native AskUserQuestion answered at the desktop resolves its
+      // observation card in place; skip the generic result rendering.
+      if (finalizeAskCard(botApi, state, event)) break;
       renderToolResult(botApi, state, event, threadId);
       break;
 

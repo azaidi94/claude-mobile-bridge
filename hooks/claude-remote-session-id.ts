@@ -54,11 +54,13 @@ function stateDir(): string {
   );
 }
 
-const LOG_FILE = join(homedir(), ".claude", "logs", "session-id-hook.log");
+const LOG_FILE =
+  process.env.CLAUDE_SESSION_ID_HOOK_LOG ??
+  join(homedir(), ".claude", "logs", "session-id-hook.log");
 
 function logLine(msg: string): void {
   try {
-    mkdirSync(join(homedir(), ".claude", "logs"), { recursive: true });
+    mkdirSync(join(LOG_FILE, ".."), { recursive: true });
     appendFileSync(LOG_FILE, `${new Date().toISOString()} ${msg}\n`);
   } catch {
     // Best-effort logging — never let it break the hook.
@@ -142,6 +144,32 @@ export function mergeSessionId(
   return { ...current, sessionId };
 }
 
+export type HookOutcome =
+  | "updated"
+  | "noop_already_current"
+  | "write_failed"
+  | "bail_bad_stdin"
+  | "bail_missing_fields"
+  | "bail_no_port_files"
+  | "bail_no_ancestry_match"
+  | "bail_reread_failed";
+
+export function decideOutcome(input: {
+  parsed: boolean;
+  sessionId?: string;
+  cwd?: string;
+  candidateCount: number;
+  target?: HookPortFile;
+  currentSessionId?: string;
+}): HookOutcome {
+  if (!input.parsed) return "bail_bad_stdin";
+  if (!input.sessionId || !input.cwd) return "bail_missing_fields";
+  if (input.candidateCount === 0) return "bail_no_port_files";
+  if (!input.target) return "bail_no_ancestry_match";
+  if (input.currentSessionId === input.sessionId) return "noop_already_current";
+  return "updated";
+}
+
 // ── Impure helpers ───────────────────────────────────────────────────────
 
 async function readStdin(): Promise<string> {
@@ -200,22 +228,52 @@ function readPortFiles(dir: string): HookPortFile[] {
 async function main(): Promise<void> {
   const raw = await readStdin();
   let input: { session_id?: string; cwd?: string; source?: string };
+  let parsed = true;
   try {
     input = JSON.parse(raw);
   } catch {
-    return; // No parseable stdin — nothing to do.
+    parsed = false;
+    input = {};
   }
   const sessionId = input.session_id;
   const cwd = input.cwd;
-  if (!sessionId || !cwd) return;
+
+  // Check early bail cases before any I/O.
+  const earlyOutcome = decideOutcome({
+    parsed,
+    sessionId,
+    cwd,
+    candidateCount: 1, // placeholder — we only need to detect bad_stdin / missing_fields here
+  });
+  if (
+    earlyOutcome === "bail_bad_stdin" ||
+    earlyOutcome === "bail_missing_fields"
+  ) {
+    logLine(
+      `bail reason=${earlyOutcome} cwd=${cwd ?? "?"} candidates=0 source=${input.source ?? "?"}`,
+    );
+    return;
+  }
 
   const candidates = readPortFiles(stateDir());
-  if (candidates.length === 0) return; // relay not up yet (e.g. cold startup)
+
+  if (candidates.length === 0) {
+    logLine(
+      `bail reason=bail_no_port_files cwd=${cwd ?? "?"} candidates=0 source=${input.source ?? "?"}`,
+    );
+    return;
+  }
 
   const ppidMap = buildPpidMap();
   const ancestry = ancestryChain(process.pid, (pid) => ppidMap.get(pid));
-  const target = selectPortFile(candidates, cwd, ancestry);
-  if (!target) return;
+  const target = selectPortFile(candidates, cwd!, ancestry);
+
+  if (!target) {
+    logLine(
+      `bail reason=bail_no_ancestry_match cwd=${cwd ?? "?"} candidates=${candidates.length} source=${input.source ?? "?"}`,
+    );
+    return;
+  }
 
   // Re-read fresh right before writing so a concurrent relay/bot write to a
   // DIFFERENT field (sessionName/topicId) isn't clobbered by stale contents.
@@ -223,21 +281,33 @@ async function main(): Promise<void> {
   try {
     currentRaw = readFileSync(target.file, "utf-8");
   } catch {
+    logLine(
+      `bail reason=bail_reread_failed cwd=${cwd ?? "?"} candidates=${candidates.length} source=${input.source ?? "?"}`,
+    );
     return;
   }
   let current: Record<string, unknown>;
   try {
     current = JSON.parse(currentRaw) as Record<string, unknown>;
   } catch {
+    logLine(
+      `bail reason=bail_reread_failed cwd=${cwd ?? "?"} candidates=${candidates.length} source=${input.source ?? "?"}`,
+    );
     return;
   }
-  if (current.sessionId === sessionId) return; // already current — no churn
+
+  if (current.sessionId === sessionId) {
+    // noop_already_current — stay silent to avoid log churn on repeated hook fires
+    // (e.g. compact events that don't change the session id). The absence of a log
+    // line here is intentional; the outcome is benign and expected.
+    return;
+  }
 
   try {
     const tmpFile = `${target.file}.tmp`;
     writeFileSync(
       tmpFile,
-      JSON.stringify(mergeSessionId(current, sessionId), null, 2),
+      JSON.stringify(mergeSessionId(current, sessionId!), null, 2),
     );
     renameSync(tmpFile, target.file);
     logLine(

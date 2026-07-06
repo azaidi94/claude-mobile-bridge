@@ -19,11 +19,16 @@ import {
   updatePortFile,
 } from "../relay/discovery";
 import type { PortFileData } from "../relay/discovery";
+import { backfillPortFileSessionIds } from "../relay/backfill";
 import { STATE_DIR } from "../paths";
 // Imported from the leaf module (not the barrel) to avoid a topics→sessions
 // import cycle. Read-only: used to pin session names across restarts.
-import { getTopicStore } from "../topics/topic-store";
+import { getTopicStore, updateTopicMapping } from "../topics/topic-store";
+import { topicSessionIdRefreshPlan } from "./topic-id-refresh";
 import { dropSessionState } from "./session-state";
+import { reportIdentityViolations } from "./identity-report";
+import { shadowCompareIdentities } from "./identity-shadow";
+import { resolveIdentities, type ResolvedIdentity } from "./identity";
 
 const execAsync = promisify(exec);
 
@@ -437,11 +442,20 @@ async function scanSessions(): Promise<{
           !explicitPfIds.has(c.info.id),
       )
       .map((c) => c.info.id);
-    let fallbackIdx = 0;
-    for (const pf of pfs) {
+    // Resolve each relay's id via the single shared rule. `unusedFallbacks`
+    // still supplies the lone-relay (`missing`) JSONL back-fill; `ambiguous`
+    // (a cwd with >1 relay) resolves empty so exact pid (ppid) routing wins.
+    const identities = resolveIdentities({ aliveRelays: pfs, topics: [] });
+    const identityByRelayPid = new Map(identities.map((i) => [i.relayPid, i]));
+    const relayIds = pickRelayIds(
+      pfs.map((pf) => identityByRelayPid.get(pf.pid)),
+      unusedFallbacks,
+    );
+    for (let i = 0; i < pfs.length; i++) {
+      const pf = pfs[i]!;
       if (dirFound.length >= processCount) break;
       if (pf.sessionId && knownIds.has(pf.sessionId)) continue;
-      const resolvedId = pf.sessionId || unusedFallbacks[fallbackIdx++] || "";
+      const resolvedId = relayIds[i]!;
       dirFound.push({
         id: resolvedId,
         name: "",
@@ -512,6 +526,61 @@ export function seedNamesFromTopicStore(
  * Matches by session ID when available, uses relay port files as a bridge,
  * then falls back to dir-based heuristic.
  */
+/**
+ * Compute which relay port files need their `sessionName` rewritten — only the
+ * ones whose stored name differs from the session's assigned name. Returning the
+ * needed writes (instead of writing unconditionally) keeps a no-op refresh from
+ * re-mtime-ing every port file, which would otherwise trip the watcher's own
+ * STATE_DIR file-watch and spin a ~1/sec refresh loop. Pure (no I/O) for testing.
+ */
+export function portFileNameUpdates(
+  sessions: Iterable<SessionInfo>,
+  portFiles: PortFileData[],
+): Array<{ relayPid: number; sessionName: string }> {
+  const relayPidBySessionId = new Map<string, number>();
+  const relayPidByDirPpid = new Map<string, number>();
+  const nameByPid = new Map<number, string | undefined>();
+  for (const pf of portFiles) {
+    if (pf.sessionId) relayPidBySessionId.set(pf.sessionId, pf.pid);
+    if (pf.ppid) relayPidByDirPpid.set(`${pf.cwd}\0${pf.ppid}`, pf.pid);
+    nameByPid.set(pf.pid, pf.sessionName);
+  }
+  const out: Array<{ relayPid: number; sessionName: string }> = [];
+  for (const si of sessions) {
+    if (si.source !== "desktop" || !si.name) continue;
+    const relayPid =
+      (si.id ? relayPidBySessionId.get(si.id) : undefined) ??
+      (si.pid !== undefined
+        ? relayPidByDirPpid.get(`${si.dir}\0${si.pid}`)
+        : undefined);
+    if (relayPid === undefined) continue;
+    if (nameByPid.get(relayPid) === si.name) continue; // already correct — skip
+    out.push({ relayPid, sessionName: si.name });
+  }
+  return out;
+}
+
+/**
+ * Map each relay's resolved identity to the sessionId the watcher assigns,
+ * consuming `unusedFallbacks` (newest unclaimed JSONL ids) ONLY for lone
+ * `missing` relays. `ambiguous` siblings resolve to "" and never consume a
+ * fallback — guessing one grabs a sibling's transcript and misroutes (the
+ * historical bug). Pure (the fallback cursor is local) so it's directly tested.
+ * Input order matches the port-file order; output is the id per port file.
+ */
+export function pickRelayIds(
+  identities: Array<ResolvedIdentity | undefined>,
+  unusedFallbacks: string[],
+): string[] {
+  let fallbackIdx = 0;
+  return identities.map((i) => {
+    if (i?.provenance === "authoritative" && i.sessionId) return i.sessionId;
+    if (i?.provenance === "missing")
+      return unusedFallbacks[fallbackIdx++] ?? "";
+    return ""; // ambiguous (or unknown) — exact pid routing handles it
+  });
+}
+
 export function assignPidsToSessions(
   sessions: SessionInfo[],
   processes: ClaudeProcess[],
@@ -591,6 +660,14 @@ export function assignPidsToSessions(
  * Call via the serialized `refresh()` wrapper — do not call directly.
  */
 async function doRefresh(): Promise<SessionDiff> {
+  // Backfill sessionId onto any alive port file that lacks one BEFORE we
+  // resolve sessions, so a session that appeared after startup (its port file
+  // landed via the STATE_DIR watch that triggered this refresh) is identified
+  // on the same tick instead of waiting for a bot restart. Idempotent and
+  // cheap when every port file already has its id. (The old once-at-startup
+  // sweep never re-ran, so post-startup siblings stayed id-less indefinitely.)
+  await backfillPortFileSessionIds();
+
   // Snapshot current desktop sessions by name (unique). Capture id/pid so a
   // port-backed re-injection (below) can preserve them rather than blanking
   // them out — downstream code uses `session.id` as a lookup key.
@@ -625,6 +702,20 @@ async function doRefresh(): Promise<SessionDiff> {
   seedNamesFromTopicStore(priorNameById, getTopicStore().topics);
 
   const { sessions: discovered, portFiles } = await scanSessions();
+
+  // Re-anchor each topic's stored sessionId to its live port file (matched by
+  // topicName). After a desktop /clear the session id changes and the port file
+  // is refreshed, but the topic store keeps the old id — breaking sessionId-keyed
+  // routing (e.g. the AUQ bridge 404s, then the cwd fallback fails once the
+  // session works in a subdir). Sibling-safe: skips topics two live port files
+  // disagree on. Only writes on an actual change.
+  for (const { sessionName, sessionId } of topicSessionIdRefreshPlan(
+    portFiles,
+    getTopicStore().topics,
+  )) {
+    updateTopicMapping(sessionName, { sessionId });
+    info(`identity: topic ${sessionName} sessionId refreshed → ${sessionId}`);
+  }
 
   // Keep non-desktop sessions (telegram, cursor); only desktop sessions are
   // rebuilt from filesystem scan. Without this, every refresh drops the
@@ -717,24 +808,39 @@ async function doRefresh(): Promise<SessionDiff> {
     info(`session removed: ${old.name} (${old.dir})`);
   }
 
-  // Write each desktop session's assigned name back to its relay port file.
-  // This makes the port file the single source of truth for session identity.
-  const relayPidBySessionId = new Map<string, number>();
-  const relayPidByDirPpid = new Map<string, number>();
-  for (const pf of portFiles) {
-    if (pf.sessionId) relayPidBySessionId.set(pf.sessionId, pf.pid);
-    if (pf.ppid) relayPidByDirPpid.set(`${pf.cwd}\0${pf.ppid}`, pf.pid);
+  // Write each desktop session's assigned name back to its relay port file —
+  // but ONLY when it actually changed. An unconditional write trips the
+  // watcher's own STATE_DIR file-watch, which schedules another refresh, which
+  // writes again: a ~1/sec self-trigger loop. Skipping no-op writes breaks it.
+  for (const { relayPid, sessionName } of portFileNameUpdates(
+    cache.sessions.values(),
+    portFiles,
+  )) {
+    updatePortFile(relayPid, { sessionName });
   }
-  for (const si of cache.sessions.values()) {
-    if (si.source !== "desktop" || !si.name) continue;
-    const relayPid =
-      (si.id ? relayPidBySessionId.get(si.id) : undefined) ??
-      (si.pid !== undefined
-        ? relayPidByDirPpid.get(`${si.dir}\0${si.pid}`)
-        : undefined);
-    if (relayPid !== undefined) {
-      updatePortFile(relayPid, { sessionName: si.name });
-    }
+
+  // Observe-only (WS-1): surface identity disagreement; changes no routing.
+  try {
+    reportIdentityViolations({
+      sessions: getSessions(),
+      topics: getTopicStore().topics,
+      portFiles,
+    });
+  } catch (err) {
+    warn(`identity: invariant check failed: ${err}`);
+  }
+
+  // Shadow-only (WS-3b): bidirectional — also flag registry ids the resolver doesn't reproduce.
+  try {
+    shadowCompareIdentities({
+      portFiles,
+      topics: getTopicStore().topics,
+      registrySessions: getSessions()
+        .filter((s) => s.source === "desktop" && s.id && s.pid)
+        .map((s) => ({ claudePid: s.pid!, sessionId: s.id })),
+    });
+  } catch (err) {
+    warn(`identity-shadow: comparison failed: ${err}`);
   }
 
   // Validate active session

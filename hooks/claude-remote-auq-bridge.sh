@@ -22,13 +22,30 @@ if [ "$TOOL" != "AskUserQuestion" ]; then
   exit 0
 fi
 
+LOG_DIR="${HOME}/.claude/logs"
+mkdir -p "$LOG_DIR"
+
+# Make every AUQ hook invocation visible so silent bails (missing secret, no
+# tmux pane) can be told apart from successful worker spawns. Without this, a
+# session that never bridges looks identical to one that does. Guarded so the
+# logging never aborts the hook itself.
+log_hook() {
+  {
+    local cwd
+    cwd=$(printf '%s' "$INPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cwd",""))' 2>/dev/null || true)
+    printf 'auq-bridge-hook: %s secret=%s tmux=%s cwd=%s\n' \
+      "$1" "${RELAY_AUQ_SECRET:+set}" "${TMUX_PANE:+set}" "$cwd" \
+      >> "$LOG_DIR/auq-bridge-worker.log"
+  } 2>/dev/null || true
+}
+
 if [ -z "${RELAY_AUQ_SECRET:-}" ]; then
+  log_hook "bailed: no RELAY_AUQ_SECRET"
   emit_allow
   exit 0
 fi
 
-LOG_DIR="${HOME}/.claude/logs"
-mkdir -p "$LOG_DIR"
+log_hook "spawning worker"
 WORKER="${HOME}/.claude/hooks/claude-remote-auq-worker.ts"
 TMUX_PANE="${TMUX_PANE:-}"
 
