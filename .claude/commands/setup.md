@@ -32,10 +32,12 @@ This is what lets the bot message an already-running desktop session.
 
 - Check if registered: `claude mcp list 2>/dev/null | grep channel-relay`. If present, say so and skip the add.
 - If absent: `claude mcp add -s user channel-relay -- bun run <REPO_ROOT>/src/mcp/channel-relay/server.ts` (use the actual absolute repo path).
-- **Ask** whether to add a `cc` shell alias for the launch flags. If yes: detect the shell rc (`~/.zshrc`, `~/.bashrc`, or `~/.bash_profile` per `$SHELL`), skip if a `cc` alias already exists, else append:
-  `alias cc='claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay'`
-  and tell them to `source` it.
-  - **Flag the trade-off when asking:** this alias permanently runs Claude with `--dangerously-skip-permissions` (no permission prompts) — convenient for the relay flow, but any prompt-injection in a `cc` session then has unrestricted tool access. Let the user opt in knowingly.
+- **Ask** whether to add a shell alias for the launch flags, and if so **which variant** — plain or tmux-wrapped. Detect the shell rc (`~/.zshrc`, `~/.bashrc`, or `~/.bash_profile` per `$SHELL`), skip if the chosen alias name already exists, else append it and tell them to `source` it.
+  - **Plain `cc`** — simplest:
+    `alias cc='claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay'`
+  - **tmux-wrapped `cct`** (recommended if they want reliable `/clear` · `/compact` · `/context`) — runs the session inside tmux on the dedicated `claude` socket using the shipped config, so the bot injects those client commands via `tmux send-keys` (accessibility-free, works in any terminal incl. Cursor) instead of the fragile AX/cmux fallbacks. This also satisfies the AUQ bridge's tmux dependency (step 4). Requires `tmux` (`command -v tmux` — warn if missing). Use the **absolute** conf path for the user's clone:
+    `alias cct='tmux -L claude -f <REPO_ROOT>/scripts/claude-tmux.conf new-session "claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay"'`
+  - **Flag the trade-off when asking:** either alias permanently runs Claude with `--dangerously-skip-permissions` (no permission prompts) — convenient for the relay flow, but any prompt-injection in such a session then has unrestricted tool access. Let the user opt in knowingly.
 
 ## 4. Advanced hooks (optional, recommended)
 
@@ -43,7 +45,7 @@ This is what lets the bot message an already-running desktop session.
 - If yes:
   - Run `bun run install-hooks` (symlinks the hook scripts **and** idempotently registers both `~/.claude/settings.json` entries, backing it up first).
   - For the AskUserQuestion bridge, run `bun run setup-auq-secret` (writes the same secret to `.env` and the shell profile). Tell the user to `source` the profile it edited.
-  - The AUQ bridge also needs **tmux**, **Claude Code ≥ v2.1.85**, and the bot running on the **same host** (it calls `localhost`). Check `command -v tmux` and warn if missing — the bridge is inert without these, so the `/clear` follow still works either way. See [docs/advanced-hooks.md](../../docs/advanced-hooks.md).
+  - The AUQ bridge also needs **tmux**, **Claude Code ≥ v2.1.85**, and the bot running on the **same host** (it calls `localhost`). Check `command -v tmux` and warn if missing — the bridge is inert without these, so the `/clear` follow still works either way. If the user took the tmux-wrapped `cct` alias in step 3, this tmux dependency is already covered. See [docs/advanced-hooks.md](../../docs/advanced-hooks.md).
   - Note: hooks have **no hot-reload** — they must restart their hand-started Claude sessions to load them. The bot reloads itself.
 
 ## 5. Forum group (manual — Telegram app)
@@ -61,7 +63,7 @@ Setup can't do this part; hand it off clearly:
 Print what was done vs. skipped, then the start sequence:
 
 1. `bun run start` (the bot).
-2. In any project, launch a session with `cc` (or the full flags).
+2. In any project, launch a session with `cc` (or `cct` for tmux-backed injection, or the full flags).
 3. On Telegram, `/list` shows the session with 📡 — message it from its topic.
 
 List anything still pending (required `.env` vars not provided, forum group not yet created, profile not yet `source`d, sessions needing restart for hooks).
