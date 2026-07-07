@@ -26,6 +26,8 @@ export interface SessionRecord {
 
 export type Resolution =
   | { status: "resolved"; record: SessionRecord }
+  // P1: never produced by resolveSession (every branch returns resolved/miss).
+  // Scaffolding for P2, where a known-but-not-yet-live launchId resolves to pending.
   | { status: "pending" }
   | { status: "miss" };
 

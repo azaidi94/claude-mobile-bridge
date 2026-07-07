@@ -302,7 +302,9 @@ async function scanSessions(): Promise<{
   const portFiles = await scanPortFiles(true);
   setCurrentSnapshot({
     aliveRelays: portFiles,
-    topics: getTopicStore().topics,
+    // Shallow-copy: the store replaces this array on remove but mutates it in
+    // place on add, so a stored reference wouldn't be a true point-in-time snapshot.
+    topics: [...getTopicStore().topics],
   });
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),

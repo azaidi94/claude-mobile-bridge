@@ -529,6 +529,11 @@ const DEFAULT_CURSOR_FOCUS_CHORD = "ctrl+alt+cmd+t";
  * Used to gate Cursor injection: same-folder siblings live as indistinguishable
  * tabs in one Cursor window (identical titles, no pid→tab mapping), so we refuse
  * rather than risk injecting into the wrong one.
+ *
+ * Intentionally counts ALL cwd-sharing sessions, not just Cursor-hosted ones: a
+ * non-Cursor sibling (iTerm/tmux) in the same cwd will still make Cursor injection
+ * refuse. That's over-conservative (the window-title match would be unambiguous)
+ * but fails closed, which is the right trade for a "type into whatever's focused" path.
  */
 export async function countSessionsInDir(
   dir: string,

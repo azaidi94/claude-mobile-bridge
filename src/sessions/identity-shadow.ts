@@ -1,7 +1,12 @@
-import { warn } from "../logger";
+import { info, warn } from "../logger";
 import { isProcessAlive, type PortFileData } from "../relay/discovery";
 import type { TopicMapping } from "../topics/topic-store";
 import { resolveIdentities } from "./identity";
+import {
+  resolveSession,
+  type Handle,
+  type ResolveSnapshot,
+} from "./resolve-session";
 
 export function shadowCompareIdentities(
   input: {
@@ -61,13 +66,6 @@ export function shadowCompareIdentities(
   }
   return { compared, divergences };
 }
-
-import {
-  resolveSession,
-  type Handle,
-  type ResolveSnapshot,
-} from "./resolve-session";
-import { info } from "../logger";
 
 type ShadowEvent = {
   site: string;
