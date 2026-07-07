@@ -79,4 +79,4 @@ export { handleRalph } from "./ralph";
 
 export { handlePrompts } from "./prompts";
 
-export { handleClear, handleCompact } from "./inject";
+export { handleClear, handleCompact, handleContext } from "./inject";

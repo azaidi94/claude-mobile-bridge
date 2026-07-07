@@ -88,6 +88,19 @@ function writePortFile(port: number): void {
     ...(process.env.CMUX_WORKSPACE_ID
       ? { cmuxWorkspaceId: process.env.CMUX_WORKSPACE_ID }
       : {}),
+    // tmux injects TMUX_PANE (the pane id) and TMUX (socket,pid,session) into
+    // every pane's shell; inherited down to claude and this relay child. Lets
+    // the bot inject /clear & /compact via `tmux send-keys` — accessibility- and
+    // focus-free, works in any host terminal (Cursor included). Omitted outside
+    // tmux. TMUX's first comma-field is the socket path.
+    ...(process.env.TMUX_PANE
+      ? {
+          tmuxPane: process.env.TMUX_PANE,
+          ...(process.env.TMUX
+            ? { tmuxSocket: process.env.TMUX.split(",")[0] }
+            : {}),
+        }
+      : {}),
   };
   writeFileSync(PORT_FILE, JSON.stringify(data, null, 2));
 }
@@ -540,9 +553,9 @@ const mcp = new Server(
     },
     instructions: [
       'Telegram messages arrive as <channel source="channel-relay" chat_id="..." request_id="..." ...>.',
-      "Reply using the reply tool — pass BOTH chat_id AND request_id from the channel tag.",
-      "Terminal input has no <channel> tag — respond normally as text. Do NOT use the reply tool for terminal input.",
-      "The reply tool call IS the response to a relay message. Do NOT also emit the same text (or a paraphrase) as terminal output afterward — that produces a duplicate. Terminal text after a relay reply should only appear if it conveys genuinely new info for the local user.",
+      "Respond to a channel message by writing your normal answer as terminal text — the bot streams your turn's output to the ORIGINATING topic (the request's own topic) AND it renders in the desktop terminal, so the conversation stays visible on both surfaces and context follows the user when they switch between phone and terminal. Do NOT call the reply tool for an ordinary text answer.",
+      "Use the reply tool ONLY to send attachments — file paths via `files`, or a markdown→PDF via `send_as_pdf`. When you do, pass BOTH chat_id AND request_id from the channel tag. If you have nothing to attach, answer as terminal text instead.",
+      "Because your terminal text already streams to the origin topic, do NOT ALSO call the reply tool with the same text — that double-posts on Telegram. Terminal input (no <channel> tag) — respond as text exactly as normal.",
       "IMPORTANT: Route multiple-choice questions to the surface the user is CURRENTLY on, decided per-message from their most recent message — NOT from whether a chat_id was ever seen this session. If their latest message carries a <channel source=\"channel-relay\" …> tag (they're on Telegram), you MUST use the ask_remote tool, never native AskUserQuestion: native AUQ can only be answered at the desktop terminal and would strand a phone user with an unanswerable card while the two surfaces drift out of sync; ask_remote surfaces tappable buttons on their phone and returns the chosen option as the tool result. If their latest message has NO channel tag (they're at the terminal), use native AskUserQuestion — do NOT push the question to Telegram just because an earlier message in this session came from there. In short: latest message via channel-relay → ask_remote; latest message from terminal → native AskUserQuestion.",
     ].join("\n"),
   },

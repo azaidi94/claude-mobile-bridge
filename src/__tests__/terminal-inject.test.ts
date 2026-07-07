@@ -14,6 +14,11 @@ import {
   buildCmuxInjectArgvs,
   buildTtyWriteScript,
   buildGhosttyKeystrokeScript,
+  buildCursorInjectScript,
+  parseChord,
+  resolveTmuxTarget,
+  buildTmuxSendArgs,
+  countSessionsInDir,
   ttyChainForPid,
   resolveCmuxWorkspace,
   detectTerminalApp,
@@ -160,6 +165,173 @@ describe("buildGhosttyKeystrokeScript", () => {
   });
 });
 
+describe("parseChord", () => {
+  test("parses a full modifier chord into AppleScript form", () => {
+    expect(parseChord("ctrl+alt+cmd+t")).toEqual({
+      key: "t",
+      modifiers: ["control down", "option down", "command down"],
+    });
+  });
+
+  test("accepts modifier aliases and a bare key", () => {
+    expect(parseChord("control+option+command+j")).toEqual({
+      key: "j",
+      modifiers: ["control down", "option down", "command down"],
+    });
+    expect(parseChord("k")).toEqual({ key: "k", modifiers: [] });
+  });
+
+  test("returns null for empty/undefined", () => {
+    expect(parseChord("")).toBeNull();
+    expect(parseChord(undefined)).toBeNull();
+  });
+});
+
+describe("buildCursorInjectScript", () => {
+  const chord = parseChord("ctrl+alt+cmd+t");
+
+  test("targets the window by folder title and returns OK on success", () => {
+    const s = buildCursorInjectScript("saas-builder", "/clear", {
+      focusChord: chord,
+    });
+    // window match on the folder basename
+    expect(s).toContain(`(name of w) ends with "saas-builder"`);
+    // sentinels for the ambiguous / not-found cases
+    expect(s).toContain(`"ERR_NO_WINDOW"`);
+    expect(s).toContain(`"ERR_MULTI_WINDOW"`);
+    // verify-before-type guards
+    expect(s).toContain(`"ERR_RAISE_FAILED"`);
+    expect(s).toContain(`"ERR_NOT_TERMINAL_FOCUSED"`);
+    // only types when a terminal actually holds focus
+    expect(s).toContain(`does not start with "Terminal "`);
+    // sends the focus chord before typing
+    expect(s).toContain(
+      `keystroke "t" using {control down, option down, command down}`,
+    );
+    // types the text and submits with Return
+    expect(s).toContain(`keystroke "/clear"`);
+    expect(s).toContain(`key code 36`);
+    expect(s).toContain(`return "OK"`);
+  });
+
+  test("no focus chord → no focus keystroke (best-effort)", () => {
+    const s = buildCursorInjectScript("proj", "/clear", { focusChord: null });
+    expect(s).not.toContain(`using {`);
+    expect(s).toContain(`keystroke "/clear"`);
+  });
+
+  test("submit=false types the text but omits the Return key (smoke test)", () => {
+    const s = buildCursorInjectScript("proj", "marker", {
+      submit: false,
+      focusChord: null,
+    });
+    expect(s).toContain(`keystroke "marker"`);
+    expect(s).not.toContain(`key code 36`);
+  });
+
+  test("escapes double quotes in folder and text", () => {
+    const s = buildCursorInjectScript(`fo"o`, `ba"r`, { focusChord: null });
+    expect(s).toContain(`fo\\"o`);
+    expect(s).toContain(`ba\\"r`);
+  });
+});
+
+describe("resolveTmuxTarget", () => {
+  test("prefers the pane+socket from the exact sessionId match", async () => {
+    const scan = async () => [
+      portFile({
+        sessionId: "sid-1",
+        tmuxPane: "%3",
+        tmuxSocket: "/tmp/tmux-501/claude",
+      }),
+    ];
+    expect(await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan)).toEqual(
+      {
+        pane: "%3",
+        socket: "/tmp/tmux-501/claude",
+      },
+    );
+  });
+
+  test("recovers by unique cwd match when the sessionId has drifted", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "old", cwd: "/tmp", tmuxPane: "%7" }),
+    ];
+    expect(await resolveTmuxTarget(sctx({ sessionId: "new" }), scan)).toEqual({
+      pane: "%7",
+      socket: undefined,
+    });
+  });
+
+  test("does NOT cwd-match when two panes share the cwd (ambiguous)", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "a", cwd: "/tmp", tmuxPane: "%1" }),
+      portFile({ sessionId: "b", cwd: "/tmp", tmuxPane: "%2" }),
+    ];
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "new" }), scan),
+    ).toBeNull();
+  });
+
+  test("returns null when the session isn't under tmux", async () => {
+    const scan = async () => [portFile({ sessionId: "sid-1" })]; // no tmuxPane
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
+    ).toBeNull();
+  });
+
+  test("refuses (does NOT borrow a sibling's pane) when the exact session has no pane", async () => {
+    // The exact-id session is genuinely not under tmux; an unrelated sibling in
+    // the same cwd IS. The cwd fallback must NOT fire here — injecting would land
+    // in the sibling's pane. Positive identity wins → null (refuse/fail over).
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", cwd: "/tmp" }), // this session, no pane
+      portFile({ sessionId: "sib", cwd: "/tmp", tmuxPane: "%9" }), // sibling
+    ];
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
+    ).toBeNull();
+  });
+});
+
+describe("buildTmuxSendArgs", () => {
+  test("sends literal text then a separate Enter, targeting the pane on its socket", () => {
+    expect(
+      buildTmuxSendArgs({ pane: "%3", socket: "/tmp/s" }, "/clear"),
+    ).toEqual([
+      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "-l", "/clear"],
+      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "Enter"],
+    ]);
+  });
+
+  test("omits -S when no socket is known (default server)", () => {
+    expect(buildTmuxSendArgs({ pane: "%9" }, "/compact")).toEqual([
+      ["tmux", "send-keys", "-t", "%9", "-l", "/compact"],
+      ["tmux", "send-keys", "-t", "%9", "Enter"],
+    ]);
+  });
+});
+
+describe("countSessionsInDir", () => {
+  test("counts only port files whose cwd matches", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "a", cwd: "/tmp" }),
+      portFile({ sessionId: "b", cwd: "/tmp" }),
+      portFile({ sessionId: "c", cwd: "/other" }),
+    ];
+    expect(await countSessionsInDir("/tmp", scan)).toBe(2);
+    expect(await countSessionsInDir("/other", scan)).toBe(1);
+    expect(await countSessionsInDir("/nope", scan)).toBe(0);
+  });
+
+  test("fails closed (reports >1) when the scan throws", async () => {
+    const scan = async () => {
+      throw new Error("boom");
+    };
+    expect(await countSessionsInDir("/tmp", scan)).toBeGreaterThan(1);
+  });
+});
+
 describe("resolveCmuxWorkspace", () => {
   beforeEach(() => _resetCmuxRegistry());
 
@@ -199,6 +371,20 @@ describe("resolveCmuxWorkspace", () => {
     expect(
       await resolveCmuxWorkspace(sctx({ sessionId: "new-id" }), scan),
     ).toBeNull();
+  });
+
+  test("does NOT borrow a sibling's workspace id when the exact session lacks one", async () => {
+    // Exact-id session has no workspace id; a sibling in the same cwd does. The
+    // cwd scan must not fire on a positive-identity match — return the
+    // spawn-registry ref for THIS session, never the sibling's live id.
+    rememberCmuxWorkspace("/tmp", "OK workspace:5");
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", cwd: "/tmp" }), // this session, no id
+      portFile({ sessionId: "sib", cwd: "/tmp", cmuxWorkspaceId: "WS-SIB" }),
+    ];
+    expect(await resolveCmuxWorkspace(sctx({ sessionId: "sid-1" }), scan)).toBe(
+      "workspace:5",
+    );
   });
 
   test("returns null (never an empty ref) when nothing is known", async () => {
@@ -269,6 +455,30 @@ describe("detectTerminalApp", () => {
         ppid: 1,
         comm: "/Applications/cmux.app/Contents/Resources/ghostty/bin/cmux",
       },
+    };
+    expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cmux");
+  });
+
+  test("detects Cursor's integrated terminal from its pty-host ancestry", () => {
+    // Observed ancestry: claude → bash → Cursor Helper: terminal pty-host → Cursor
+    const tree: Record<number, ProcRow> = {
+      10: { ppid: 9, comm: "claude" },
+      9: { ppid: 8, comm: "/opt/homebrew/bin/bash" },
+      8: {
+        ppid: 7,
+        comm: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/Contents/MacOS/Cursor Helper (Plugin)",
+      },
+      7: { ppid: 1, comm: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+    };
+    expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cursor");
+  });
+
+  test("prefers cmux over cursor when a session runs in cmux inside Cursor", () => {
+    // cmux is matched before cursor, so a cmux host wins even under Cursor.
+    const tree: Record<number, ProcRow> = {
+      10: { ppid: 9, comm: "claude" },
+      9: { ppid: 8, comm: "/Applications/cmux.app/Contents/MacOS/cmux" },
+      8: { ppid: 1, comm: "/Applications/Cursor.app/Contents/MacOS/Cursor" },
     };
     expect(detectTerminalApp(10, (p) => tree[p] ?? null)).toBe("cmux");
   });

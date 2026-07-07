@@ -29,6 +29,7 @@ import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
 import { shadowCompareIdentities } from "./identity-shadow";
 import { resolveIdentities, type ResolvedIdentity } from "./identity";
+import { setCurrentSnapshot } from "./resolve-session";
 
 const execAsync = promisify(exec);
 
@@ -299,6 +300,12 @@ async function scanSessions(): Promise<{
 
   // Scan port files early for disambiguation
   const portFiles = await scanPortFiles(true);
+  setCurrentSnapshot({
+    aliveRelays: portFiles,
+    // Shallow-copy: the store replaces this array on remove but mutates it in
+    // place on add, so a stored reference wouldn't be a true point-in-time snapshot.
+    topics: [...getTopicStore().topics],
+  });
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
   );

@@ -1,18 +1,27 @@
 import type { SessionInfo } from "./types";
 import type { TopicMapping } from "../topics/topic-store";
 import type { PortFileData } from "../relay/discovery";
+import { resolveSession, type ResolveSnapshot } from "./resolve-session";
 
 export type IdentityViolation = {
   kind:
     | "duplicate_topic_for_session"
     | "store_disagreement"
     | "missing_session_id"
-    | "ambiguous_siblings";
+    | "ambiguous_siblings"
+    | "resolveSession_topic_disagree";
   sessionId?: string;
   sessionName?: string;
   cwd?: string;
   detail: string;
 };
+
+/** Minimal shape of a watcher-registry entry needed by the resolveSession invariant. */
+export interface RegistryEntry {
+  id: string; // authoritative sessionId; "" = not yet authoritative (skipped)
+  claudePid: number;
+  topicId: number | null;
+}
 
 export function checkIdentityInvariants(input: {
   sessions: SessionInfo[];
@@ -94,5 +103,63 @@ export function checkIdentityInvariants(input: {
     }
   }
 
+  return out;
+}
+
+/**
+ * P1 Task N+1 (regression harness): for every live authoritative registry
+ * entry, `resolveSession({by:'sessionId', sessionId})` must resolve to a
+ * record whose topicId/claudePid match the watcher registry. Observe-only —
+ * never throws into the caller and never changes routing; it exists purely
+ * to catch future drift between resolveSession and the registry.
+ */
+export function checkResolveSessionInvariant(input: {
+  registry: ReadonlyArray<RegistryEntry>;
+  snapshot: ResolveSnapshot;
+}): IdentityViolation[] {
+  const out: IdentityViolation[] = [];
+  for (const entry of input.registry) {
+    if (!entry.id) continue; // not yet authoritative — nothing to check
+
+    let resolution: ReturnType<typeof resolveSession>;
+    try {
+      resolution = resolveSession(
+        { by: "sessionId", sessionId: entry.id },
+        input.snapshot,
+      );
+    } catch (err) {
+      out.push({
+        kind: "resolveSession_topic_disagree",
+        sessionId: entry.id,
+        detail: `resolveSession threw for sessionId ${entry.id}: ${err}`,
+      });
+      continue;
+    }
+
+    if (resolution.status !== "resolved") {
+      out.push({
+        kind: "resolveSession_topic_disagree",
+        sessionId: entry.id,
+        detail: `resolveSession({by:'sessionId', sessionId:${entry.id}}) did not resolve (status=${resolution.status}) though the registry has a live authoritative entry (claudePid=${entry.claudePid}, topicId=${entry.topicId ?? "∅"})`,
+      });
+      continue;
+    }
+
+    const { record } = resolution;
+    if (record.topicId !== entry.topicId) {
+      out.push({
+        kind: "resolveSession_topic_disagree",
+        sessionId: entry.id,
+        detail: `sessionId ${entry.id}: resolveSession topicId=${record.topicId ?? "∅"} disagrees with registry topicId=${entry.topicId ?? "∅"}`,
+      });
+    }
+    if (record.claudePid !== entry.claudePid) {
+      out.push({
+        kind: "resolveSession_topic_disagree",
+        sessionId: entry.id,
+        detail: `sessionId ${entry.id}: resolveSession claudePid=${record.claudePid} disagrees with registry claudePid=${entry.claudePid}`,
+      });
+    }
+  }
   return out;
 }

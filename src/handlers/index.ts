@@ -26,6 +26,7 @@ export {
   handlePrompts,
   handleClear,
   handleCompact,
+  handleContext,
   handleSessions,
   offlineSessionCache,
   handlePwd,

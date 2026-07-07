@@ -28,6 +28,7 @@
  */
 
 import { realpathSync } from "fs";
+import { basename } from "path";
 import type { TerminalApp } from "../../config";
 import { getTerminal } from "../../settings";
 import { debug, warn } from "../../logger";
@@ -177,6 +178,121 @@ export function buildGhosttyKeystrokeScript(text: string): string {
   ].join("\n");
 }
 
+/** A keystroke chord parsed into AppleScript form: a key + System Events modifiers. */
+export interface ParsedChord {
+  key: string;
+  /** e.g. ["control down", "option down", "command down"] */
+  modifiers: string[];
+}
+
+/**
+ * Parse a chord like "ctrl+alt+cmd+t" into a key + AppleScript modifier list.
+ * Returns null for empty/keyless input (caller then skips the focus step).
+ */
+export function parseChord(raw: string | undefined): ParsedChord | null {
+  if (!raw) return null;
+  const parts = raw
+    .split("+")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const key = parts[parts.length - 1]!;
+  const mods: string[] = [];
+  for (const p of parts.slice(0, -1)) {
+    if (p === "ctrl" || p === "control") mods.push("control down");
+    else if (p === "alt" || p === "opt" || p === "option")
+      mods.push("option down");
+    else if (p === "cmd" || p === "command" || p === "meta")
+      mods.push("command down");
+    else if (p === "shift") mods.push("shift down");
+  }
+  if (!key || key.length === 0) return null;
+  return { key, modifiers: mods };
+}
+
+/**
+ * Build the System Events script that types `text` into the Cursor integrated
+ * terminal for the session whose workspace folder basename is `folderName`.
+ *
+ * Cursor can't be driven like iTerm2/Terminal (xterm.js, no tty-targeted
+ * AppleScript, no send-to-terminal CLI). And its terminal is a canvas, so it's
+ * NOT exposed as an accessibility element unless focused + in screen-reader
+ * mode — we can't locate it via AX. Instead we target the *window* by its title
+ * (`… — <folderName>`), raise it, and rely on keystrokes going to whatever is
+ * focused. To make "whatever is focused" reliably be the terminal (not an
+ * editor, and to reveal a hidden panel), we first send `focusChord` — a chord
+ * the user binds to `workbench.action.terminal.focus` in Cursor. Without that
+ * binding the chord is a harmless no-op and this degrades to best-effort (works
+ * only when the terminal already has focus).
+ *
+ * Window targeting is reliable ONLY when the folder hosts a single session —
+ * the caller must gate on that first. Returns a sentinel:
+ *   OK | ERR_NO_CURSOR | ERR_NO_WINDOW | ERR_MULTI_WINDOW | ERR_RAISE_FAILED |
+ *   ERR_NOT_TERMINAL_FOCUSED
+ *
+ * TWO safety gates, both types-nothing-on-failure (a clean refusal always beats
+ * a mis-injection): (1) the raised window must be frontmost; (2) after the focus
+ * chord, the process's focused UI element must be a terminal (its description
+ * starts with "Terminal ") — an editor reports "The editor is not accessible…",
+ * so if the chord is unbound and an editor has focus we refuse instead of typing
+ * `/clear` into a source file. `submit` appends Return (false = leave text
+ * unsent, used by the non-destructive smoke test).
+ */
+export function buildCursorInjectScript(
+  folderName: string,
+  text: string,
+  opts: { submit?: boolean; focusChord?: ParsedChord | null } = {},
+): string {
+  const { submit = true, focusChord = null } = opts;
+  const f = escapeAppleScriptDoubleQuoted(folderName);
+  const t = escapeAppleScriptDoubleQuoted(text);
+  const focusLines =
+    focusChord && focusChord.key
+      ? [
+          `    keystroke "${escapeAppleScriptDoubleQuoted(focusChord.key)}"${
+            focusChord.modifiers.length
+              ? ` using {${focusChord.modifiers.join(", ")}}`
+              : ""
+          }`,
+          `    delay 0.2`,
+        ]
+      : [];
+  return [
+    `tell application "System Events"`,
+    `  if not (exists process "Cursor") then return "ERR_NO_CURSOR"`,
+    `  tell process "Cursor"`,
+    `    set matches to {}`,
+    `    repeat with w in windows`,
+    `      try`,
+    `        if (name of w) ends with "${f}" then set end of matches to w`,
+    `      end try`,
+    `    end repeat`,
+    `    if (count of matches) is 0 then return "ERR_NO_WINDOW"`,
+    `    if (count of matches) > 1 then return "ERR_MULTI_WINDOW"`,
+    `    set frontmost to true`,
+    `    perform action "AXRaise" of (item 1 of matches)`,
+    `    delay 0.3`,
+    `    set fw to window 1`,
+    `    set okFront to false`,
+    `    try`,
+    `      if (name of fw) ends with "${f}" then set okFront to true`,
+    `    end try`,
+    `    if not okFront then return "ERR_RAISE_FAILED"`,
+    ...focusLines,
+    // Safety gate: only type if a terminal actually holds keyboard focus.
+    `    set focDesc to ""`,
+    `    try`,
+    `      set focDesc to description of (value of attribute "AXFocusedUIElement")`,
+    `    end try`,
+    `    if focDesc does not start with "Terminal " then return "ERR_NOT_TERMINAL_FOCUSED"`,
+    `    keystroke "${t}"`,
+    ...(submit ? [`    key code 36`] : []),
+    `  end tell`,
+    `end tell`,
+    `return "OK"`,
+  ].join("\n");
+}
+
 // ── tty resolution ──────────────────────────────────────────────────────
 
 /** One `ps` row: a process's parent pid and controlling tty (or null if none). */
@@ -263,6 +379,11 @@ export function detectTerminalApp(
     if (c.includes("cmux")) return "cmux";
     if (c.includes("iterm")) return "iterm2";
     if (c.includes("ghostty")) return "ghostty";
+    // Cursor hosts the session in its integrated terminal; its ancestry runs
+    // through `Cursor Helper: terminal pty-host` → `…/Cursor.app/…/Cursor`,
+    // both of which lowercase-contain "cursor". Match before the generic
+    // Terminal.app check (nothing else contains "cursor", so order is safe).
+    if (c.includes("cursor")) return "cursor";
     if (c.includes("terminal.app") || c.endsWith("/terminal"))
       return "terminal";
     cur = row.ppid;
@@ -309,21 +430,202 @@ export async function resolveCmuxWorkspace(
       sessionDir: sctx.sessionDir,
       claudePid: sctx.sessionPid,
     });
-    if (byId?.cmuxWorkspaceId) return byId.cmuxWorkspaceId;
-    // selectRelayTarget short-circuits on a sessionId miss without trying cwd,
-    // so do an explicit cwd fallback — recovers the durable workspace id when
-    // the port file's sessionId has drifted (e.g. a /clear changed it). Gated
-    // on a UNIQUE dir match carrying a workspace id, so a non-cmux session (no
-    // cmuxWorkspaceId) or an ambiguous dir can never resolve to a wrong target.
-    const dir = canonical(sctx.sessionDir);
-    const byDir = alive.filter(
-      (pf) => canonical(pf.cwd) === dir && pf.cmuxWorkspaceId,
-    );
-    if (byDir.length === 1) return byDir[0]!.cmuxWorkspaceId!;
+    if (byId) {
+      // Positive identity (matched by sessionId or pid): trust ONLY this
+      // session's own workspace id. If it has none, don't scan the live port
+      // files by cwd — that could grab a same-cwd sibling's workspace. Fall
+      // through to the spawn-registry, which is this bot's own record for the
+      // dir (covers sessions whose relay predates workspace-id recording).
+      if (byId.cmuxWorkspaceId) return byId.cmuxWorkspaceId;
+    } else {
+      // byId is null → selectRelayTarget short-circuited on a sessionId miss
+      // (e.g. a /clear changed the id). Recover the durable workspace id via a
+      // UNIQUE same-cwd live match; an ambiguous dir resolves to null so
+      // siblings never mis-target.
+      const dir = canonical(sctx.sessionDir);
+      const byDir = alive.filter(
+        (pf) => canonical(pf.cwd) === dir && pf.cmuxWorkspaceId,
+      );
+      if (byDir.length === 1) return byDir[0]!.cmuxWorkspaceId!;
+    }
   } catch (err) {
     debug(`inject: port-file scan failed: ${err}`);
   }
   return getCmuxWorkspace(sctx.sessionDir) ?? null;
+}
+
+/** A tmux injection target: the pane id, and the socket path if non-default. */
+export interface TmuxTarget {
+  pane: string;
+  socket?: string;
+}
+
+/**
+ * Resolve the tmux pane (+ socket) for `sctx` from the relay port files, or null
+ * if the session isn't running under tmux. Mirrors `resolveCmuxWorkspace`:
+ * exact-sessionId match first, then a UNIQUE same-cwd match carrying a pane (so
+ * a drifted sessionId still resolves, but ambiguous siblings never mis-target).
+ */
+export async function resolveTmuxTarget(
+  sctx: SessionContext,
+  scan: () => Promise<PortFileData[]> = scanPortFiles,
+): Promise<TmuxTarget | null> {
+  try {
+    const alive = await scan();
+    const byId = selectRelayTarget(alive, {
+      sessionId: sctx.sessionId,
+      sessionDir: sctx.sessionDir,
+      claudePid: sctx.sessionPid,
+    });
+    // Positive identity (matched by sessionId or pid): trust ONLY this session's
+    // own pane. If it has none, this session is genuinely not under tmux — refuse
+    // rather than fall through to the cwd scan, which could grab a same-cwd
+    // sibling's pane and type into the wrong terminal.
+    if (byId)
+      return byId.tmuxPane
+        ? { pane: byId.tmuxPane, socket: byId.tmuxSocket }
+        : null;
+    // byId is null → the port file's sessionId drifted (e.g. a /clear changed
+    // it). Recover via a UNIQUE same-cwd match carrying a pane; an ambiguous dir
+    // resolves to null so siblings never mis-target.
+    const dir = canonical(sctx.sessionDir);
+    const byDir = alive.filter(
+      (pf) => canonical(pf.cwd) === dir && pf.tmuxPane,
+    );
+    if (byDir.length === 1)
+      return { pane: byDir[0]!.tmuxPane!, socket: byDir[0]!.tmuxSocket };
+  } catch (err) {
+    debug(`inject: tmux target scan failed: ${err}`);
+  }
+  return null;
+}
+
+/**
+ * Two argv batches to type `text` then submit it in a tmux pane. `-l` sends the
+ * text literally so a leading `/` and special chars aren't parsed as key names;
+ * `Enter` is a separate send-keys so it's interpreted as the Return key.
+ */
+export function buildTmuxSendArgs(
+  target: TmuxTarget,
+  text: string,
+): string[][] {
+  const base = target.socket ? ["tmux", "-S", target.socket] : ["tmux"];
+  return [
+    [...base, "send-keys", "-t", target.pane, "-l", text],
+    [...base, "send-keys", "-t", target.pane, "Enter"],
+  ];
+}
+
+/**
+ * Default chord for focusing the Cursor integrated terminal before injecting.
+ * The user must bind THIS chord to `workbench.action.terminal.focus` in Cursor's
+ * keybindings.json for the focus guard to work; override via CURSOR_FOCUS_CHORD.
+ * Unbound → the chord is a harmless no-op and inject falls back to best-effort.
+ */
+const DEFAULT_CURSOR_FOCUS_CHORD = "ctrl+alt+cmd+t";
+
+/**
+ * Count how many live relay (Claude Code) sessions share `dir` as their cwd.
+ * Used to gate Cursor injection: same-folder siblings live as indistinguishable
+ * tabs in one Cursor window (identical titles, no pid→tab mapping), so we refuse
+ * rather than risk injecting into the wrong one.
+ *
+ * Intentionally counts ALL cwd-sharing sessions, not just Cursor-hosted ones: a
+ * non-Cursor sibling (iTerm/tmux) in the same cwd will still make Cursor injection
+ * refuse. That's over-conservative (the window-title match would be unambiguous)
+ * but fails closed, which is the right trade for a "type into whatever's focused" path.
+ */
+export async function countSessionsInDir(
+  dir: string,
+  scan: () => Promise<PortFileData[]> = scanPortFiles,
+): Promise<number> {
+  const canon = canonical(dir);
+  try {
+    const files = await scan();
+    return files.filter((pf) => canonical(pf.cwd) === canon).length;
+  } catch {
+    // Scan failure → treat as "unknown, not provably safe": report >1 so the
+    // caller refuses rather than risk a mis-targeted inject.
+    return 2;
+  }
+}
+
+/**
+ * Inject `text` into a Cursor-hosted session's integrated terminal. Only works
+ * when the session is the sole occupant of its workspace folder (so the window
+ * title uniquely identifies it); otherwise refuses with a clear message. See
+ * `buildCursorInjectScript` for the targeting/safety mechanism.
+ */
+async function injectIntoCursor(
+  sctx: SessionContext,
+  text: string,
+): Promise<InjectResult> {
+  const app: TerminalApp = "cursor";
+  const folder = basename(canonical(sctx.sessionDir));
+
+  const siblings = await countSessionsInDir(sctx.sessionDir);
+  if (siblings > 1) {
+    return {
+      ok: false,
+      app,
+      reason: `${siblings} Claude sessions share this Cursor folder — can't target one. Run the command in the tab.`,
+    };
+  }
+
+  const focusChord = parseChord(
+    process.env.CURSOR_FOCUS_CHORD ?? DEFAULT_CURSOR_FOCUS_CHORD,
+  );
+  const r = runOsascript(buildCursorInjectScript(folder, text, { focusChord }));
+  if (!r.ok) {
+    warn(`inject: cursor osascript failed: ${r.stderr.slice(0, 200)}`);
+    return {
+      ok: false,
+      app,
+      reason: r.stderr.slice(0, 200) || "osascript failed.",
+    };
+  }
+  switch (r.stdout.trim()) {
+    case "OK":
+      return {
+        ok: true,
+        app,
+        note: `best-effort: sent to the Cursor window for "${folder}"`,
+      };
+    case "ERR_NO_CURSOR":
+      return { ok: false, app, reason: "Cursor isn't running." };
+    case "ERR_NO_WINDOW":
+      return {
+        ok: false,
+        app,
+        reason: `No Cursor window found for "${folder}" — is it open?`,
+      };
+    case "ERR_MULTI_WINDOW":
+      return {
+        ok: false,
+        app,
+        reason: `Multiple Cursor windows match "${folder}" — can't safely pick one.`,
+      };
+    case "ERR_RAISE_FAILED":
+      return {
+        ok: false,
+        app,
+        reason: `Couldn't bring the "${folder}" Cursor window to the front.`,
+      };
+    case "ERR_NOT_TERMINAL_FOCUSED":
+      return {
+        ok: false,
+        app,
+        reason: `Couldn't focus the terminal in the "${folder}" Cursor window (an editor had focus). Bind ${DEFAULT_CURSOR_FOCUS_CHORD} to "workbench.action.terminal.focus" in Cursor, or click the terminal, then retry.`,
+      };
+    default:
+      return {
+        ok: false,
+        app,
+        reason: r.stdout.trim()
+          ? `Unexpected Cursor response: ${r.stdout.trim().slice(0, 120)}`
+          : "No response from Cursor.",
+      };
+  }
 }
 
 /**
@@ -335,6 +637,25 @@ export async function sendKeysToSession(
   sctx: SessionContext,
   text: string,
 ): Promise<InjectResult> {
+  // Preferred path: if the session runs under tmux, inject via `tmux send-keys`.
+  // It's accessibility- and focus-free and terminal-agnostic (works in Cursor,
+  // iTerm, Ghostty…), so it wins over every host-specific fallback below.
+  const tmux = await resolveTmuxTarget(sctx);
+  if (tmux) {
+    for (const argv of buildTmuxSendArgs(tmux, text)) {
+      const r = Bun.spawnSync(argv);
+      if (r.exitCode !== 0) {
+        const err = (r.stderr ?? Buffer.alloc(0)).toString().trim();
+        return {
+          ok: false,
+          app: "tmux",
+          reason: `tmux send-keys failed (${err || "pane gone?"}).`,
+        };
+      }
+    }
+    return { ok: true, app: "tmux", note: `sent to tmux pane ${tmux.pane}` };
+  }
+
   // Route per-session: the terminal app is a global *default*, but each session
   // may run in a different app. Detect this session's actual host from its
   // process ancestry; fall back to the global setting when pid is unknown or
@@ -403,6 +724,10 @@ export async function sendKeysToSession(
       };
     }
     return { ok: true, app };
+  }
+
+  if (app === "cursor") {
+    return await injectIntoCursor(sctx, text);
   }
 
   // ghostty — no API to target a specific window, so this keystrokes into

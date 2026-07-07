@@ -16,7 +16,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
-- **Remote slash commands** — `/clear` and `/compact` typed straight into the desktop session's TUI.
+- **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI. Run the session under [tmux](#5-reliable-slash-command-injection-optional) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
 - **[Ralph loops](docs/ralph-loops.md)** — `/ralph <repo>` runs an autonomous issue-crunching loop in a desktop terminal; distilled per-iteration beats stream to a dedicated topic.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
@@ -91,13 +91,30 @@ That session now appears in `/list` with a 📡 indicator and is messageable fro
 
 That's the full setup. For optional integrations (remote-answerable questions, exact `/clear` follow, Cursor, the Mini App), see [Documentation](#documentation) below.
 
+### 5. Reliable slash-command injection (optional)
+
+`/clear`, `/compact`, and `/context` are **client** commands — the bot can't send them over the relay; it has to type them into the session's terminal. The robust way is to run the session **inside tmux**: the relay records its pane, and the bot injects with `tmux send-keys` — no macOS accessibility, no focus stealing, works in any host terminal (Cursor included).
+
+Launch the relay session inside tmux on a dedicated `claude` socket using the shipped config (run from your clone dir, or use an absolute path to `scripts/claude-tmux.conf`):
+
+```bash
+tmux -L claude -f scripts/claude-tmux.conf new-session \
+  "claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay"
+
+# or alias it (adjust the conf path to your clone):
+alias cct='tmux -L claude -f ~/Dev/claude-mobile-bridge/scripts/claude-tmux.conf new-session \
+  "claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay"'
+```
+
+Detach with `Ctrl-b d`; the session stays alive and messageable. If you don't use tmux, injection still works via fallbacks: a **Cursor** accessibility path (bind `CURSOR_FOCUS_CHORD` — default `ctrl+alt+cmd+t` — to `workbench.action.terminal.focus` in Cursor; see `.env.example`) and the cmux path. Both are more fragile than tmux and fail closed rather than risk typing into the wrong window.
+
 ## Commands
 
 | Category   | Commands                                           |
 | ---------- | -------------------------------------------------- |
 | Sessions   | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control    | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Inject     | `/clear`, `/compact`                               |
+| Inject     | `/clear`, `/compact`, `/context`                   |
 | Automation | `/ralph <path> [N]`, `/cron`                       |
 | Files      | `/pwd`, `/cd`, `/ls`                               |
 | Quota      | `/usage`                                           |

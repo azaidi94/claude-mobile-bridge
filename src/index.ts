@@ -397,6 +397,7 @@ await bot.api.setMyCommands([
   { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "clear", description: "Send /clear to the desktop session" },
   { command: "compact", description: "Send /compact to the desktop session" },
+  { command: "context", description: "Send /context to the desktop session" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);

@@ -107,6 +107,14 @@ export function buildTerminalSpawnArgs(
           `tell application "Terminal" to do script "${escapeAppleScriptDoubleQuoted(shellCommand)}"`,
         ],
       };
+    case "cursor":
+    case "tmux":
+      // Detect-only: `getTerminal()` never yields these, so unreachable in prod
+      // — the bot can't spawn a session into a Cursor window, and "tmux" only
+      // labels an inject route. Present for switch exhaustiveness.
+      return {
+        error: `${terminalApp} can't be used as a launch target for new sessions.`,
+      };
   }
 }
 

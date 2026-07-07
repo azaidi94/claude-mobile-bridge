@@ -1,7 +1,12 @@
-import { warn } from "../logger";
+import { info, warn } from "../logger";
 import { isProcessAlive, type PortFileData } from "../relay/discovery";
 import type { TopicMapping } from "../topics/topic-store";
 import { resolveIdentities } from "./identity";
+import {
+  resolveSession,
+  type Handle,
+  type ResolveSnapshot,
+} from "./resolve-session";
 
 export function shadowCompareIdentities(
   input: {
@@ -60,4 +65,57 @@ export function shadowCompareIdentities(
     }
   }
   return { compared, divergences };
+}
+
+type ShadowEvent = {
+  site: string;
+  handle: Handle;
+  current: unknown;
+  shadow: unknown;
+  reason: string;
+};
+let _shadowLog: (e: ShadowEvent) => void = (e) =>
+  info("identity-shadow: resolveSession divergence", {
+    site: e.site,
+    current: String(e.current),
+    shadow: String(e.shadow),
+    reason: e.reason,
+  });
+/** Test seam. */
+export function __setShadowLogger(fn: (e: ShadowEvent) => void): void {
+  _shadowLog = fn;
+}
+
+/** Reduce a Resolution to the scalar the call site returns (id/topic/port/null). */
+function scalar(
+  r: ReturnType<typeof resolveSession>,
+  want: "sessionId" | "topicId" | "relayPort",
+): unknown {
+  if (r.status !== "resolved") return r.status === "pending" ? undefined : null;
+  return r.record[want];
+}
+
+export function shadowResolveSession(
+  site: string,
+  currentAnswer: string | number | null,
+  handle: Handle,
+  snap: ResolveSnapshot,
+  want: "sessionId" | "topicId" | "relayPort" = "sessionId",
+): void {
+  try {
+    const shadow = scalar(resolveSession(handle, snap), want);
+    // `undefined` (pending) is not a divergence vs a transient current-null.
+    if (shadow === undefined) return;
+    if (shadow !== currentAnswer) {
+      _shadowLog({
+        site,
+        handle,
+        current: currentAnswer,
+        shadow,
+        reason: "mismatch",
+      });
+    }
+  } catch {
+    /* observe-only: never disturb the live path */
+  }
 }

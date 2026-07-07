@@ -13,6 +13,7 @@ import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 import { attachAskRemoteToRelay } from "../handlers/relay-ask";
+import { resolveSession, type Handle } from "../sessions/resolve-session";
 
 export interface PortFileData {
   port: number;
@@ -37,6 +38,17 @@ export interface PortFileData {
    * non-cmux terminals.
    */
   cmuxWorkspaceId?: string;
+  /**
+   * tmux pane id (`%N`) the claude process runs in, captured from the relay
+   * server's own environment (`$TMUX_PANE`, inherited from the tmux pane down
+   * to the claude process and its relay child). Paired with `tmuxSocket`, it
+   * lets the bot inject slash commands via `tmux -S <socket> send-keys -t
+   * <pane>` — accessibility-free, focus-free, and terminal-agnostic (works in
+   * Cursor, iTerm, Ghostty…). Absent when claude isn't running under tmux.
+   */
+  tmuxPane?: string;
+  /** tmux socket path (first field of `$TMUX`), pairs with `tmuxPane`. */
+  tmuxSocket?: string;
 }
 
 export interface RelaySelector {
@@ -379,7 +391,7 @@ function cacheKey(selector: RelaySelector): string | null {
   return null;
 }
 
-export function selectRelayTarget(
+function _selectRelayTargetImpl(
   alive: PortFileData[],
   selector: RelaySelector,
 ): PortFileData | null {
@@ -419,6 +431,47 @@ export function selectRelayTarget(
   }
 
   return null;
+}
+
+/**
+ * Migrated: id/pid/cwd matching routes through the shared `resolveSession`
+ * resolver, evaluated over the CALLER's own `alive` array (never the global
+ * watcher snapshot — the caller's set can legitimately differ from it, and
+ * resolving against the wrong set would change behavior).
+ *
+ * On a `resolved` hit, `resolveSession` operating over `alive` is guaranteed
+ * to have picked the same unique match `_selectRelayTargetImpl` would have
+ * (both require exactly one candidate for a positive-identity handle). On
+ * `miss`/`pending` — including cases the ladder itself handles but a single
+ * `Handle` can't express, e.g. a selector with both `sessionId` and
+ * `claudePid` set — we fall through to `_selectRelayTargetImpl`, which
+ * preserves the full original ladder (including its `warn()` calls) exactly.
+ */
+export function selectRelayTarget(
+  alive: PortFileData[],
+  selector: RelaySelector,
+): PortFileData | null {
+  const handle: Handle | null = selector.sessionId
+    ? { by: "sessionId", sessionId: selector.sessionId }
+    : selector.claudePid
+      ? { by: "pid", pid: selector.claudePid }
+      : selector.sessionDir
+        ? { by: "cwd", cwd: selector.sessionDir }
+        : null;
+
+  if (handle) {
+    const resolution = resolveSession(handle, {
+      aliveRelays: alive,
+      topics: [],
+    });
+    if (resolution.status === "resolved") {
+      const match = alive.find((pf) => pf.pid === resolution.record.relayPid);
+      if (match) return match;
+    }
+    // miss/pending → fall through to the preserved original ladder below.
+  }
+
+  return _selectRelayTargetImpl(alive, selector);
 }
 
 export async function getRelayDirs(): Promise<string[]> {

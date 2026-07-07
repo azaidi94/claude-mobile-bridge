@@ -66,3 +66,11 @@ export async function handleCompact(
 ): Promise<void> {
   await injectSlashCommand(ctx, sctx, "/compact", "🗜 Sent /compact.");
 }
+
+/** /context — show the desktop session's context-window usage. */
+export async function handleContext(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
+  await injectSlashCommand(ctx, sctx, "/context", "📊 Sent /context.");
+}

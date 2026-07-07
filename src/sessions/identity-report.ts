@@ -4,6 +4,7 @@ import type { SessionInfo } from "./types";
 import type { TopicMapping } from "../topics/topic-store";
 import {
   checkIdentityInvariants,
+  checkResolveSessionInvariant,
   type IdentityViolation,
 } from "./identity-invariants";
 
@@ -21,6 +22,23 @@ export function reportIdentityViolations(
     topics: input.topics,
     aliveRelays,
   });
+
+  // P1 Task N+1 (observe-only regression gate): every live authoritative
+  // desktop session's resolveSession answer must match the watcher registry.
+  const registry = input.sessions
+    .filter((s) => s.source === "desktop" && s.id && s.pid)
+    .map((s) => ({
+      id: s.id,
+      claudePid: s.pid!,
+      topicId: input.topics.find((t) => t.sessionId === s.id)?.topicId ?? null,
+    }));
+  violations.push(
+    ...checkResolveSessionInvariant({
+      registry,
+      snapshot: { aliveRelays, topics: input.topics },
+    }),
+  );
+
   for (const v of violations) {
     log(`identity: ${v.kind}`, {
       detail: v.detail,
