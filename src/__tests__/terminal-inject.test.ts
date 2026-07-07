@@ -279,6 +279,19 @@ describe("resolveTmuxTarget", () => {
       await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
     ).toBeNull();
   });
+
+  test("refuses (does NOT borrow a sibling's pane) when the exact session has no pane", async () => {
+    // The exact-id session is genuinely not under tmux; an unrelated sibling in
+    // the same cwd IS. The cwd fallback must NOT fire here — injecting would land
+    // in the sibling's pane. Positive identity wins → null (refuse/fail over).
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", cwd: "/tmp" }), // this session, no pane
+      portFile({ sessionId: "sib", cwd: "/tmp", tmuxPane: "%9" }), // sibling
+    ];
+    expect(
+      await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
+    ).toBeNull();
+  });
 });
 
 describe("buildTmuxSendArgs", () => {
@@ -358,6 +371,20 @@ describe("resolveCmuxWorkspace", () => {
     expect(
       await resolveCmuxWorkspace(sctx({ sessionId: "new-id" }), scan),
     ).toBeNull();
+  });
+
+  test("does NOT borrow a sibling's workspace id when the exact session lacks one", async () => {
+    // Exact-id session has no workspace id; a sibling in the same cwd does. The
+    // cwd scan must not fire on a positive-identity match — return the
+    // spawn-registry ref for THIS session, never the sibling's live id.
+    rememberCmuxWorkspace("/tmp", "OK workspace:5");
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", cwd: "/tmp" }), // this session, no id
+      portFile({ sessionId: "sib", cwd: "/tmp", cmuxWorkspaceId: "WS-SIB" }),
+    ];
+    expect(await resolveCmuxWorkspace(sctx({ sessionId: "sid-1" }), scan)).toBe(
+      "workspace:5",
+    );
   });
 
   test("returns null (never an empty ref) when nothing is known", async () => {

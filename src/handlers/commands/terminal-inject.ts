@@ -430,17 +430,24 @@ export async function resolveCmuxWorkspace(
       sessionDir: sctx.sessionDir,
       claudePid: sctx.sessionPid,
     });
-    if (byId?.cmuxWorkspaceId) return byId.cmuxWorkspaceId;
-    // selectRelayTarget short-circuits on a sessionId miss without trying cwd,
-    // so do an explicit cwd fallback — recovers the durable workspace id when
-    // the port file's sessionId has drifted (e.g. a /clear changed it). Gated
-    // on a UNIQUE dir match carrying a workspace id, so a non-cmux session (no
-    // cmuxWorkspaceId) or an ambiguous dir can never resolve to a wrong target.
-    const dir = canonical(sctx.sessionDir);
-    const byDir = alive.filter(
-      (pf) => canonical(pf.cwd) === dir && pf.cmuxWorkspaceId,
-    );
-    if (byDir.length === 1) return byDir[0]!.cmuxWorkspaceId!;
+    if (byId) {
+      // Positive identity (matched by sessionId or pid): trust ONLY this
+      // session's own workspace id. If it has none, don't scan the live port
+      // files by cwd — that could grab a same-cwd sibling's workspace. Fall
+      // through to the spawn-registry, which is this bot's own record for the
+      // dir (covers sessions whose relay predates workspace-id recording).
+      if (byId.cmuxWorkspaceId) return byId.cmuxWorkspaceId;
+    } else {
+      // byId is null → selectRelayTarget short-circuited on a sessionId miss
+      // (e.g. a /clear changed the id). Recover the durable workspace id via a
+      // UNIQUE same-cwd live match; an ambiguous dir resolves to null so
+      // siblings never mis-target.
+      const dir = canonical(sctx.sessionDir);
+      const byDir = alive.filter(
+        (pf) => canonical(pf.cwd) === dir && pf.cmuxWorkspaceId,
+      );
+      if (byDir.length === 1) return byDir[0]!.cmuxWorkspaceId!;
+    }
   } catch (err) {
     debug(`inject: port-file scan failed: ${err}`);
   }
@@ -470,7 +477,17 @@ export async function resolveTmuxTarget(
       sessionDir: sctx.sessionDir,
       claudePid: sctx.sessionPid,
     });
-    if (byId?.tmuxPane) return { pane: byId.tmuxPane, socket: byId.tmuxSocket };
+    // Positive identity (matched by sessionId or pid): trust ONLY this session's
+    // own pane. If it has none, this session is genuinely not under tmux — refuse
+    // rather than fall through to the cwd scan, which could grab a same-cwd
+    // sibling's pane and type into the wrong terminal.
+    if (byId)
+      return byId.tmuxPane
+        ? { pane: byId.tmuxPane, socket: byId.tmuxSocket }
+        : null;
+    // byId is null → the port file's sessionId drifted (e.g. a /clear changed
+    // it). Recover via a UNIQUE same-cwd match carrying a pane; an ambiguous dir
+    // resolves to null so siblings never mis-target.
     const dir = canonical(sctx.sessionDir);
     const byDir = alive.filter(
       (pf) => canonical(pf.cwd) === dir && pf.tmuxPane,
@@ -500,12 +517,6 @@ export function buildTmuxSendArgs(
 }
 
 /**
- * Count how many live relay (Claude Code) sessions share `dir` as their cwd.
- * Used to gate Cursor injection: same-folder siblings live as indistinguishable
- * tabs in one Cursor window (identical titles, no pid→tab mapping), so we refuse
- * rather than risk injecting into the wrong one.
- */
-/**
  * Default chord for focusing the Cursor integrated terminal before injecting.
  * The user must bind THIS chord to `workbench.action.terminal.focus` in Cursor's
  * keybindings.json for the focus guard to work; override via CURSOR_FOCUS_CHORD.
@@ -513,6 +524,12 @@ export function buildTmuxSendArgs(
  */
 const DEFAULT_CURSOR_FOCUS_CHORD = "ctrl+alt+cmd+t";
 
+/**
+ * Count how many live relay (Claude Code) sessions share `dir` as their cwd.
+ * Used to gate Cursor injection: same-folder siblings live as indistinguishable
+ * tabs in one Cursor window (identical titles, no pid→tab mapping), so we refuse
+ * rather than risk injecting into the wrong one.
+ */
 export async function countSessionsInDir(
   dir: string,
   scan: () => Promise<PortFileData[]> = scanPortFiles,
