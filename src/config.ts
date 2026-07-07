@@ -99,6 +99,12 @@ export function isDesktopClaudeSpawnSupported(): boolean {
  * that went through `tmux send-keys` (the preferred, terminal-agnostic path).
  * Neither can be a configured DESKTOP_TERMINAL_APP — `parseTerminalApp` never
  * yields them — but they appear in inject results / detection.
+ *
+ * NOTE: this `TerminalApp === "cursor"` (a Claude Code CLI session running in
+ * Cursor's integrated terminal) is UNRELATED to `SessionContext.source ===
+ * "cursor"` (the CDP-based Composer bridge, see docs/cursor.md). They share the
+ * bare string but are distinct concepts; inject refuses non-`cc`-source sessions
+ * before terminal detection runs, so the two never collide.
  */
 export type TerminalApp =
   | "terminal"
