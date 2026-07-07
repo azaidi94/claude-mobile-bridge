@@ -13,8 +13,7 @@ import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 import { attachAskRemoteToRelay } from "../handlers/relay-ask";
-import { shadowResolveSession } from "../sessions/identity-shadow";
-import { getCurrentSnapshot, type Handle } from "../sessions/resolve-session";
+import { resolveSession, type Handle } from "../sessions/resolve-session";
 
 export interface PortFileData {
   port: number;
@@ -435,17 +434,23 @@ function _selectRelayTargetImpl(
 }
 
 /**
- * Shadow-instrumented wrapper (observe-only, no migration): delegates to
- * `_selectRelayTargetImpl` for the real, unchanged behavior, then reports the
- * chosen answer to `resolveSession` for comparison. Never affects the return
- * value — `shadowResolveSession` swallows its own errors.
+ * Migrated: id/pid/cwd matching routes through the shared `resolveSession`
+ * resolver, evaluated over the CALLER's own `alive` array (never the global
+ * watcher snapshot — the caller's set can legitimately differ from it, and
+ * resolving against the wrong set would change behavior).
+ *
+ * On a `resolved` hit, `resolveSession` operating over `alive` is guaranteed
+ * to have picked the same unique match `_selectRelayTargetImpl` would have
+ * (both require exactly one candidate for a positive-identity handle). On
+ * `miss`/`pending` — including cases the ladder itself handles but a single
+ * `Handle` can't express, e.g. a selector with both `sessionId` and
+ * `claudePid` set — we fall through to `_selectRelayTargetImpl`, which
+ * preserves the full original ladder (including its `warn()` calls) exactly.
  */
 export function selectRelayTarget(
   alive: PortFileData[],
   selector: RelaySelector,
 ): PortFileData | null {
-  const chosen = _selectRelayTargetImpl(alive, selector);
-
   const handle: Handle | null = selector.sessionId
     ? { by: "sessionId", sessionId: selector.sessionId }
     : selector.claudePid
@@ -455,15 +460,18 @@ export function selectRelayTarget(
         : null;
 
   if (handle) {
-    shadowResolveSession(
-      "selectRelayTarget",
-      chosen?.sessionId ?? null,
-      handle,
-      getCurrentSnapshot(),
-    );
+    const resolution = resolveSession(handle, {
+      aliveRelays: alive,
+      topics: [],
+    });
+    if (resolution.status === "resolved") {
+      const match = alive.find((pf) => pf.pid === resolution.record.relayPid);
+      if (match) return match;
+    }
+    // miss/pending → fall through to the preserved original ladder below.
   }
 
-  return chosen;
+  return _selectRelayTargetImpl(alive, selector);
 }
 
 export async function getRelayDirs(): Promise<string[]> {
