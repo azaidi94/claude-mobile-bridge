@@ -395,6 +395,7 @@ await bot.api.setMyCommands([
   { command: "cron", description: "Schedule prompts at cron times" },
   { command: "ralph", description: "Run a ralph loop (afk_tasks.sh)" },
   { command: "prompts", description: "Tappable saved-prompt menu" },
+  { command: "skills", description: "Browse & run Claude skills/commands" },
   { command: "clear", description: "Send /clear to the desktop session" },
   { command: "compact", description: "Send /compact to the desktop session" },
   { command: "context", description: "Send /context to the desktop session" },
@@ -487,12 +488,19 @@ async function flushStores(): Promise<void> {
       { flush: flushCron },
       { flush: flushPrompts },
       { flush: flushRalph },
+      { flush: flushSkillRecents },
     ] = await Promise.all([
       import("./cron/store"),
       import("./prompts/store"),
       import("./ralph/store"),
+      import("./skills/recents"),
     ]);
-    await Promise.all([flushCron(), flushPrompts(), flushRalph()]);
+    await Promise.all([
+      flushCron(),
+      flushPrompts(),
+      flushRalph(),
+      flushSkillRecents(),
+    ]);
   } catch (err) {
     warn(`shutdown flush: ${err}`);
   }

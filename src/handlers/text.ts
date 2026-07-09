@@ -44,6 +44,7 @@ import { sendViaRelay } from "./relay-bridge";
 import { isAbsolute } from "path";
 import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
+import { pendingSkillArgs, runSkill } from "./commands/skills";
 import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
 import { isGeneralTopic, isSessionTopic } from "../topics";
@@ -236,6 +237,32 @@ export async function handleText(
       );
       return;
     }
+  }
+
+  // 1.45. Check for pending skill args (from /skills "✎ With args…").
+  const _skillPK = pendingKey(chatId, incomingThreadId);
+  if (pendingSkillArgs.has(_skillPK)) {
+    const name = pendingSkillArgs.get(_skillPK)!;
+    pendingSkillArgs.delete(_skillPK);
+    if (message.trim() === "/cancel") {
+      await busReply(ctx, "✖ Cancelled.", { threadId });
+      return;
+    }
+    if (!sctx || sctx.source !== "cc") {
+      await busReply(ctx, "❌ No Claude session here to run the skill in.", {
+        threadId,
+      });
+      return;
+    }
+    const result = await runSkill(sctx, name, message.trim());
+    await busReply(
+      ctx,
+      result.ok
+        ? `▶ Sent /${name} → ${sctx.sessionName}`
+        : `❌ Couldn't send /${name}: ${result.reason}`,
+      { threadId },
+    );
+    return;
   }
 
   // 1.5. Check for pending plan feedback
