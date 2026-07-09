@@ -166,6 +166,20 @@ mock.module("../config", () => ({
   parseTerminalApp: (s: string) => s || "terminal",
 }));
 
+// Mock resolve-session so topic-manager can map a live session's sessionId to
+// its stable launchUuid (registry-backed in prod). Mutable so tests control
+// what a given sessionId resolves to.
+const launchUuidBySid = new Map<string, string>();
+mock.module("../sessions/resolve-session", () => ({
+  resolveSession: (sel: { by: string; sessionId?: string }) => {
+    const uuid = sel.sessionId ? launchUuidBySid.get(sel.sessionId) : undefined;
+    return uuid
+      ? { status: "resolved" as const, record: { launchUuid: uuid } }
+      : { status: "not_found" as const };
+  },
+  getCurrentSnapshot: () => ({}),
+}));
+
 import {
   clearTopicStore,
   addTopicMapping,
@@ -222,6 +236,7 @@ describe("TopicManager", () => {
     mockApi.sendMessage.mockClear();
     mockRecordTopicDeleted.mockClear();
     mockRecordTopicCreated.mockClear();
+    launchUuidBySid.clear();
   });
 
   test("createTopic creates forum topic and persists mapping", async () => {
@@ -241,6 +256,44 @@ describe("TopicManager", () => {
     expect(mapping!.topicId).toBe(42);
     expect(mapping!.sessionId).toBe("sid-1");
     expect(mapping!.isOnline).toBe(true);
+  });
+
+  test("createTopic binds the live launchUuid at creation", async () => {
+    launchUuidBySid.set("sid-new", "uuid-new");
+    const mgr = createManager();
+    await mgr.createTopic("fresh", "/tmp/proj", "sid-new");
+    expect(getTopicBySession("fresh")!.launchUuid).toBe("uuid-new");
+  });
+
+  test("createTopic reuse refreshes a stale launchUuid to the live launch", async () => {
+    // Regression: a relaunch in a dir reuses the prior session's topic (same
+    // sessionName) but is a NEW process → NEW launchUuid. The reuse path must
+    // re-point the topic's launchUuid, or it stays pinned to the dead launch —
+    // which reverts the topic's sessionId to the dead id every refresh (AUQ
+    // 404s) and lets the reaper delete the live topic.
+    addTopicMapping({
+      topicId: 61,
+      sessionName: "relaunched",
+      sessionDir: "/tmp/proj",
+      sessionId: "sid-dead",
+      launchUuid: "uuid-dead",
+      isOnline: false,
+      createdAt: new Date().toISOString(),
+    });
+    launchUuidBySid.set("sid-live", "uuid-live");
+
+    const mgr = createManager();
+    const topicId = await mgr.createTopic(
+      "relaunched",
+      "/tmp/proj",
+      "sid-live",
+    );
+
+    expect(topicId).toBe(61); // reused, not recreated
+    expect(mockApi.createForumTopic).not.toHaveBeenCalled();
+    const mapping = getTopicBySession("relaunched");
+    expect(mapping!.sessionId).toBe("sid-live");
+    expect(mapping!.launchUuid).toBe("uuid-live");
   });
 
   test("createTopic returns existing topicId if mapping exists", async () => {

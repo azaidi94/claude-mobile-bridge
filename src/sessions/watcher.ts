@@ -724,6 +724,14 @@ async function runTopicReaper(): Promise<void> {
   try {
     const running = await getRunningClaudeProcesses();
     const livePids = new Set(running.map((p) => p.pid));
+    // A present relay port file is authoritative proof its Claude parent (the
+    // relay's ppid = the registry's claudePid) is alive — the same vouch
+    // scanSessions relies on. Fold it in so a flaky ps/lsof tick can't reap a
+    // topic whose session is provably still running. This only ADDS liveness,
+    // so it can prevent a wrongful delete but never cause one.
+    for (const pf of await scanPortFiles(true)) {
+      if (pf.ppid !== undefined) livePids.add(pf.ppid);
+    }
     const { getTopicManager } = await import("../handlers/commands/helpers");
     const tm = getTopicManager();
     if (!tm) return;

@@ -39,6 +39,26 @@ export class TopicManager {
     private chatId: number,
   ) {}
 
+  /**
+   * Resolve the live session's stable `launchUuid` from its `sessionId` via the
+   * registry snapshot. Used at BOTH topic creation and reuse: a reused topic
+   * (same sessionName after the prior session ended) MUST re-point its
+   * launchUuid to the current launch, or it stays pinned to the dead launch —
+   * which makes `topicSessionIdRefreshPlan` revert the topic's sessionId to the
+   * dead id every tick and (if the reaper is on) deletes the live topic.
+   * Returns undefined for name-keyed sessions (Cursor/bare, no registry record).
+   */
+  private resolveLaunchUuid(sessionId?: string): string | undefined {
+    if (!sessionId) return undefined;
+    const res = resolveSession(
+      { by: "sessionId", sessionId },
+      getCurrentSnapshot(),
+    );
+    return res.status === "resolved"
+      ? (res.record.launchUuid ?? undefined)
+      : undefined;
+  }
+
   private async findRelayPid(
     sessionName: string,
     sessionDir: string,
@@ -109,9 +129,15 @@ export class TopicManager {
           throw new Error(reason);
         }
       } else {
+        // Refresh launchUuid alongside sessionId: on reuse the topic may be
+        // bound to a PRIOR launch's launchUuid (same sessionName, new process →
+        // new launchUuid). Leaving it stale breaks sessionId-keyed routing (AUQ
+        // 404s) and can make the reaper delete the live topic.
+        const launchUuid = this.resolveLaunchUuid(sessionId);
         updateTopicMapping(sessionName, {
           isOnline: true,
           ...(sessionId ? { sessionId } : {}),
+          ...(launchUuid ? { launchUuid } : {}),
         });
         const reusePid = await this.findRelayPid(
           sessionName,
@@ -146,16 +172,7 @@ export class TopicManager {
       // (Task 6). A miss omits the field (Cursor/bare sessions with no launchUuid
       // stay name-keyed); the watcher's per-refresh backfill fills it in later if
       // the id wasn't yet resolvable here.
-      let launchUuid: string | undefined;
-      if (sessionId) {
-        const res = resolveSession(
-          { by: "sessionId", sessionId },
-          getCurrentSnapshot(),
-        );
-        if (res.status === "resolved" && res.record.launchUuid) {
-          launchUuid = res.record.launchUuid;
-        }
-      }
+      const launchUuid = this.resolveLaunchUuid(sessionId);
 
       addTopicMapping({
         topicId,
