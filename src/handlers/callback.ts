@@ -49,6 +49,7 @@ import {
   offlineSessionCache,
   spawnDesktopClaudeSession,
   handleGroupModeCallback,
+  handleTmuxCallback,
   handleCursorBridgeCallback,
   handleCursorSubscribe,
   respawnSession,
@@ -57,6 +58,7 @@ import {
   pendingSettingsInput,
   rerenderSettingsPanel,
   TERMINAL_LABELS,
+  VERBOSE_LABELS,
 } from "./settings";
 import {
   saveSetting,
@@ -65,6 +67,7 @@ import {
   getOverrides,
   getEnablePinnedStatus,
   getContextNotifyStep,
+  getVerboseLevel,
   getDefaultRalphLabel,
 } from "../settings";
 import type { TerminalApp } from "../config";
@@ -907,6 +910,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  // /tmux panel: tmux:<action>[:<launchUuid>]
+  if (callbackData.startsWith("tmux:")) {
+    await handleTmuxCallback(ctx, callbackData.slice(5));
+    return;
+  }
+
   // /cursor session subscribe: cursorsub:<name>
   if (callbackData.startsWith("cursorsub:")) {
     await handleCursorSubscribe(ctx, callbackData.slice(10));
@@ -1263,6 +1272,20 @@ export async function handleSettingsCallback(
       return;
     }
 
+    if (field === "verbose") {
+      // Cycle normal(default) → detailed → quiet → normal. Level 1 is the
+      // default, so it's stored as `undefined` to show the "(default)" marker.
+      const order = [0, 1, 2] as const;
+      const current = getVerboseLevel();
+      const next = order[(order.indexOf(current) + 1) % order.length]!;
+      await saveSetting({ verboseLevel: next === 1 ? undefined : next });
+      await rerenderSettingsPanel(ctx);
+      await ctx.answerCallbackQuery({
+        text: `Verbosity: ${VERBOSE_LABELS[next]}${next === 1 ? " (default)" : ""}`,
+      });
+      return;
+    }
+
     if (field === "contextnotify") {
       const current = getContextNotifyStep();
       const order = [0, 10, 25, 50];
@@ -1350,6 +1373,8 @@ export async function handleSettingsCallback(
       pendingSettingsInput.delete(pendingKey(chatId, threadId));
     } else if (field === "contextnotify") {
       await saveSetting({ contextNotifyStep: undefined });
+    } else if (field === "verbose") {
+      await saveSetting({ verboseLevel: undefined });
     } else if (field === "model") {
       // Clearing the override only affects next restart; the live session
       // keeps whatever model it last had.

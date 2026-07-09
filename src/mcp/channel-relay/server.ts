@@ -34,7 +34,12 @@ import {
   parseRelayPortFilePid,
   claudeProjectDir,
 } from "../../paths";
-import { pickRolledSessionId, type JsonlCandidate } from "./session-discovery";
+import {
+  pickRolledSessionId,
+  pickSessionIdForPid,
+  type JsonlCandidate,
+} from "./session-discovery";
+import { readRegistry } from "../../sessions/registry";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
@@ -65,6 +70,24 @@ function getParentStartedAtMs(): number {
 
 // JSONLs born before this time belong to a previous Claude session.
 const claudeStartedAtMs = getParentStartedAtMs();
+
+/**
+ * Parent Claude's `ps -o lstart` string — the launch-identity half of the P2
+ * registry key (paired with the parent pid), captured EXACTLY as the
+ * SessionStart hook computes it (`startTimeOf`). Pairing it with the pid makes
+ * the registry lookup immune to pid reuse. "" if the probe fails → the lookup
+ * declines and the JSONL heuristic takes over.
+ */
+function getParentStartTime(): string {
+  try {
+    return execSync(`ps -p ${process.ppid} -o lstart=`, {
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+const parentStartTime = getParentStartTime();
 const dirHash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 const PORT_FILE = join(
   STATE_DIR,
@@ -258,6 +281,36 @@ function runDiscovery(): void {
       `channel-relay: port file read failed (${(err as Error)?.message ?? err}), retrying\n`,
     );
     scheduleNextDiscovery(5_000);
+    return;
+  }
+
+  // Authoritative first: the SessionStart hook records THIS process's live
+  // sessionId (re-anchored on every /clear) in the P2 registry, keyed by our
+  // parent (claudePid, startTime). Prefer it over the JSONL heuristics below —
+  // those pick the "newest unclaimed transcript in the dir", which mis-attributes
+  // a sibling's transcript when two sessions share a cwd, stamping the wrong
+  // sessionId into this port file (the routing-corruption vector). A miss
+  // (non-hook session, or the pre-hook startup window — readRegistry returns []
+  // on any error, so this never throws) falls through to the heuristic, which
+  // keeps its own retry ramp. For a hook-bearing session this makes /clear
+  // tracking depend on the hook's re-anchor (validated by the P2 soak); we do
+  // not also run the sibling-unsafe heuristic, which would reintroduce the
+  // corruption this fix removes.
+  const authoritativeId = pickSessionIdForPid(
+    readRegistry(),
+    process.ppid,
+    parentStartTime,
+  );
+  if (authoritativeId) {
+    if (authoritativeId !== currentId) {
+      updateOwnPortFile({ sessionId: authoritativeId });
+      process.stderr.write(
+        `channel-relay: sessionId=${authoritativeId} from registry${
+          currentId ? ` (was ${currentId})` : ""
+        }\n`,
+      );
+    }
+    scheduleNextDiscovery(REDISCOVERY_POLL_MS);
     return;
   }
 

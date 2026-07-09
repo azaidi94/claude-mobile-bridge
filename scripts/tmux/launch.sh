@@ -1,11 +1,34 @@
 #!/usr/bin/env bash
-# scripts/tmux/launch.sh — attach-or-create tmux launcher for Claude Code.
-# Sourced by ~/.bash_profile's _ccd_launch_claude. Guarantees at most one live
-# Claude tmux session per working directory so the bridge's topic watcher isn't
-# spammed with "new conversation" rebinds by sibling sessions.
+# scripts/tmux/launch.sh — hybrid reattach-or-create tmux launcher for Claude Code.
+# Sourced by ~/.bash_profile's _cct_launch_claude.
+#
+# Behavior (bare `cct`):
+#   - a DETACHED session in this dir (your work, left running when you closed the
+#     terminal) → ATTACH to it;
+#   - sessions exist but are all ATTACHED (you're already viewing one elsewhere)
+#     → CREATE a new sibling rather than mirror the same session into two windows;
+#   - no session in this dir → CREATE.
+# Passing claude args (`cct --resume`, a prompt, …) or CLAUDE_CODE_TMUX_FRESH=1
+# forces CREATE — you're starting a fresh invocation, not reattaching.
+#
+# CCT_MODE (env, set in ~/.bash_profile) overrides the reuse policy:
+#   hybrid (default) — attach to a detached session, else create a sibling.
+#   attach           — always reuse one session per folder (2nd client if attached).
+#   create           — always a fresh session (pure always-create).
+#
+# New sessions are named cc-<base>-<hash8>-<pid> so N can run in one folder; the
+# bridge identifies each by its hook-minted launchUuid (P2/P3 registry), so we do
+# NOT pin --session-id (a pinned id would freeze on /clear). claude argv is passed
+# through verbatim. Keeps the dedicated `-L claude` socket + claude-tmux.conf.
 
 CC_TMUX_SOCKET="claude"
-CC_TMUX_CONF="$HOME/Projects/Cursor/AHZ/claude-mobile-bridge/scripts/claude-tmux.conf"
+# Resolve claude-tmux.conf relative to THIS script (scripts/tmux/launch.sh →
+# ../claude-tmux.conf) so the launcher is portable across clones. Works when the
+# file is sourced (BASH_SOURCE) or run. CC_TMUX_CONF can be pre-set to override.
+if [ -z "${CC_TMUX_CONF:-}" ]; then
+  _cc_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd 2>/dev/null)"
+  CC_TMUX_CONF="${_cc_dir%/}/../claude-tmux.conf"
+fi
 
 # 8-char hex hash of a string. macOS `md5 -q`, Linux `md5sum`.
 _cc_hash8() {
@@ -16,22 +39,23 @@ _cc_hash8() {
   fi
 }
 
-# Deterministic, tmux-safe session name for a directory: cc-<base>-<hash8>.
-# Full path is hashed so same-basename repos never collide.
+# Base session name for a directory: cc-<base>-<hash8>. Full path is hashed so
+# same-basename repos never collide.
 _cc_session_name() {
   local dir="${1:-$PWD}" base
   base=$(basename "$dir" | tr -c 'A-Za-z0-9_' '-' | sed 's/--*/-/g; s/-$//')
   printf 'cc-%s-%s' "$base" "$(_cc_hash8 "$dir")"
 }
 
-# Decide the launch action. Pure — no IO. See interface notes in the plan.
-_cc_decide() {
-  local fresh="$1" nuser="$2" existing="$3"
-  if [ "$fresh" = 1 ] || [ "$nuser" -gt 0 ]; then echo "fresh"; return; fi
-  if [ "$existing" -gt 0 ]; then echo "attach"; else echo "new"; fi
+# Per-launch unique session name: cc-<base>-<hash8>-<pid>. The pid makes N
+# sessions in one dir distinct tmux sessions (siblings coexist).
+_cc_launch_name() {
+  local dir="${1:-$PWD}" pid="${2:-$$}"
+  printf '%s-%s' "$(_cc_session_name "$dir")" "$pid"
 }
 
-# List live sessions whose pane cwd == dir. Output: "<attached>\t<name>" lines.
+# List live sessions whose pane cwd == dir. Output: "<attached>\t<name>" lines
+# (attached=0 means detached).
 _cc_sessions_for_cwd() {
   local dir="${1:-$PWD}"
   tmux -L "$CC_TMUX_SOCKET" list-panes -a \
@@ -39,95 +63,71 @@ _cc_sessions_for_cwd() {
     | awk -F'\t' -v d="$dir" '$1==d { print $2"\t"$3 }'
 }
 
-# Kill detached sessions for dir (orphans left by closed terminals). Opt out
-# with CLAUDE_CODE_TMUX_NO_REAP=1. Attached sessions are never touched.
-_cc_reap_detached() {
-  local dir="${1:-$PWD}" attached name
-  [ "${CLAUDE_CODE_TMUX_NO_REAP:-}" = 1 ] && return 0
-  while IFS=$'\t' read -r attached name; do
-    [ -z "$name" ] && continue
-    if [ "$attached" = 0 ]; then
-      tmux -L "$CC_TMUX_SOCKET" kill-session -t "$name" 2>/dev/null
-    fi
-  done < <(_cc_sessions_for_cwd "$dir")
-}
-
-# Pure launch planner. Prints one tab-separated line: the action and its
-# operands. No exec, no reaping — see cc_tmux_launch for the side effects.
-_cc_plan_launch() {
-  local dir="$1" nuser="$2" pid="$3"; shift 3
-  local fresh=0; [ "${CLAUDE_CODE_TMUX_FRESH:-0}" = 1 ] && fresh=1
-  local sessions existing action name cmd target
-  sessions=$(_cc_sessions_for_cwd "$dir")
-  existing=$(printf '%s' "$sessions" | grep -c '[^[:space:]]')
-  action=$(_cc_decide "$fresh" "$nuser" "$existing")
-  printf -v cmd 'exec claude %s' "$(printf '%q ' "$@")"
-  cmd=${cmd% }   # strip the trailing space printf %q leaves
-  case "$action" in
-    attach)
-      target=$(printf '%s\n' "$sessions" | awk -F'\t' '$1==0 {print $2; exit}')
-      [ -z "$target" ] && target=$(printf '%s\n' "$sessions" | awk -F'\t' 'NF{print $2; exit}')
-      printf 'attach\t%s' "$target"
-      ;;
-    new)
-      printf 'new\t%s\t%s' "$(_cc_session_name "$dir")" "$cmd"
-      ;;
-    fresh)
-      printf 'fresh\t%s-%s\t%s' "$(_cc_session_name "$dir")" "$pid" "$cmd"
-      ;;
-  esac
-}
-
 # Exec seam — overridden in tests to capture argv instead of replacing the shell.
 _cc_do_exec() { exec "$@"; }
 
-# UUID generator (macOS uuidgen, lowercased to match Claude's session-id format).
-_cc_uuid() {
-  uuidgen | tr 'A-Z' 'a-z'
+# Pure launch planner. Prints one tab-separated line:
+#   attach\t<session-name>            — reattach to a detached session, OR
+#   new\t<session-name>\t<claude-cmd> — create a fresh uniquely-named session.
+# Hybrid: attach ONLY to a detached session; create otherwise (no existing, or
+# all existing are attached). $2 = number of user (non-flag) claude args, >0 or
+# CLAUDE_CODE_TMUX_FRESH=1 forces create. No exec — see cc_tmux_launch.
+# CCT_MODE (env, default `hybrid`) picks the reuse policy:
+#   hybrid — attach to a DETACHED session, else create a sibling (default).
+#   attach — reuse ANY existing session (detached preferred, else attach as a
+#            2nd client to an attached one); one session per folder.
+#   create — never reuse; always a fresh session.
+_cc_plan_launch() {
+  local dir="$1" nuser="$2" pid="$3"; shift 3
+  local mode="${CCT_MODE:-hybrid}"
+  local fresh=0
+  [ "${CLAUDE_CODE_TMUX_FRESH:-0}" = 1 ] && fresh=1  # per-invocation force-create
+  [ "$nuser" -gt 0 ] && fresh=1                       # explicit claude args → fresh
+  [ "$mode" = create ] && fresh=1
+  local cmd="exec claude" sessions target
+  # Append the claude argv verbatim, if any. Guard the empty case — `printf '%q'`
+  # with no args would emit a stray '' (quoted empty string).
+  if [ "$#" -gt 0 ]; then
+    cmd="exec claude $(printf '%q ' "$@")"
+    cmd=${cmd% }   # strip the trailing space printf %q leaves
+  fi
+  if [ "$fresh" != 1 ]; then
+    sessions=$(_cc_sessions_for_cwd "$dir")
+    # A detached session = your left-behind work → reattach (all modes).
+    target=$(printf '%s\n' "$sessions" | awk -F'\t' '$1==0 {print $2; exit}')
+    # attach mode also reuses an already-attached session (as a 2nd client)
+    # rather than spawning a sibling.
+    if [ -z "$target" ] && [ "$mode" = attach ]; then
+      target=$(printf '%s\n' "$sessions" | awk -F'\t' 'NF{print $2; exit}')
+    fi
+    if [ -n "$target" ]; then
+      printf 'attach\t%s' "$target"
+      return
+    fi
+  fi
+  printf 'new\t%s\t%s' "$(_cc_launch_name "$dir" "$pid")" "$cmd"
 }
 
-# True (0) unless the claude argv already selects/resumes a specific session,
-# in which case pinning a fresh --session-id would conflict with that intent.
-_cc_should_pin_id() {
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --session-id|--resume|-r|--continue|-c) return 1 ;;
-    esac
-  done
-  return 0
-}
-
-# Entry point called by _ccd_launch_claude. $1 = number of user (non-flag) args;
+# Entry point called by _cct_launch_claude. $1 = number of user (non-flag) args;
 # the rest is the full claude argv (flags + user args). Uses $PWD and $$.
 cc_tmux_launch() {
   local nuser="$1"; shift
-  local dir="$PWD" plan action rest name cmd target
+  local dir="$PWD" plan action rest name cmd
   plan=$(_cc_plan_launch "$dir" "$nuser" "$$" "$@")
   action=${plan%%$'\t'*}
   rest=${plan#*$'\t'}
   case "$action" in
     attach)
-      target="$rest"
-      _cc_do_exec tmux -L "$CC_TMUX_SOCKET" attach-session -t "$target"
+      _cc_do_exec tmux -L "$CC_TMUX_SOCKET" attach-session -t "$rest"
       ;;
     new)
       name=${rest%%$'\t'*}
       cmd=${rest#*$'\t'}
-      if _cc_should_pin_id "$@"; then
-        printf -v cmd 'exec claude --session-id %s %s' "$(_cc_uuid)" "$(printf '%q ' "$@")"
-        cmd=${cmd% }
-      fi
-      _cc_do_exec tmux -L "$CC_TMUX_SOCKET" -f "$CC_TMUX_CONF" new-session -s "$name" "$cmd"
-      ;;
-    fresh)
-      name=${rest%%$'\t'*}
-      cmd=${rest#*$'\t'}
-      _cc_reap_detached "$dir"
-      if _cc_should_pin_id "$@"; then
-        printf -v cmd 'exec claude --session-id %s %s' "$(_cc_uuid)" "$(printf '%q ' "$@")"
-        cmd=${cmd% }
-      fi
+      # The name embeds our $$ (unique among live processes), so any EXISTING
+      # session with this exact name is a stale orphan from a past process whose
+      # pid the OS later handed us. Kill it first, else `new-session` fails with
+      # "duplicate session" and Claude never launches.
+      tmux -L "$CC_TMUX_SOCKET" kill-session -t "$name" 2>/dev/null
       _cc_do_exec tmux -L "$CC_TMUX_SOCKET" -f "$CC_TMUX_CONF" new-session -s "$name" "$cmd"
       ;;
   esac

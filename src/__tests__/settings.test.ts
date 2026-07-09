@@ -209,3 +209,51 @@ describe("contextNotifyStep", () => {
     expect(getContextNotifyStep()).toBe(0);
   });
 });
+
+describe("verboseLevel", () => {
+  beforeEach(() => {
+    delete process.env.VERBOSE_LEVEL;
+  });
+  afterEach(() => {
+    delete process.env.VERBOSE_LEVEL;
+  });
+
+  test("defaults to 1 (normal) when unset", async () => {
+    await writeFile(settingsPath, JSON.stringify({}));
+    const { getVerboseLevel, _reloadForTests } = await import("../settings");
+    _reloadForTests();
+    expect(getVerboseLevel()).toBe(1);
+  });
+
+  test("reads 0/1/2 from the settings file", async () => {
+    for (const lvl of [0, 1, 2] as const) {
+      await writeFile(settingsPath, JSON.stringify({ verboseLevel: lvl }));
+      const { getVerboseLevel, _reloadForTests } = await import("../settings");
+      _reloadForTests();
+      expect(getVerboseLevel()).toBe(lvl);
+    }
+  });
+
+  test("rejects an out-of-range level and falls back to default", async () => {
+    await writeFile(settingsPath, JSON.stringify({ verboseLevel: 5 }));
+    const { getVerboseLevel, _reloadForTests } = await import("../settings");
+    _reloadForTests();
+    expect(getVerboseLevel()).toBe(1);
+  });
+
+  test("falls back to VERBOSE_LEVEL env when the setting is unset", async () => {
+    process.env.VERBOSE_LEVEL = "0";
+    await writeFile(settingsPath, JSON.stringify({}));
+    const { getVerboseLevel, _reloadForTests } = await import("../settings");
+    _reloadForTests();
+    expect(getVerboseLevel()).toBe(0);
+  });
+
+  test("the settings file wins over the env var", async () => {
+    process.env.VERBOSE_LEVEL = "0";
+    await writeFile(settingsPath, JSON.stringify({ verboseLevel: 2 }));
+    const { getVerboseLevel, _reloadForTests } = await import("../settings");
+    _reloadForTests();
+    expect(getVerboseLevel()).toBe(2);
+  });
+});

@@ -34,6 +34,10 @@ import { getTerminal } from "../../settings";
 import { debug, warn } from "../../logger";
 import type { SessionContext } from "../../sessions/context";
 import {
+  launchUuidForPid,
+  launchUuidForSessionId,
+} from "../../sessions/resolve-session";
+import {
   scanPortFiles,
   selectRelayTarget,
   type PortFileData,
@@ -410,6 +414,54 @@ function runOsascript(script: string): {
 }
 
 /**
+ * The single alive port file that belongs to THIS session, selected by
+ * `launchUuid`. The TARGET launchUuid is anchored on the AUTHORITATIVE registry
+ * `sessionId → launchUuid` map (`uuidForSessionId`), which the hook re-anchors on
+ * `/clear` independent of the port files — NOT on `sctx.sessionPid`, which the
+ * watcher can itself mis-assign from a sibling's stolen-id port file
+ * (`assignPidsToSessions` 2nd pass). The pid map (`uuidForPid`) is only a
+ * fallback for the pre-hook window, and is what maps each port file's real
+ * parent pid (`pf.ppid`) to its own launchUuid (that side is sound: `ppid` is
+ * the real parent, and the pid map is registry-sourced on real claude pids).
+ *
+ * This is the injection twin of the topic cross-wire fix (Task 1c-a): a sibling
+ * whose port file got stamped with this session's orphaned `sessionId` under
+ * `/clear` churn cannot win here — only the port file whose real claude pid maps
+ * to our `launchUuid` matches.
+ *
+ * Returns `undefined` when the session has no `launchUuid` (R1: Cursor
+ * `source:"cursor"`, bare `claude`, offline/history — the snapshot has no entry)
+ * OR no live port file maps to it — in both cases the caller falls back to the
+ * existing `selectRelayTarget`/cwd path. Returns the matched port file even when
+ * it carries no pane/workspace, so the caller can *refuse* rather than borrow a
+ * sibling's target.
+ */
+function ownPortFileByLaunchUuid(
+  sctx: SessionContext,
+  alive: PortFileData[],
+  uuidForPid: (pid?: number) => string | undefined,
+  uuidForSessionId: (sessionId?: string) => string | undefined,
+): PortFileData | undefined {
+  const targetUuid =
+    uuidForSessionId(sctx.sessionId) ?? uuidForPid(sctx.sessionPid);
+  if (!targetUuid) return undefined; // R1: no launchUuid → caller uses old path
+  const matches = alive.filter((pf) => uuidForPid(pf.ppid) === targetUuid);
+  if (matches.length !== 1) return undefined; // 0 live, or (impossible) >1
+  const pf = matches[0]!;
+  // Soak signal: another live port file carrying our sessionId means a sibling
+  // stole this session's id — the exact corruption launchUuid selection defeats.
+  const stolen = alive.find(
+    (o) => o !== pf && !!o.sessionId && o.sessionId === sctx.sessionId,
+  );
+  if (stolen)
+    warn("inject: launchUuid overrides a sibling holding this session's id", {
+      sessionId: sctx.sessionId,
+      sessionPid: sctx.sessionPid,
+    });
+  return pf;
+}
+
+/**
  * Resolve which cmux workspace to inject into for `sctx`:
  *   1. the `CMUX_WORKSPACE_ID` UUID the relay server stamped into the session's
  *      port file (works for ANY cmux session, durable across bot restarts), else
@@ -417,14 +469,42 @@ function runOsascript(script: string): {
  *      predates workspace-id recording).
  * Returns null (never an empty ref — an empty `--workspace` makes `cmux send`
  * fall back to the *caller's own* surface).
+ *
+ * Selection is `launchUuid`-primary (`ownPortFileByLaunchUuid`); the
+ * `selectRelayTarget`/cwd ladder below is the R1 fallback for sessions with no
+ * launchUuid (Cursor/bare/offline). Kept deliberately as a dormant safety net —
+ * P3 Task 5 "delete byDir" was dropped; hook-bearing sessions never reach it.
  */
 export async function resolveCmuxWorkspace(
   sctx: SessionContext,
   scan: () => Promise<PortFileData[]> = scanPortFiles,
+  uuidForPid: (pid?: number) => string | undefined = launchUuidForPid,
+  uuidForSessionId: (
+    sessionId?: string,
+  ) => string | undefined = launchUuidForSessionId,
 ): Promise<string | null> {
   try {
     const alive = await scan();
-    // Exact session match first.
+    // launchUuid-primary: our own port file, id-corruption-safe.
+    const own = ownPortFileByLaunchUuid(
+      sctx,
+      alive,
+      uuidForPid,
+      uuidForSessionId,
+    );
+    if (own) {
+      if (own.cmuxWorkspaceId) return own.cmuxWorkspaceId;
+      // Our own port file has no workspace id. The spawn-registry is cwd-keyed
+      // (the last /new spawn in a dir overwrites it), so it may hold a sibling's
+      // ref — trust it ONLY when this session is alone in its cwd; a same-cwd
+      // sibling makes it ambiguous → refuse rather than risk the wrong surface.
+      const dir = canonical(sctx.sessionDir);
+      const hasSibling = alive.some(
+        (pf) => pf !== own && canonical(pf.cwd) === dir,
+      );
+      return hasSibling ? null : (getCmuxWorkspace(sctx.sessionDir) ?? null);
+    }
+    // R1 fallback: exact session match first.
     const byId = selectRelayTarget(alive, {
       sessionId: sctx.sessionId,
       sessionDir: sctx.sessionDir,
@@ -446,7 +526,16 @@ export async function resolveCmuxWorkspace(
       const byDir = alive.filter(
         (pf) => canonical(pf.cwd) === dir && pf.cmuxWorkspaceId,
       );
-      if (byDir.length === 1) return byDir[0]!.cmuxWorkspaceId!;
+      if (byDir.length === 1) {
+        // Tripwire: a hook-bearing match reaching this legacy cwd recovery means
+        // the launchUuid path (ownPortFileByLaunchUuid) missed — likely a bug.
+        if (launchUuidForPid(byDir[0]!.ppid))
+          warn(
+            "inject: cmux byDir fallback matched a HOOK-BEARING session — launchUuid path missed; likely a bug",
+            { sessionDir: sctx.sessionDir, claudePid: byDir[0]!.ppid },
+          );
+        return byDir[0]!.cmuxWorkspaceId!;
+      }
     }
   } catch (err) {
     debug(`inject: port-file scan failed: ${err}`);
@@ -463,15 +552,36 @@ export interface TmuxTarget {
 /**
  * Resolve the tmux pane (+ socket) for `sctx` from the relay port files, or null
  * if the session isn't running under tmux. Mirrors `resolveCmuxWorkspace`:
- * exact-sessionId match first, then a UNIQUE same-cwd match carrying a pane (so
- * a drifted sessionId still resolves, but ambiguous siblings never mis-target).
+ * `launchUuid`-primary (`ownPortFileByLaunchUuid`, id-corruption-safe), then the
+ * R1 fallback — exact-sessionId match, then a UNIQUE same-cwd match carrying a
+ * pane (so a drifted sessionId still resolves, but ambiguous siblings never
+ * mis-target). The cwd fallback is a dormant safety net, kept deliberately
+ * (P3 Task 5 dropped) — hook-bearing sessions resolve by launchUuid above.
  */
 export async function resolveTmuxTarget(
   sctx: SessionContext,
   scan: () => Promise<PortFileData[]> = scanPortFiles,
+  uuidForPid: (pid?: number) => string | undefined = launchUuidForPid,
+  uuidForSessionId: (
+    sessionId?: string,
+  ) => string | undefined = launchUuidForSessionId,
 ): Promise<TmuxTarget | null> {
   try {
     const alive = await scan();
+    // launchUuid-primary: our own port file, id-corruption-safe. When matched,
+    // trust ONLY its pane — refuse (null) rather than borrow a sibling's if it
+    // carries none (this session is genuinely not under tmux).
+    const own = ownPortFileByLaunchUuid(
+      sctx,
+      alive,
+      uuidForPid,
+      uuidForSessionId,
+    );
+    if (own)
+      return own.tmuxPane
+        ? { pane: own.tmuxPane, socket: own.tmuxSocket }
+        : null;
+    // R1 fallback (no launchUuid): the existing selectRelayTarget + cwd ladder.
     const byId = selectRelayTarget(alive, {
       sessionId: sctx.sessionId,
       sessionDir: sctx.sessionDir,
@@ -492,8 +602,16 @@ export async function resolveTmuxTarget(
     const byDir = alive.filter(
       (pf) => canonical(pf.cwd) === dir && pf.tmuxPane,
     );
-    if (byDir.length === 1)
+    if (byDir.length === 1) {
+      // Tripwire: a hook-bearing match reaching this legacy cwd recovery means
+      // the launchUuid path (ownPortFileByLaunchUuid) missed — likely a bug.
+      if (launchUuidForPid(byDir[0]!.ppid))
+        warn(
+          "inject: tmux byDir fallback matched a HOOK-BEARING session — launchUuid path missed; likely a bug",
+          { sessionDir: sctx.sessionDir, claudePid: byDir[0]!.ppid },
+        );
       return { pane: byDir[0]!.tmuxPane!, socket: byDir[0]!.tmuxSocket };
+    }
   } catch (err) {
     debug(`inject: tmux target scan failed: ${err}`);
   }

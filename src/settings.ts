@@ -62,6 +62,14 @@ export interface BridgeSettings {
    */
   ralphVerboseDefault?: boolean;
   /**
+   * How much of a session's activity streams to Telegram (the /watch + relay
+   * display pipeline). `0` = quiet (final text only; tool/thinking/result cards
+   * suppressed), `1` = normal (default — full stream), `2` = detailed (reserved
+   * for future extra tool-input/reasoning expansion; currently == 1). Set via
+   * `/verbose 0|1|2` or VERBOSE_LEVEL env.
+   */
+  verboseLevel?: number;
+  /**
    * Default GitHub issue label new /ralph loops scope to. Empty/undefined =
    * no `--label` (the script decides scope — the neutral default so custom
    * RALPH_SCRIPTs that don't use labels are unaffected). `-l <x>` overrides
@@ -117,6 +125,12 @@ function sanitize(raw: unknown): BridgeSettings {
   }
   if (typeof o.ralphVerboseDefault === "boolean") {
     out.ralphVerboseDefault = o.ralphVerboseDefault;
+  }
+  if (
+    typeof o.verboseLevel === "number" &&
+    [0, 1, 2].includes(o.verboseLevel)
+  ) {
+    out.verboseLevel = o.verboseLevel;
   }
   if (typeof o.defaultRalphLabel === "string") {
     out.defaultRalphLabel = o.defaultRalphLabel;
@@ -215,6 +229,21 @@ export function getCursorSubscribedSession(): string | undefined {
 /** Whether new /ralph loops start with verbose transcript streaming on. */
 export function getRalphVerboseDefault(): boolean {
   return ensure().ralphVerboseDefault ?? false;
+}
+
+/**
+ * How much session activity streams to Telegram: 0 quiet, 1 normal (default),
+ * 2 detailed. Precedence: settings file → VERBOSE_LEVEL env → 1. Invalid values
+ * fall through to the default.
+ */
+export function getVerboseLevel(): 0 | 1 | 2 {
+  const fromSetting = ensure().verboseLevel;
+  if (fromSetting === 0 || fromSetting === 1 || fromSetting === 2) {
+    return fromSetting;
+  }
+  const env = Number(process.env.VERBOSE_LEVEL);
+  if (env === 0 || env === 1 || env === 2) return env;
+  return 1;
 }
 
 /** Default issue label for new /ralph loops; "" = no label filter. */

@@ -292,6 +292,64 @@ describe("resolveTmuxTarget", () => {
       await resolveTmuxTarget(sctx({ sessionId: "sid-1" }), scan),
     ).toBeNull();
   });
+
+  test("anchors on the registry sessionId→launchUuid, defeating a sibling that stole the id even when the pid was mis-assigned", async () => {
+    // Corruption: sibling B's port file was stamped with A's sessionId under
+    // /clear churn, AND the watcher's 2nd-pass bridge mis-assigned A's session
+    // record pid to B's claude pid (111). Anchoring on the authoritative
+    // registry sessionId map (A's id → A's uuid) selects A's real port file (%A),
+    // NOT the sibling's (%B) — the pid is not trusted for the target.
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", ppid: 111, cwd: "/tmp", tmuxPane: "%B" }), // sibling B, stole A's id
+      portFile({ sessionId: "old-a", ppid: 222, cwd: "/tmp", tmuxPane: "%A" }), // A's real port file
+    ];
+    const uuidForSessionId = (sid?: string) =>
+      sid === "sid-1" ? "uA" : undefined; // registry: A's current id → A's uuid
+    const uuidForPid = (pid?: number) =>
+      pid === 222 ? "uA" : pid === 111 ? "uB" : undefined;
+    expect(
+      await resolveTmuxTarget(
+        sctx({ sessionId: "sid-1", sessionPid: 111 }), // pid mis-assigned to B!
+        scan,
+        uuidForPid,
+        uuidForSessionId,
+      ),
+    ).toEqual({ pane: "%A", socket: undefined });
+  });
+
+  test("refuses when the launchUuid session has no pane (does NOT borrow a sibling's)", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "sib", ppid: 111, cwd: "/tmp", tmuxPane: "%B" }), // sibling under tmux
+      portFile({ sessionId: "sid-1", ppid: 222, cwd: "/tmp" }), // A: no pane
+    ];
+    const uuidForSessionId = (sid?: string) =>
+      sid === "sid-1" ? "uA" : undefined;
+    const uuidForPid = (pid?: number) =>
+      pid === 222 ? "uA" : pid === 111 ? "uB" : undefined;
+    expect(
+      await resolveTmuxTarget(
+        sctx({ sessionId: "sid-1", sessionPid: 222 }),
+        scan,
+        uuidForPid,
+        uuidForSessionId,
+      ),
+    ).toBeNull();
+  });
+
+  test("falls back to unique-cwd recovery when no launchUuid is known (R1)", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "old", cwd: "/tmp", tmuxPane: "%7" }),
+    ];
+    const none = () => undefined; // Cursor/bare/offline — no registry entry
+    expect(
+      await resolveTmuxTarget(
+        sctx({ sessionId: "new", sessionPid: 999 }),
+        scan,
+        none,
+        none,
+      ),
+    ).toEqual({ pane: "%7", socket: undefined });
+  });
 });
 
 describe("buildTmuxSendArgs", () => {
@@ -371,6 +429,95 @@ describe("resolveCmuxWorkspace", () => {
     expect(
       await resolveCmuxWorkspace(sctx({ sessionId: "new-id" }), scan),
     ).toBeNull();
+  });
+
+  test("anchors on the registry sessionId→launchUuid, defeating a sibling that stole the id even when the pid was mis-assigned", async () => {
+    const scan = async () => [
+      portFile({
+        sessionId: "sid-1",
+        ppid: 111,
+        cwd: "/tmp",
+        cmuxWorkspaceId: "WS-B",
+      }), // sibling B, stole A's id
+      portFile({
+        sessionId: "old-a",
+        ppid: 222,
+        cwd: "/tmp",
+        cmuxWorkspaceId: "WS-A",
+      }), // A's real port file
+    ];
+    const uuidForSessionId = (sid?: string) =>
+      sid === "sid-1" ? "uA" : undefined;
+    const uuidForPid = (pid?: number) =>
+      pid === 222 ? "uA" : pid === 111 ? "uB" : undefined;
+    expect(
+      await resolveCmuxWorkspace(
+        sctx({ sessionId: "sid-1", sessionPid: 111 }), // pid mis-assigned to B!
+        scan,
+        uuidForPid,
+        uuidForSessionId,
+      ),
+    ).toBe("WS-A");
+  });
+
+  test("launchUuid match without a workspace id refuses when a sibling shares the cwd (spawn-registry is cwd-keyed)", async () => {
+    // The cwd-keyed spawn registry (last /new spawn in a dir wins) can hold a
+    // sibling's ref, so it must NOT be trusted when a sibling shares the cwd.
+    rememberCmuxWorkspace("/tmp", "OK workspace:5");
+    const scan = async () => [
+      portFile({
+        sessionId: "sib",
+        ppid: 111,
+        cwd: "/tmp",
+        cmuxWorkspaceId: "WS-SIB",
+      }), // sibling shares the cwd
+      portFile({ sessionId: "sid-1", ppid: 222, cwd: "/tmp" }), // A: no id
+    ];
+    const uuidForSessionId = (sid?: string) =>
+      sid === "sid-1" ? "uA" : undefined;
+    const uuidForPid = (pid?: number) =>
+      pid === 222 ? "uA" : pid === 111 ? "uB" : undefined;
+    expect(
+      await resolveCmuxWorkspace(
+        sctx({ sessionId: "sid-1", sessionPid: 222 }),
+        scan,
+        uuidForPid,
+        uuidForSessionId,
+      ),
+    ).toBeNull();
+  });
+
+  test("launchUuid match without a workspace id uses the spawn-registry when alone in the cwd", async () => {
+    rememberCmuxWorkspace("/tmp", "OK workspace:5");
+    const scan = async () => [
+      portFile({ sessionId: "sid-1", ppid: 222, cwd: "/tmp" }), // A alone, no id
+    ];
+    const uuidForSessionId = (sid?: string) =>
+      sid === "sid-1" ? "uA" : undefined;
+    const uuidForPid = (pid?: number) => (pid === 222 ? "uA" : undefined);
+    expect(
+      await resolveCmuxWorkspace(
+        sctx({ sessionId: "sid-1", sessionPid: 222 }),
+        scan,
+        uuidForPid,
+        uuidForSessionId,
+      ),
+    ).toBe("workspace:5");
+  });
+
+  test("falls back to unique-cwd recovery when no launchUuid is known (R1)", async () => {
+    const scan = async () => [
+      portFile({ sessionId: "old-id", cwd: "/tmp", cmuxWorkspaceId: "WS-DIR" }),
+    ];
+    const none = () => undefined; // Cursor/bare/offline — no registry entry
+    expect(
+      await resolveCmuxWorkspace(
+        sctx({ sessionId: "new-id", sessionPid: 999 }),
+        scan,
+        none,
+        none,
+      ),
+    ).toBe("WS-DIR");
   });
 
   test("does NOT borrow a sibling's workspace id when the exact session lacks one", async () => {

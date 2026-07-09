@@ -8,9 +8,10 @@ import {
 import { findWatchByDir, findWatchBySessionId } from "../../handlers/watch";
 import {
   getTopicBySessionDir,
-  getTopicBySessionId,
+  topicForSessionId,
   getTopicStore,
 } from "../../topics";
+import { launchUuidForSessionId } from "../../sessions/resolve-session";
 
 interface PostBody {
   request_id: string;
@@ -81,9 +82,15 @@ export function createAuqBridgeRouter(): Hono {
       threadId = watch.threadId;
       sessionName = watch.sessionName;
     } else {
-      let topic =
-        (body.session_id ? getTopicBySessionId(body.session_id) : undefined) ??
-        undefined;
+      // topicForSessionId: exact live-id match first (sibling-safe), falling
+      // back to the stable launchUuid only when the topic's sessionId has gone
+      // stale (post-/clear) — recovers the AUQ route that a stale id would 404.
+      let topic = body.session_id
+        ? topicForSessionId({
+            launchUuid: launchUuidForSessionId(body.session_id),
+            sessionId: body.session_id,
+          })
+        : undefined;
       if (!topic) {
         const byDir = getTopicBySessionDir(body.cwd);
         if (byDir && !crossesSession(byDir.sessionId)) topic = byDir;

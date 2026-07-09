@@ -10,9 +10,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   pickRolledSessionId,
+  pickSessionIdForPid,
   RECENCY_ADVANTAGE_MS,
   type JsonlCandidate,
 } from "../mcp/channel-relay/session-discovery";
+import type { RegistryRecord } from "../sessions/registry";
 
 const SERVER_START = 1_000;
 const current: JsonlCandidate = {
@@ -118,5 +120,90 @@ describe("pickRolledSessionId", () => {
     ).toBeUndefined();
     // Holding b: a was modified far more recently — one forward roll, stable.
     expect(pickRolledSessionId([a, b], b, new Set(), serverStart)).toBe("a");
+  });
+});
+
+describe("pickSessionIdForPid", () => {
+  const rec = (o: Partial<RegistryRecord>): RegistryRecord => ({
+    launchUuid: "u",
+    claudePid: 1,
+    startTime: "T",
+    sessionId: "s",
+    cwd: "/c",
+    source: "startup",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...o,
+  });
+
+  test("returns the authoritative sessionId for the relay's own parent (pid, startTime)", () => {
+    const records = [
+      rec({ claudePid: 100, startTime: "SA", sessionId: "sid-A" }),
+      rec({ claudePid: 200, startTime: "SB", sessionId: "sid-B" }),
+    ];
+    expect(pickSessionIdForPid(records, 200, "SB")).toBe("sid-B");
+  });
+
+  test("never attributes a sibling's transcript — two sessions in one cwd stay distinct", () => {
+    // The exact corruption vector: the JSONL heuristic could hand pid-200's
+    // relay sid-A. Keyed on the real launch identity, it cannot.
+    const records = [
+      rec({
+        claudePid: 100,
+        startTime: "SA",
+        sessionId: "sid-A",
+        cwd: "/shared",
+      }),
+      rec({
+        claudePid: 200,
+        startTime: "SB",
+        sessionId: "sid-B",
+        cwd: "/shared",
+      }),
+    ];
+    expect(pickSessionIdForPid(records, 100, "SA")).toBe("sid-A");
+    expect(pickSessionIdForPid(records, 200, "SB")).toBe("sid-B");
+  });
+
+  test("a reused pid does NOT serve a dead session's record — the startTime disambiguates", () => {
+    // Registry records are never pruned; the OS later reuses pid 100 for a new
+    // launch (startTime NEW). During the new session's pre-hook window only the
+    // DEAD record (startTime OLD) exists — matching on pid alone would serve
+    // sid-DEAD. Requiring the startTime match returns undefined → heuristic.
+    const records = [
+      rec({ claudePid: 100, startTime: "OLD", sessionId: "sid-DEAD" }),
+    ];
+    expect(pickSessionIdForPid(records, 100, "NEW")).toBeUndefined();
+    expect(pickSessionIdForPid(records, 100, "OLD")).toBe("sid-DEAD");
+  });
+
+  test("on a duplicate write of the same launch, the latest updatedAt wins", () => {
+    const records = [
+      rec({
+        claudePid: 100,
+        startTime: "S",
+        sessionId: "sid-OLD",
+        updatedAt: "2026-01-01T00:00:00Z",
+      }),
+      rec({
+        claudePid: 100,
+        startTime: "S",
+        sessionId: "sid-NEW",
+        updatedAt: "2026-06-01T00:00:00Z",
+      }),
+    ];
+    expect(pickSessionIdForPid(records, 100, "S")).toBe("sid-NEW");
+  });
+
+  test("returns undefined when no record matches or startTime is unknown (→ heuristic fallback)", () => {
+    const records = [rec({ claudePid: 100, startTime: "S", sessionId: "sid" })];
+    expect(pickSessionIdForPid(records, 999, "S")).toBeUndefined(); // pid miss
+    expect(pickSessionIdForPid(records, 100, "")).toBeUndefined(); // ps failed
+    expect(
+      pickSessionIdForPid(
+        [rec({ claudePid: 100, startTime: "S", sessionId: "" })],
+        100,
+        "S",
+      ),
+    ).toBeUndefined(); // record has no sessionId yet
   });
 });

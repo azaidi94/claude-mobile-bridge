@@ -157,6 +157,72 @@ export function getTopicBySessionId(
   return store.topics.find((t) => t.sessionId === sessionId);
 }
 
+/**
+ * Look up a topic by its stable `launchUuid` (minted at hook-session birth,
+ * see src/sessions/registry.ts). Routed on by `topicForSession` (launchUuid-
+ * first) and `topicForSessionId` (as the stale-sessionId fallback).
+ */
+export function getTopicByLaunchUuid(
+  launchUuid: string,
+): TopicMapping | undefined {
+  if (!launchUuid) return undefined;
+  return store.topics.find((t) => t.launchUuid === launchUuid);
+}
+
+/**
+ * Resolve a session's topic, preferring the stable `launchUuid` over the
+ * name lookup. Sibling-safe on a launchUuid hit; falls back to
+ * `getTopicBySession` when there's no launchUuid or it doesn't (yet) carry
+ * a topic, so output is never dropped while the name path still exists.
+ * Deliberately does not import resolve-session (avoids an import cycle) —
+ * the caller resolves the launchUuid and passes it in.
+ */
+export function topicForSession(id: {
+  launchUuid?: string | null;
+  sessionName: string;
+}): TopicMapping | undefined {
+  if (id.launchUuid) {
+    const byLaunch = getTopicByLaunchUuid(id.launchUuid);
+    if (byLaunch) return byLaunch; // sibling-safe: exact launchUuid match
+    // launchUuid present but no topic carries it yet (e.g. pre-backfill window):
+    // fall back to the name lookup so output is never dropped. This name path is
+    // the dormant safety net kept deliberately (P3 Task 5 "delete byDir / fail
+    // loud on a hook-bearing miss" was dropped) — degrade gracefully, don't drop.
+  }
+  return getTopicBySession(id.sessionName);
+}
+
+/**
+ * Resolve a topic for a caller that holds a `sessionId` rather than a
+ * `sessionName` (e.g. the AUQ bridge route).
+ *
+ * **sessionId-first, launchUuid-fallback** — the OPPOSITE order to
+ * `topicForSession`, deliberately. `getTopicBySessionId` is an *exact* match on
+ * the live id: intrinsically sibling-safe and unambiguous whenever the topic's
+ * `sessionId` is current, so it never needs the cwd cross-guard. We only reach
+ * for `launchUuid` when the exact match misses — i.e. the topic's `sessionId`
+ * has gone stale (post-`/clear`, before the store is refreshed), which is the
+ * only case this helper exists to fix. Ordering it this way keeps the exact,
+ * unambiguous match authoritative in the healthy case and confines any reliance
+ * on the `sessionId→launchUuid` map to the narrow stale window — so a mis-mapped
+ * launchUuid can't override a topic whose live id already matches.
+ *
+ * (`topicForSession` is launchUuid-FIRST because ITS fallback is the weaker name
+ * lookup; here the fallback is the stronger exact-id match, so the order flips.)
+ * The caller resolves the launchUuid and passes it in (no resolve-session import
+ * here — avoids the cycle, mirroring `topicForSession`).
+ */
+export function topicForSessionId(id: {
+  launchUuid?: string | null;
+  sessionId: string;
+}): TopicMapping | undefined {
+  const byId = getTopicBySessionId(id.sessionId);
+  if (byId) return byId; // exact live-id match — sibling-safe, authoritative
+  // Exact match missed (stale topic sessionId) → recover via the stable id.
+  if (id.launchUuid) return getTopicByLaunchUuid(id.launchUuid);
+  return undefined;
+}
+
 export function updateTopicMapping(
   sessionName: string,
   update: Partial<TopicMapping>,
@@ -173,6 +239,7 @@ export function updateTopicMapping(
     ][]) {
       if (v === undefined) continue;
       if (k === "sessionId" && !v && mapping.sessionId) continue;
+      if (k === "launchUuid" && !v && mapping.launchUuid) continue;
       (safe as Record<string, unknown>)[k] = v;
     }
     Object.assign(mapping, safe);

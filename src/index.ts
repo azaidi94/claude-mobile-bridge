@@ -57,11 +57,12 @@ import {
   loadTopicStore,
   setChatId,
   getTopicBySession,
-  getThreadId,
   getTopicStore,
   backfillLedgerFromStore,
   TopicManager,
 } from "./topics";
+import { topicForSession } from "./topics/topic-store";
+import { launchUuidForPid } from "./sessions/resolve-session";
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
@@ -131,7 +132,10 @@ setOnSessionStateCreated((state) => {
   const unsub = globalEventBus.subscribe(sessionName, (evt) => {
     if (evt.type !== "mode_change") return;
     const info = getSession(sessionName);
-    const topicId = getThreadId(sessionName);
+    const topicId = topicForSession({
+      launchUuid: launchUuidForPid(info?.pid),
+      sessionName,
+    })?.topicId;
     const dir = info?.dir ?? state.workingDir;
     getGitBranch(dir)
       .then((branch) => {

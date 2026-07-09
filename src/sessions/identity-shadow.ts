@@ -95,6 +95,51 @@ function scalar(
   return r.record[want];
 }
 
+export function shadowLaunchUuid(snap: ResolveSnapshot): void {
+  try {
+    for (const [pid, uuid] of snap.launchUuidByPid ?? []) {
+      const byLaunch = resolveSession({ by: "launchId", launchId: uuid }, snap);
+      const byPid = resolveSession({ by: "pid", pid }, snap);
+      const a =
+        byLaunch.status === "resolved"
+          ? byLaunch.record.sessionId
+          : byLaunch.status;
+      const b =
+        byPid.status === "resolved" ? byPid.record.sessionId : byPid.status;
+      if (a !== b)
+        info("identity-shadow: launchUuid divergence", {
+          pid,
+          uuid,
+          byLaunch: String(a),
+          byPid: String(b),
+        });
+    }
+  } catch {
+    /* observe-only */
+  }
+}
+
+export function shadowTopicByLaunchUuid(snap: ResolveSnapshot): void {
+  try {
+    for (const [pid, uuid] of snap.launchUuidByPid ?? []) {
+      const byLaunch = snap.topics.find((t) => t.launchUuid === uuid)?.topicId;
+      if (byLaunch === undefined) continue; // not backfilled yet → pending, not divergence
+      const res = resolveSession({ by: "pid", pid }, snap);
+      const byToday = res.status === "resolved" ? res.record.topicId : null;
+      if (byToday === null || byToday === undefined) continue;
+      if (byLaunch !== byToday)
+        info("identity-shadow: topic launchUuid divergence", {
+          pid,
+          uuid,
+          byLaunch,
+          byToday,
+        });
+    }
+  } catch {
+    /* observe-only */
+  }
+}
+
 export function shadowResolveSession(
   site: string,
   currentAnswer: string | number | null,

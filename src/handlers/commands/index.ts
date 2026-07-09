@@ -64,6 +64,8 @@ export { handlePwd, handleCd, handleLs } from "./files";
 export { handleApp } from "./app";
 
 export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
+export { handleVerbose } from "./verbose";
+export { handleTmux, handlePeek, handleTmuxCallback } from "./tmux";
 
 export {
   handleCursorBridge,

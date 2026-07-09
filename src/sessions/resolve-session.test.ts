@@ -78,3 +78,31 @@ test("current snapshot round-trips", () => {
   setCurrentSnapshot(s);
   expect(getCurrentSnapshot()).toBe(s);
 });
+
+test("resolveSession by launchId returns the record with that launchUuid", () => {
+  const snap = {
+    aliveRelays: [
+      {
+        port: 1,
+        pid: 10,
+        ppid: 100,
+        cwd: "/a",
+        startedAt: "t",
+        sessionId: "sX",
+      } as any,
+    ],
+    topics: [],
+  };
+  // populate launchUuid on the built record via the new snapshot field
+  const s = { ...snap, launchUuidByPid: new Map([[100, "L-1"]]) } as any;
+  const r = resolveSession({ by: "launchId", launchId: "L-1" }, s);
+  expect(r.status).toBe("resolved");
+  if (r.status === "resolved") expect(r.record.launchUuid).toBe("L-1");
+});
+
+test("resolveSession by launchId misses when no record carries it", () => {
+  const snap = { aliveRelays: [], topics: [] } as any;
+  expect(
+    resolveSession({ by: "launchId", launchId: "nope" }, snap).status,
+  ).toBe("miss");
+});

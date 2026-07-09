@@ -1,3 +1,7 @@
+process.env.TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "test-token";
+process.env.TELEGRAM_ALLOWED_USERS =
+  process.env.TELEGRAM_ALLOWED_USERS || "12345";
+
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { tmpdir } from "os";
 import { mkdtempSync, rmSync } from "fs";
@@ -8,9 +12,11 @@ const busCalls: Array<{ threadId?: number; content: string }> = [];
 const relayCalls: Array<{ text: string }> = [];
 let relayAvailable = true;
 
-mock.module("../topics", () => ({
-  getTopicBySession: (n: string) =>
-    n === "proj" ? { topicId: 42, sessionDir: "/tmp/proj" } : undefined,
+// getSession is mocked per-test via sessionsByPid; scheduler.ts only pulls
+// `getSession` out of "../sessions", so this narrow mock is safe.
+const sessionsByName = new Map<string, { pid?: number }>();
+mock.module("../sessions", () => ({
+  getSession: (n: string) => sessionsByName.get(n) ?? null,
 }));
 
 mock.module("../messaging", () => ({
@@ -34,17 +40,35 @@ mock.module("../relay/discovery", () => ({
       : null,
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
   testDir = mkdtempSync(join(tmpdir(), "cron-sched-"));
   process.env.CRON_STORE_PATH = join(testDir, "cron.json");
+  process.env.CLAUDE_TELEGRAM_TOPICS_FILE = join(testDir, "topics.json");
   busCalls.length = 0;
   relayCalls.length = 0;
   relayAvailable = true;
+  sessionsByName.clear();
+
+  const { clearTopicStore, addTopicMapping } =
+    await import("../topics/topic-store");
+  clearTopicStore();
+  addTopicMapping({
+    sessionName: "proj",
+    topicId: 42,
+    sessionDir: "/tmp/proj",
+    isOnline: true,
+    createdAt: new Date().toISOString(),
+  });
 });
 
-afterEach(() => {
+afterEach(async () => {
   rmSync(testDir, { recursive: true, force: true });
   delete process.env.CRON_STORE_PATH;
+  delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
+  const { clearTopicStore } = await import("../topics/topic-store");
+  clearTopicStore();
+  const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+  setCurrentSnapshot({ aliveRelays: [], topics: [] });
 });
 
 async function freshStore() {
@@ -152,6 +176,47 @@ describe("cron scheduler tick", () => {
     expect(content).not.toContain("<script>");
     expect(content).toContain("&lt;script&gt;");
     expect(content).toContain("&lt;/script&gt;");
+  });
+
+  it("resolves the topic via launchUuid when the session is live, even if the name maps elsewhere", async () => {
+    const store = await freshStore();
+    await store.addJob({
+      schedule: "* * * * *",
+      sessionName: "proj",
+      prompt: "x",
+      enabled: true,
+    });
+
+    const { addTopicMapping } = await import("../topics/topic-store");
+    // A different topic claims launchUuid "U1" under a different session
+    // name — a name-only lookup for "proj" would land on topicId 42
+    // (seeded in beforeEach) instead.
+    addTopicMapping({
+      sessionName: "other",
+      topicId: 77,
+      sessionDir: "/tmp/other",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+      launchUuid: "U1",
+    });
+
+    const PID = 4242;
+    sessionsByName.set("proj", { pid: PID });
+    const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+    setCurrentSnapshot({
+      aliveRelays: [],
+      topics: [],
+      launchUuidByPid: new Map([[PID, "U1"]]),
+    });
+
+    const { tick } = await import("../cron/scheduler");
+    await tick(
+      {} as import("grammy").Api,
+      -100,
+      new Date("2026-05-31T09:00:00Z"),
+    );
+    expect(busCalls).toHaveLength(1);
+    expect(busCalls[0]?.threadId).toBe(77);
   });
 });
 

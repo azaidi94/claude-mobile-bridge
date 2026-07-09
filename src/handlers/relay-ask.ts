@@ -18,7 +18,9 @@ import { escapeHtml } from "../formatting";
 import { BUTTON_LABEL_MAX_LENGTH } from "../config";
 import { debug, info, warn } from "../logger";
 import { globalEventBus } from "../web/sse";
-import { getThreadId } from "../topics";
+import { topicForSession } from "../topics/topic-store";
+import { getSession } from "../sessions";
+import { launchUuidForPid } from "../sessions/resolve-session";
 
 interface PendingAsk {
   client: RelayClient;
@@ -160,7 +162,10 @@ export async function postQuestionToTelegram(
       ? Number(req.thread_id)
       : undefined;
   if (threadId === undefined && client.sessionName) {
-    const fallback = getThreadId(client.sessionName);
+    const fallback = topicForSession({
+      launchUuid: launchUuidForPid(getSession(client.sessionName)?.pid),
+      sessionName: client.sessionName,
+    })?.topicId;
     if (typeof fallback === "number" && Number.isFinite(fallback)) {
       threadId = fallback;
       debug("relay-ask: resolved thread_id via session→topic store", {

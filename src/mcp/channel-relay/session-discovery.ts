@@ -4,6 +4,44 @@
  * + MCP transport on import, so its logic can't be exercised directly).
  */
 
+import type { RegistryRecord } from "../../sessions/registry";
+
+/**
+ * The AUTHORITATIVE sessionId for the relay's own Claude process, read from the
+ * P2 registry by the relay's parent `(claudePid, startTime)`. The SessionStart
+ * hook writes this record keyed on that exact pair (`mintDecision`) and
+ * re-anchors its `sessionId` on every `/clear`, so it is the per-process
+ * attribution signal the JSONL heuristic (`pickRolledSessionId`) lacks: with two
+ * sessions diverging in one cwd, the heuristic can hand a relay its SIBLING's
+ * transcript (stamping the wrong sessionId into the port file — the
+ * routing-corruption vector); keyed on the real launch identity, this cannot.
+ *
+ * The `startTime` match (the process's `ps -o lstart` string, exactly as both the
+ * relay and the hook compute it) is essential, NOT just `claudePid`: registry
+ * records are never pruned, so on a long-lived machine a dead session's record
+ * can linger under a pid the OS later reuses for a new Claude launch. Matching
+ * only the pid would then serve that dead session's stale sessionId during the
+ * new session's pre-hook window. The `(pid, startTime)` pair is unique per launch.
+ *
+ * `undefined` (no matching record — a non-hook session, or the pre-hook startup
+ * window) tells the caller to fall back to the JSONL heuristic. Latest
+ * `updatedAt` is a defensive tie-break for duplicate writes of the same launch.
+ */
+export function pickSessionIdForPid(
+  records: readonly RegistryRecord[],
+  claudePid: number,
+  startTime: string,
+): string | undefined {
+  if (!startTime) return undefined; // no reliable launch identity → use heuristic
+  let best: RegistryRecord | undefined;
+  for (const r of records) {
+    if (r.claudePid !== claudePid || r.startTime !== startTime || !r.sessionId)
+      continue;
+    if (!best || r.updatedAt > best.updatedAt) best = r;
+  }
+  return best?.sessionId;
+}
+
 /** One hour. A JSONL modified this much more recently than the current one is
  * treated as a newer conversation even if birthtime ordering is inverted
  * (handles `claude --resume` of a transcript born before the current one). */
