@@ -23,13 +23,32 @@ import { backfillPortFileSessionIds } from "../relay/backfill";
 import { STATE_DIR } from "../paths";
 // Imported from the leaf module (not the barrel) to avoid a topics→sessions
 // import cycle. Read-only: used to pin session names across restarts.
-import { getTopicStore, updateTopicMapping } from "../topics/topic-store";
+import {
+  getTopicStore,
+  updateTopicMapping,
+  getTopicByLaunchUuid,
+} from "../topics/topic-store";
+import { reapDeadTopics, reaperEnabled } from "./topic-reaper";
 import { topicSessionIdRefreshPlan } from "./topic-id-refresh";
+import { topicLaunchUuidBackfillPlan } from "./topic-launchuuid-backfill";
 import { dropSessionState } from "./session-state";
 import { reportIdentityViolations } from "./identity-report";
-import { shadowCompareIdentities } from "./identity-shadow";
+import {
+  shadowCompareIdentities,
+  shadowLaunchUuid,
+  shadowTopicByLaunchUuid,
+} from "./identity-shadow";
 import { resolveIdentities, type ResolvedIdentity } from "./identity";
-import { setCurrentSnapshot } from "./resolve-session";
+import {
+  setCurrentSnapshot,
+  getCurrentSnapshot,
+  launchUuidForPid,
+} from "./resolve-session";
+import {
+  readRegistry,
+  launchUuidByClaudePid,
+  launchUuidBySessionId,
+} from "./registry";
 
 const execAsync = promisify(exec);
 
@@ -300,12 +319,18 @@ async function scanSessions(): Promise<{
 
   // Scan port files early for disambiguation
   const portFiles = await scanPortFiles(true);
+  const registry = readRegistry();
+  const launchUuidByPid = launchUuidByClaudePid(registry);
   setCurrentSnapshot({
     aliveRelays: portFiles,
     // Shallow-copy: the store replaces this array on remove but mutates it in
     // place on add, so a stored reference wouldn't be a true point-in-time snapshot.
     topics: [...getTopicStore().topics],
+    launchUuidByPid,
+    launchUuidBySessionId: launchUuidBySessionId(registry),
   });
+  shadowLaunchUuid(getCurrentSnapshot()); // observe-only
+  shadowTopicByLaunchUuid(getCurrentSnapshot()); // observe-only
   const portSessionIds = new Set(
     portFiles.flatMap((pf) => (pf.sessionId ? [pf.sessionId] : [])),
   );
@@ -628,8 +653,12 @@ export function assignPidsToSessions(
     }
   }
 
-  // Third pass: dir-based fallback only when there is exactly one live
-  // unmatched process for the directory. Multiple matches are ambiguous.
+  // Third pass: dir-based ("byDir") fallback — legacy filesystem inference,
+  // reached only for sessions the authoritative passes above (process sessionId,
+  // then port-file bridge) couldn't identify. Fires only for a SINGLE live
+  // unmatched process per dir (ambiguous dirs are left unassigned — never
+  // guessed across siblings). A dormant safety net kept deliberately (P3 Task 5
+  // "delete byDir" dropped); hook-bearing sessions are already matched above.
   const unmatched = sessions.filter((s) => !s.pid);
   if (unmatched.length === 0) return;
 
@@ -653,7 +682,18 @@ export function assignPidsToSessions(
     if (!pids || pids.length === 0) continue;
 
     if (pids.length === 1 && dirSessions.length === 1) {
-      for (const s of dirSessions) s.pid = pids[0];
+      const pid = pids[0]!;
+      for (const s of dirSessions) s.pid = pid;
+      // Tripwire: a hook-bearing pid (one with a launchUuid) reached this legacy
+      // byDir pass — the authoritative sessionId/port-file passes above should
+      // have matched it. Likely an identity bug. The Cursor/bare/offline
+      // carve-outs have no launchUuid and stay silent.
+      if (launchUuidForPid(pid)) {
+        warn(
+          "watcher: byDir fallback assigned a HOOK-BEARING pid — authoritative id passes missed it; likely a bug",
+          { dir, claudePid: pid },
+        );
+      }
     } else if (pids.length > 1 || dirSessions.length > 1) {
       warn(
         `watcher: ambiguous pid assignment for ${dir} (${dirSessions.length} sessions, ${pids.length} processes)`,
@@ -666,6 +706,43 @@ export function assignPidsToSessions(
  * Inner refresh implementation. Contains the real scan + cache-update logic.
  * Call via the serialized `refresh()` wrapper — do not call directly.
  */
+// Bot-boot timestamp for the topic-reaper grace window: never auto-delete a
+// topic within the first REAP_GRACE_MS after start, so a restart can't mass-
+// delete before we've re-observed the live pids.
+const watcherBootMs = Date.now();
+const REAP_GRACE_MS = 30_000;
+
+/**
+ * Auto-delete topics whose Claude session has ended (P3 Task 6). Gated behind
+ * `CLAUDE_TOPIC_REAPER=1` (default off — destructive/outward-facing). Called
+ * once per refresh; keyed on launchUuid via the registry + topic store. The
+ * topic-manager is resolved lazily (only when enabled) to avoid a static import
+ * cycle, and any failure is swallowed so it can never break the refresh.
+ */
+async function runTopicReaper(): Promise<void> {
+  if (!reaperEnabled()) return;
+  try {
+    const running = await getRunningClaudeProcesses();
+    const livePids = new Set(running.map((p) => p.pid));
+    const { getTopicManager } = await import("../handlers/commands/helpers");
+    const tm = getTopicManager();
+    if (!tm) return;
+    await reapDeadTopics({
+      records: readRegistry(),
+      livePids,
+      inGrace: Date.now() - watcherBootMs < REAP_GRACE_MS,
+      hasTopic: (uuid) => !!getTopicByLaunchUuid(uuid),
+      deleteTopic: async (uuid) => {
+        const t = getTopicByLaunchUuid(uuid);
+        if (t) await tm.deleteTopic(t.sessionName);
+      },
+      log: (msg, meta) => info(`${msg} ${JSON.stringify(meta ?? {})}`),
+    });
+  } catch (e) {
+    warn(`topic-reaper: refresh wiring failed: ${String(e)}`);
+  }
+}
+
 async function doRefresh(): Promise<SessionDiff> {
   // Backfill sessionId onto any alive port file that lacks one BEFORE we
   // resolve sessions, so a session that appeared after startup (its port file
@@ -710,18 +787,44 @@ async function doRefresh(): Promise<SessionDiff> {
 
   const { sessions: discovered, portFiles } = await scanSessions();
 
-  // Re-anchor each topic's stored sessionId to its live port file (matched by
-  // topicName). After a desktop /clear the session id changes and the port file
-  // is refreshed, but the topic store keeps the old id — breaking sessionId-keyed
-  // routing (e.g. the AUQ bridge 404s, then the cwd fallback fails once the
-  // session works in a subdir). Sibling-safe: skips topics two live port files
-  // disagree on. Only writes on an actual change.
+  // P3 Task 6: reap topics for ended sessions (gated, default off).
+  await runTopicReaper();
+
+  // Re-anchor each topic's stored sessionId. Hook-bearing topics (those with
+  // a launchUuid) are refreshed from the registry — the authoritative,
+  // launchUuid-keyed identity source re-anchored by the SessionStart hook on
+  // every /clear. Topics with no launchUuid (R1: Cursor/bare) fall back to
+  // matching the live port file by topicName. Sibling-safe: the R1 fallback
+  // skips topics two live port files disagree on. Only writes on an actual
+  // change.
+  const registryViews = readRegistry().map((r) => ({
+    launchUuid: r.launchUuid,
+    sessionId: r.sessionId,
+  }));
   for (const { sessionName, sessionId } of topicSessionIdRefreshPlan(
+    registryViews,
     portFiles,
     getTopicStore().topics,
   )) {
     updateTopicMapping(sessionName, { sessionId });
     info(`identity: topic ${sessionName} sessionId refreshed → ${sessionId}`);
+  }
+
+  // Backfill launchUuid onto topics that already have a sessionId but no
+  // launchUuid yet (e.g. topics created before P3a shipped). Additive/
+  // observe-only — a failure here must never break the refresh.
+  try {
+    for (const { sessionName, launchUuid } of topicLaunchUuidBackfillPlan(
+      getTopicStore().topics,
+      launchUuidBySessionId(readRegistry()),
+    )) {
+      updateTopicMapping(sessionName, { launchUuid });
+      info(
+        `identity: topic ${sessionName} launchUuid backfilled → ${launchUuid}`,
+      );
+    }
+  } catch (err) {
+    warn(`identity: launchUuid backfill failed: ${err}`);
   }
 
   // Keep non-desktop sessions (telegram, cursor); only desktop sessions are

@@ -8,6 +8,8 @@ export {
   getTopicBySession,
   getTopicBySessionDir,
   getTopicBySessionId,
+  getTopicByLaunchUuid,
+  topicForSessionId,
   getSessionByTopic,
   updateTopicMapping,
   clearTopicStore,

@@ -112,6 +112,7 @@ mock.module("../settings", () => ({
   getDefaultModelSetting: () => undefined,
   getEnablePinnedStatus: () => true,
   getWatchImages: () => true,
+  getVerboseLevel: () => 1,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
   getCursorEnabled: () => true,

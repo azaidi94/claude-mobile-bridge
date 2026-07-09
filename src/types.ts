@@ -118,6 +118,7 @@ export interface TopicMapping {
   sessionName: string;
   sessionDir: string;
   sessionId?: string;
+  launchUuid?: string;
   isOnline: boolean;
   createdAt: string;
 }

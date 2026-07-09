@@ -41,6 +41,9 @@ import {
   handleRefresh,
   handlePin,
   handleGroupMode,
+  handleVerbose,
+  handleTmux,
+  handlePeek,
   handleCursorBridge,
   handleCleanZombie,
   handleCron,
@@ -292,6 +295,9 @@ export function createBot(options: BotOptions): Bot {
   bot.command("unwatch", withSctx(handleUnwatch));
   bot.command("pin", withSctx(handlePin));
   bot.command("groupmode", handleGroupMode);
+  bot.command("verbose", handleVerbose);
+  bot.command("tmux", handleTmux);
+  bot.command("peek", handlePeek);
   bot.command("cursor", handleCursorBridge);
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("cron", withSctx(handleCron));

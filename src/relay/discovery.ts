@@ -13,7 +13,11 @@ import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 import { attachAskRemoteToRelay } from "../handlers/relay-ask";
-import { resolveSession, type Handle } from "../sessions/resolve-session";
+import {
+  resolveSession,
+  launchUuidForPid,
+  type Handle,
+} from "../sessions/resolve-session";
 
 export interface PortFileData {
   port: number;
@@ -414,9 +418,37 @@ function _selectRelayTargetImpl(
     return null;
   }
 
+  // Legacy cwd ("byDir") fallback — the filesystem-inference path the identity
+  // initiative (P1–P3) moved routing OFF. It is now a DORMANT safety net, not the
+  // active router: hook-bearing sessions resolve launchUuid-first upstream (topics,
+  // inject, relay all key on the stable id + the registry) and never reach here.
+  // It still fires only for the legitimate carve-outs that have no launchUuid —
+  // Cursor (`cursor-<slug>`), bare `claude`, offline/history — where it is already
+  // sibling-safe (a single-session dir only; ambiguous dirs refuse below). Kept
+  // deliberately (P3 Task 5 "delete byDir" was dropped) so a launchUuid hiccup
+  // degrades to cwd routing instead of failing hard. Do NOT make this the primary
+  // path again — it is the source of the sibling cross-wire bug class.
   if (selector.sessionDir) {
     const byDir = alive.filter((pf) => pf.cwd === selector.sessionDir);
-    if (byDir.length === 1) return byDir[0]!;
+    if (byDir.length === 1) {
+      // Tripwire: if the byDir-matched session has a launchUuid, it is
+      // hook-bearing and should have been resolved by the id path upstream —
+      // reaching this legacy cwd fallback means the launchUuid routing missed.
+      // That's a bug (not the expected Cursor/bare/offline carve-out). Shout so
+      // it's caught; still return the match so routing degrades rather than breaks.
+      const pf = byDir[0]!;
+      if (launchUuidForPid(pf.ppid)) {
+        warn(
+          "relay: byDir fallback routed a HOOK-BEARING session — launchUuid routing should have matched it; likely an identity bug",
+          {
+            sessionDir: selector.sessionDir,
+            sessionId: pf.sessionId,
+            claudePid: pf.ppid,
+          },
+        );
+      }
+      return pf;
+    }
     if (byDir.length > 1) {
       warn("relay: ambiguous selection", {
         sessionDir: selector.sessionDir,

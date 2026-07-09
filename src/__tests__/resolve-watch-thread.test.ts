@@ -53,4 +53,59 @@ describe("resolveWatchThread", () => {
       await import("../handlers/watch/outbound-thread");
     expect(resolveWatchThread({ sessionName: "S", threadId: 3 })).toBe(3);
   });
+
+  test("launchUuid wins over a wrong sessionName", async () => {
+    const { addTopicMapping } = await import("../topics/topic-store");
+    const { resolveWatchThread } =
+      await import("../handlers/watch/outbound-thread");
+    const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+
+    addTopicMapping(
+      makeMapping({ sessionName: "RIGHTNAME", topicId: 9, launchUuid: "U" }),
+    );
+    // A different topic even claims the wrong sessionName, so a name-only
+    // lookup would land here instead of the launchUuid-matched topic.
+    addTopicMapping(makeMapping({ sessionName: "WRONGNAME", topicId: 42 }));
+
+    const PID = 4242;
+    setCurrentSnapshot({
+      aliveRelays: [],
+      topics: [],
+      launchUuidByPid: new Map([[PID, "U"]]),
+    });
+
+    expect(
+      resolveWatchThread({
+        sessionName: "WRONGNAME",
+        sessionPid: PID,
+        threadId: 3,
+      }),
+    ).toBe(9);
+
+    setCurrentSnapshot({ aliveRelays: [], topics: [] });
+  });
+});
+
+describe("launchUuidForPid", () => {
+  afterEach(async () => {
+    const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+    setCurrentSnapshot({ aliveRelays: [], topics: [] });
+  });
+
+  test("undefined pid returns undefined", async () => {
+    const { launchUuidForPid } = await import("../sessions/resolve-session");
+    expect(launchUuidForPid(undefined)).toBeUndefined();
+  });
+
+  test("seeded snapshot returns the mapped uuid", async () => {
+    const { launchUuidForPid, setCurrentSnapshot } =
+      await import("../sessions/resolve-session");
+    setCurrentSnapshot({
+      aliveRelays: [],
+      topics: [],
+      launchUuidByPid: new Map([[123, "U"]]),
+    });
+    expect(launchUuidForPid(123)).toBe("U");
+    expect(launchUuidForPid(999)).toBeUndefined();
+  });
 });

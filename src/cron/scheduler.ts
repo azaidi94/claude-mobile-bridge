@@ -16,7 +16,9 @@
 import type { Api } from "grammy";
 import { parseCron, matchesAt } from "./parser";
 import { getJobs, markRun, type CronJob } from "./store";
-import { getTopicBySession } from "../topics";
+import { topicForSession } from "../topics/topic-store";
+import { getSession } from "../sessions";
+import { launchUuidForPid } from "../sessions/resolve-session";
 import { getMessageBus } from "../messaging";
 import { getRelayClient } from "../relay/discovery";
 import { escapeHtml } from "../formatting";
@@ -45,7 +47,10 @@ async function fireJob(
   job: CronJob,
   now: Date,
 ): Promise<void> {
-  const topic = getTopicBySession(job.sessionName);
+  const topic = topicForSession({
+    launchUuid: launchUuidForPid(getSession(job.sessionName)?.pid),
+    sessionName: job.sessionName,
+  });
   const threadId = topic?.topicId;
 
   const headerLines = [

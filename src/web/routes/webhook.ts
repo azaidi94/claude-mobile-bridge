@@ -10,7 +10,7 @@
  * Request body (JSON):
  *   { session?: string, topicId?: number, text: string, source?: string }
  *
- * - session: routes via topic-store.getTopicBySession
+ * - session: routes via topic-store.topicForSession (launchUuid-first, name fallback)
  * - topicId: direct thread_id (skips session lookup; useful for General topic)
  * - text: message body (markdown → HTML via bus auto-format)
  * - source: optional label prepended as "🪝 <source>:" header
@@ -19,7 +19,9 @@
 import { Hono } from "hono";
 import { WEBHOOK_SECRET } from "../../config";
 import { timingSafeCompare } from "../auth";
-import { getTopicBySession, getTopicStore } from "../../topics";
+import { getTopicStore, topicForSession } from "../../topics/topic-store";
+import { getSession } from "../../sessions";
+import { launchUuidForPid } from "../../sessions/resolve-session";
 import { getMessageBus } from "../../messaging";
 import { escapeHtml } from "../../formatting";
 import { info, warn } from "../../logger";
@@ -67,7 +69,10 @@ export function createWebhookRouter(): Hono {
     if (typeof body.topicId === "number") {
       threadId = body.topicId;
     } else if (body.session) {
-      const mapping = getTopicBySession(body.session);
+      const mapping = topicForSession({
+        launchUuid: launchUuidForPid(getSession(body.session)?.pid),
+        sessionName: body.session,
+      });
       if (!mapping) {
         return c.json(
           { ok: false, error: `unknown session: ${body.session}` },

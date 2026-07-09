@@ -42,7 +42,7 @@ import { renderToolResult } from "./tool-results";
 import { renderImage } from "./image";
 import { stopWatchTyping, touchWatchTyping } from "./typing";
 import { markWorking, markDone } from "../reactions";
-import { getWatchImages } from "../../settings";
+import { getWatchImages, getVerboseLevel } from "../../settings";
 
 /**
  * Map a TailEvent to an SseEvent and emit it to the session's SSE bus.
@@ -201,12 +201,21 @@ export function handleTailEvent(
     markDone(botApi, chatId, threadId);
   }
 
+  // Verbose level 0 (quiet): stream the final text only — suppress the
+  // tool/thinking/result/image noise. Watchdog + typing + reactions above still
+  // fire, so the user still sees "Claude is working". ask_user_question,
+  // permission_mode and hook_summary are NOT suppressed (interactive/essential),
+  // and tool_result still resolves an answered AUQ card (finalizeAskCard).
+  const quiet = getVerboseLevel() === 0;
+
   switch (event.type) {
     case "thinking":
+      if (quiet) break;
       renderThinking(botApi, state, event, threadId);
       break;
 
     case "tool":
+      if (quiet) break;
       renderTool(botApi, state, event, threadId);
       break;
 
@@ -218,12 +227,14 @@ export function handleTailEvent(
       // A native AskUserQuestion answered at the desktop resolves its
       // observation card in place; skip the generic result rendering.
       if (finalizeAskCard(botApi, state, event)) break;
+      if (quiet) break;
       renderToolResult(botApi, state, event, threadId);
       break;
 
     case "image":
-      // Off = fully silent (no marker). Default on.
-      if (getWatchImages()) renderImage(botApi, state, event, threadId);
+      // Off = fully silent (no marker). Default on. Also suppressed when quiet.
+      if (!quiet && getWatchImages())
+        renderImage(botApi, state, event, threadId);
       break;
 
     case "permission_mode":

@@ -9,11 +9,17 @@
  * the mapping is gone (topic deleted) so output is never dropped.
  */
 
-import { getTopicBySession } from "../../topics/topic-store";
+import { topicForSession } from "../../topics/topic-store";
+import { launchUuidForPid } from "../../sessions/resolve-session";
 
 export function resolveWatchThread(ws: {
   sessionName: string;
+  sessionPid?: number;
   threadId: number;
 }): number {
-  return getTopicBySession(ws.sessionName)?.topicId ?? ws.threadId;
+  const launchUuid = launchUuidForPid(ws.sessionPid);
+  return (
+    topicForSession({ launchUuid, sessionName: ws.sessionName })?.topicId ??
+    ws.threadId
+  );
 }

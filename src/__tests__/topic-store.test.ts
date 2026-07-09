@@ -249,4 +249,166 @@ describe("topic-store", () => {
     expect(getSessionByTopic(10)!.sessionName).toBe("proj-main");
     expect(getSessionByTopic(20)!.sessionName).toBe("proj-feature");
   });
+
+  test("getTopicByLaunchUuid finds by launchUuid and ignores falsy", async () => {
+    const {
+      addTopicMapping,
+      getTopicByLaunchUuid,
+      setChatId,
+      clearTopicStore,
+    } = await import("../topics/topic-store");
+    clearTopicStore();
+    setChatId(-100);
+    addTopicMapping({
+      topicId: 5,
+      sessionName: "kx",
+      sessionDir: "/k",
+      sessionId: "s1",
+      isOnline: true,
+      createdAt: "t",
+      launchUuid: "u1",
+    });
+
+    expect(getTopicByLaunchUuid("u1")?.topicId).toBe(5);
+    expect(getTopicByLaunchUuid("")).toBeUndefined();
+    expect(getTopicByLaunchUuid("nope")).toBeUndefined();
+  });
+
+  describe("topicForSession", () => {
+    test("launchUuid hit wins even when a different topic has the passed sessionName", async () => {
+      const { addTopicMapping, topicForSession, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 5,
+        sessionName: "other-session",
+        sessionDir: "/k",
+        isOnline: true,
+        createdAt: "t",
+        launchUuid: "U",
+      });
+      addTopicMapping({
+        topicId: 6,
+        sessionName: "wrong-name",
+        sessionDir: "/j",
+        isOnline: true,
+        createdAt: "t",
+      });
+
+      const result = topicForSession({
+        launchUuid: "U",
+        sessionName: "wrong-name",
+      });
+      expect(result?.topicId).toBe(5);
+    });
+
+    test("launchUuid miss falls back to name lookup", async () => {
+      const { addTopicMapping, topicForSession, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 7,
+        sessionName: "by-name",
+        sessionDir: "/k",
+        isOnline: true,
+        createdAt: "t",
+      });
+
+      const result = topicForSession({
+        launchUuid: "does-not-exist",
+        sessionName: "by-name",
+      });
+      expect(result?.topicId).toBe(7);
+    });
+
+    test("no launchUuid falls back to name lookup", async () => {
+      const { addTopicMapping, topicForSession, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 8,
+        sessionName: "by-name-2",
+        sessionDir: "/k",
+        isOnline: true,
+        createdAt: "t",
+      });
+
+      const result = topicForSession({ sessionName: "by-name-2" });
+      expect(result?.topicId).toBe(8);
+    });
+  });
+
+  describe("topicForSessionId", () => {
+    test("exact live-id match wins over a launchUuid pointing elsewhere", async () => {
+      // sessionId-first: when a topic's sessionId equals the live id, it is
+      // returned even if the passed launchUuid resolves to a different topic —
+      // the exact match is authoritative and can't be overridden by a bad map.
+      const { addTopicMapping, topicForSessionId, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 1,
+        sessionName: "a",
+        sessionDir: "/k",
+        isOnline: true,
+        createdAt: "t",
+        launchUuid: "U", // a stale/bad map could point live-sid here…
+      });
+      addTopicMapping({
+        topicId: 2,
+        sessionName: "b",
+        sessionDir: "/k",
+        sessionId: "live-sid", // …but this topic owns the live id
+        isOnline: true,
+        createdAt: "t",
+      });
+      expect(
+        topicForSessionId({ launchUuid: "U", sessionId: "live-sid" })?.topicId,
+      ).toBe(2);
+    });
+
+    test("recovers via launchUuid when the topic's sessionId is stale (exact match misses)", async () => {
+      const { addTopicMapping, topicForSessionId, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 5,
+        sessionName: "s",
+        sessionDir: "/k",
+        sessionId: "old-sid", // stale (pre-/clear)
+        isOnline: true,
+        createdAt: "t",
+        launchUuid: "U",
+      });
+
+      const result = topicForSessionId({
+        launchUuid: "U",
+        sessionId: "live-sid",
+      });
+      expect(result?.topicId).toBe(5);
+    });
+
+    test("no launchUuid falls back to the sibling-safe sessionId lookup", async () => {
+      const { addTopicMapping, topicForSessionId, setChatId, clearTopicStore } =
+        await import("../topics/topic-store");
+      clearTopicStore();
+      setChatId(-100);
+      addTopicMapping({
+        topicId: 9,
+        sessionName: "s",
+        sessionDir: "/k",
+        sessionId: "sid-9",
+        isOnline: true,
+        createdAt: "t",
+      });
+
+      expect(topicForSessionId({ sessionId: "sid-9" })?.topicId).toBe(9);
+      expect(topicForSessionId({ sessionId: "nope" })).toBeUndefined();
+    });
+  });
 });

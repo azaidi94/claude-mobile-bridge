@@ -65,9 +65,9 @@ describe("renderSettingsBody", () => {
     expect(body).toContain("━ Claude defaults ━");
     expect(body).toContain("Terminal.app");
     expect(body).toContain("Opus 4.6");
-    // All nine fields should be marked (default).
+    // All ten fields should be marked (default).
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(9);
+    expect(defaultMatches.length).toBe(10);
   });
 
   test("drops (default) marker on fields with overrides", async () => {
@@ -77,9 +77,9 @@ describe("renderSettingsBody", () => {
     const body = renderSettingsBody();
     expect(body).toContain("iTerm2");
     expect(body).toContain("<code>off</code>");
-    // Terminal + autowatch now explicit; the other seven fields still default = 7.
+    // Terminal + autowatch now explicit; the other eight fields still default = 8.
     const defaultMatches = body.match(/<i>\(default\)<\/i>/g) ?? [];
-    expect(defaultMatches.length).toBe(7);
+    expect(defaultMatches.length).toBe(8);
   });
 
   test("truncates long working dirs with leading ellipsis", async () => {
@@ -97,15 +97,16 @@ describe("renderSettingsBody", () => {
 });
 
 describe("renderSettingsKeyboard", () => {
-  test("has nine edit buttons in 5-row layout", async () => {
+  test("has ten edit buttons in 6-row layout", async () => {
     const { renderSettingsKeyboard } = await import("../handlers/settings");
     const kb = renderSettingsKeyboard();
-    expect(kb.inline_keyboard.length).toBe(5);
+    expect(kb.inline_keyboard.length).toBe(6);
     expect(kb.inline_keyboard[0]!.length).toBe(2);
     expect(kb.inline_keyboard[1]!.length).toBe(2);
     expect(kb.inline_keyboard[2]!.length).toBe(2);
-    expect(kb.inline_keyboard[3]!.length).toBe(2);
-    expect(kb.inline_keyboard[4]!.length).toBe(1);
+    expect(kb.inline_keyboard[3]!.length).toBe(1); // Verbosity
+    expect(kb.inline_keyboard[4]!.length).toBe(2);
+    expect(kb.inline_keyboard[5]!.length).toBe(1);
     const all = kb.inline_keyboard.flat();
     expect(all.map((b) => b.callback_data)).toEqual([
       "set:edit:terminal",
@@ -114,6 +115,7 @@ describe("renderSettingsKeyboard", () => {
       "set:edit:model",
       "set:edit:pinnedstatus",
       "set:edit:images",
+      "set:edit:verbose",
       "set:edit:ralphverbose",
       "set:edit:ralphlabel",
       "set:edit:contextnotify",

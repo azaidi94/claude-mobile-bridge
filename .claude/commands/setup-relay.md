@@ -25,15 +25,21 @@ Set up the channel-relay MCP server so desktop Claude sessions can communicate w
 
    Replace `<REPO_ROOT>` with the actual absolute path to this repo.
 
-4. **Ask the user** if they'd like a shell alias (`cc`) added for launching Claude with the relay flags. If yes:
-   - Detect the user's shell config file (`~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`)
-   - Check if an alias for `cc` already exists — if so, skip
-   - Append: `alias cc='claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay'`
-   - Tell the user to run `source ~/.zshrc` (or equivalent) to load it
+4. **Ask the user** if they'd like a shell launcher added for the relay flags. If yes, detect the shell config (`~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`), skip if the name already exists, else append and tell them to `source` it:
+   - **Plain `cc`** (simplest): `alias cc='claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay'`
+   - **tmux `cct`** (recommended — enables `tmux send-keys` injection, the `/tmux` panel, `/peek`, and multiple sessions per folder). Append a **function** with the absolute repo path:
+     ```bash
+     cct() {
+       source "<REPO_ROOT>/scripts/tmux/launch.sh"
+       cc_tmux_launch "$#" --dangerously-skip-permissions \
+         --dangerously-load-development-channels server:channel-relay "$@"
+     }
+     ```
+     Multi-session routing also needs the SessionStart identity hook (`bun run install-hooks`).
 
 5. **Verify** by running `claude mcp list` and confirming `channel-relay` appears.
 
 6. **Print a summary** of what was done and how to use it:
-   - Start a session with `cc` (or the full command)
+   - Start a session with `cc` (or `cct` for the tmux launcher, or the full command)
    - The bot auto-discovers relay sessions via `/list`
    - Use `/watch` to stream live, type messages to send via relay

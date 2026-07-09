@@ -16,8 +16,10 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
-- **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI. Run the session under [tmux](#5-reliable-slash-command-injection-optional) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
+- **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI. Run the session under [tmux](#5-tmux-launcher-recommended) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
 - **[Skills browser](docs/skills-menu.md)** — `/skills` surfaces the session's Claude Code skills and slash commands (user/project/plugin) with recents, search, and origin-group drill-down; tap to inject the chosen one — with args — into the desktop TUI.
+- **tmux control** — `/tmux` opens a button panel of your sessions (peek · kill · start); `/peek` shows a session's live terminal screen as a snapshot with 🔄 refresh. Run several sessions in one folder with the `cct` launcher — each gets its own topic, routed by a stable per-session id.
+- **Verbosity control** — `/verbose 0|1|2` (or the 🔊 Verbosity row in `/settings`) dials how much streams to a topic: quiet (final text only), normal, or detailed.
 - **[Ralph loops](docs/ralph-loops.md)** — `/ralph <repo>` runs an autonomous issue-crunching loop in a desktop terminal; distilled per-iteration beats stream to a dedicated topic.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
@@ -92,22 +94,30 @@ That session now appears in `/list` with a 📡 indicator and is messageable fro
 
 That's the full setup. For optional integrations (remote-answerable questions, exact `/clear` follow, Cursor, the Mini App), see [Documentation](#documentation) below.
 
-### 5. Reliable slash-command injection (optional)
+### 5. tmux launcher (recommended)
 
-`/clear`, `/compact`, and `/context` are **client** commands — the bot can't send them over the relay; it has to type them into the session's terminal. The robust way is to run the session **inside tmux**: the relay records its pane, and the bot injects with `tmux send-keys` — no macOS accessibility, no focus stealing, works in any host terminal (Cursor included).
+Running sessions **inside tmux** unlocks the best experience: reliable `/clear`·`/compact`·`/context` injection (the bot types them via `tmux send-keys` — no accessibility, works in any host terminal incl. Cursor), plus the `/tmux` panel and `/peek` screen capture. The shipped launcher, `scripts/tmux/launch.sh`, wraps `claude` in a tmux session on a dedicated `claude` socket and lets you run **multiple sessions per folder**, each routed to its own topic.
 
-Launch the relay session inside tmux on a dedicated `claude` socket using the shipped config (run from your clone dir, or use an absolute path to `scripts/claude-tmux.conf`):
+Add a `cct` function to your shell profile (`~/.bash_profile` / `~/.zshrc`), pointing at your clone:
 
 ```bash
-tmux -L claude -f scripts/claude-tmux.conf new-session \
-  "claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay"
-
-# or alias it (adjust the conf path to your clone):
-alias cct='tmux -L claude -f ~/Dev/claude-mobile-bridge/scripts/claude-tmux.conf new-session \
-  "claude --dangerously-skip-permissions --dangerously-load-development-channels server:channel-relay"'
+cct() {
+  source "$HOME/Dev/claude-mobile-bridge/scripts/tmux/launch.sh"
+  cc_tmux_launch "$#" \
+    --dangerously-skip-permissions \
+    --dangerously-load-development-channels server:channel-relay "$@"
+}
 ```
 
-Detach with `Ctrl-b d`; the session stays alive and messageable. If you don't use tmux, injection still works via fallbacks: a **Cursor** accessibility path (bind `CURSOR_FOCUS_CHORD` — default `ctrl+alt+cmd+t` — to `workbench.action.terminal.focus` in Cursor; see `.env.example`) and the cmux path. Both are more fragile than tmux and fail closed rather than risk typing into the wrong window.
+Then `cct` in any project starts a relay-enabled session under tmux. Behaviour:
+
+- **Bare `cct`** — reattaches to a **detached** session in that folder (your work, left running when you closed the terminal), or creates a new one if none / if the only sessions there are already attached (so a 2nd `cct` gives you a **parallel sibling**, not a mirror).
+- **`CCT_MODE`** (env) overrides: `hybrid` (default) · `attach` (always one per folder) · `create` (always fresh). `CLAUDE_CODE_TMUX_FRESH=1 cct` forces create for one launch.
+- Detach with `Ctrl-b d`; the session stays alive and messageable.
+
+Multi-session routing relies on the **SessionStart identity hook** (see [Advanced hooks](docs/advanced-hooks.md)) — install it so N sessions in one folder each resolve to their own topic.
+
+If you don't use tmux, injection still works via fallbacks: a **Cursor** accessibility path (bind `CURSOR_FOCUS_CHORD` — default `ctrl+alt+cmd+t` — to `workbench.action.terminal.focus` in Cursor; see `.env.example`) and the cmux path. Both are more fragile than tmux and fail closed rather than risk typing into the wrong window.
 
 ## Commands
 
@@ -116,12 +126,13 @@ Detach with `Ctrl-b d`; the session stays alive and messageable. If you don't us
 | Sessions   | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control    | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
 | Inject     | `/clear`, `/compact`, `/context`, `/skills`        |
+| tmux       | `/tmux` (panel), `/peek` (screen)                  |
 | Automation | `/ralph <path> [N]`, `/cron`                       |
 | Files      | `/pwd`, `/cd`, `/ls`                               |
 | Quota      | `/usage`                                           |
 | Scripts    | `/execute`                                         |
 | Mini App   | `/app`                                             |
-| Settings   | `/settings`                                        |
+| Settings   | `/settings`, `/verbose 0\|1\|2`                    |
 
 ## Documentation
 

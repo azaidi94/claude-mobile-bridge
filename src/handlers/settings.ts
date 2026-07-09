@@ -22,6 +22,7 @@ import {
   getContextNotifyStep,
   getRalphVerboseDefault,
   getDefaultRalphLabel,
+  getVerboseLevel,
   getOverrides,
 } from "../settings";
 import { escapeHtml } from "../formatting";
@@ -38,6 +39,13 @@ export const TERMINAL_LABELS: Record<string, string> = {
   iterm2: "iTerm2",
   ghostty: "Ghostty",
   cmux: "cmux",
+};
+
+/** Short labels for the verbosity level, shown in the panel and toast. */
+export const VERBOSE_LABELS: Record<0 | 1 | 2, string> = {
+  0: "quiet",
+  1: "normal",
+  2: "detailed",
 };
 
 function formatNotifyStep(n: number): string {
@@ -92,6 +100,9 @@ export function renderSettingsBody(): string {
     `🖼 Images:        <code>${watchImages ? "on" : "off"}</code>${marker(
       "watchImages",
     )}`,
+    `🔊 Verbosity:     <code>${VERBOSE_LABELS[getVerboseLevel()]}</code>${marker(
+      "verboseLevel",
+    )}`,
     `🔁 Ralph verbose: <code>${ralphVerbose ? "on" : "off"}</code>${marker(
       "ralphVerboseDefault",
     )}`,
@@ -123,6 +134,7 @@ export function renderSettingsKeyboard(): {
         { text: "📌 Pinned Status", callback_data: "set:edit:pinnedstatus" },
         { text: "🖼 Images", callback_data: "set:edit:images" },
       ],
+      [{ text: "🔊 Verbosity", callback_data: "set:edit:verbose" }],
       [
         { text: "🔁 Ralph verbose", callback_data: "set:edit:ralphverbose" },
         { text: "🏷 Ralph label", callback_data: "set:edit:ralphlabel" },

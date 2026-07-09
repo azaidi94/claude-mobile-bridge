@@ -22,6 +22,10 @@ describe("POST /api/auq-bridge", () => {
     _resetWatchesForTests();
     const { clearTopicStore } = await import("../topics/topic-store");
     clearTopicStore();
+    // Empty snapshot by default → launchUuidForSessionId returns undefined, so
+    // the route falls back to the sessionId lookup (existing behavior).
+    const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+    setCurrentSnapshot({ aliveRelays: [], topics: [] });
     _registerWatchForTests({
       chatId: 100,
       threadId: 42,
@@ -233,6 +237,54 @@ describe("POST /api/auq-bridge", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { threadId: number };
     expect(body.threadId).toBe(1002);
+  });
+
+  test("routes by launchUuid when the topic's sessionId is stale (post-/clear)", async () => {
+    // The session /cleared: its live sessionId is "live-sid" (what the AUQ worker
+    // posts), but the topic still carries the pre-clear "old-sid". Keyed on the
+    // authoritative registry launchUuid, the route still finds the topic — the
+    // sessionId-only lookup would miss and the cwd cross-guard would 404.
+    const { _resetWatchesForTests } = await import("../handlers/watch");
+    _resetWatchesForTests();
+    const { clearTopicStore, setChatId, addTopicMapping } =
+      await import("../topics/topic-store");
+    clearTopicStore();
+    setChatId(-42042);
+    addTopicMapping({
+      topicId: 3131,
+      sessionName: "saas-builder",
+      sessionDir: "/repo/saas",
+      sessionId: "old-sid", // stale (pre-/clear)
+      launchUuid: "LU-1",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+    const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+    setCurrentSnapshot({
+      aliveRelays: [],
+      topics: [],
+      launchUuidBySessionId: new Map([["live-sid", "LU-1"]]),
+    });
+
+    const app = await buildApp();
+    const res = await app.request("/api/auq-bridge", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({
+        request_id: "auq_lu",
+        tool_use_id: "toolu_lu",
+        session_id: "live-sid",
+        cwd: "/repo/saas",
+        questions: [{ question: "Q", options: [{ label: "A" }] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { threadId: number; chatId: number };
+    expect(body.threadId).toBe(3131);
+    expect(body.chatId).toBe(-42042);
   });
 
   test("200 + request_id when watch matches", async () => {

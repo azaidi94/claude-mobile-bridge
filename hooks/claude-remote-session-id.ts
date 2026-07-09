@@ -54,6 +54,9 @@ function stateDir(): string {
   );
 }
 
+const STATE_DIR = stateDir();
+const REGISTRY_DIR = join(STATE_DIR, "registry");
+
 const LOG_FILE =
   process.env.CLAUDE_SESSION_ID_HOOK_LOG ??
   join(homedir(), ".claude", "logs", "session-id-hook.log");
@@ -144,6 +147,84 @@ export function mergeSessionId(
   return { ...current, sessionId };
 }
 
+/**
+ * The Claude process pid for this hook. Prefer the relay port file's ppid when
+ * it's a known ancestor (the relay is Claude's child, so its ppid IS Claude).
+ * Otherwise fall back to the closest ancestor whose command is exactly "claude".
+ */
+export function deriveClaudePid(
+  ancestry: number[],
+  commOf: (pid: number) => string | undefined,
+  portFilePpid?: number,
+): number | undefined {
+  if (portFilePpid !== undefined && ancestry.includes(portFilePpid)) {
+    return portFilePpid;
+  }
+  for (const pid of ancestry) {
+    if (commOf(pid) === "claude") return pid;
+  }
+  return undefined;
+}
+
+/**
+ * Registry record for a single Claude launch — keyed by stable (pid, startTime) pair.
+ * On SessionStart, we mint one record per unique launch and store it in the registry,
+ * indexed by `launchUuid` so future fires can reuse it.
+ */
+export interface RegistryRecord {
+  launchUuid: string;
+  claudePid: number;
+  startTime: string;
+  sessionId: string;
+  cwd: string;
+  source: string;
+  updatedAt: string;
+}
+
+/**
+ * Pure function: given an existing registry and a new (claudePid, startTime), decide
+ * whether to mint a new launchUuid or reuse an existing one.
+ *
+ * - If existing has a record matching both pid+startTime: reuse its launchUuid,
+ *   update sessionId/source/updatedAt, return isNew=false.
+ * - Else: mint a new record with launchUuid=newUuid, return isNew=true.
+ *
+ * Used to ensure that the same Claude process, even after /clear, always gets the
+ * same launchUuid (its stable registry identity) while its sessionId can evolve.
+ */
+export function mintDecision(
+  existing: RegistryRecord[],
+  claudePid: number,
+  startTime: string,
+  sessionId: string,
+  cwd: string,
+  source: string,
+  now: string,
+  newUuid: string,
+): { record: RegistryRecord; isNew: boolean } {
+  const hit = existing.find(
+    (r) => r.claudePid === claudePid && r.startTime === startTime,
+  );
+  if (hit) {
+    return {
+      record: { ...hit, sessionId, source, updatedAt: now },
+      isNew: false,
+    };
+  }
+  return {
+    record: {
+      launchUuid: newUuid,
+      claudePid,
+      startTime,
+      sessionId,
+      cwd,
+      source,
+      updatedAt: now,
+    },
+    isNew: true,
+  };
+}
+
 export type HookOutcome =
   | "updated"
   | "noop_already_current"
@@ -192,6 +273,48 @@ function buildPpidMap(): Map<number, number> {
     // relay's own JSONL-scan poll remains as the fallback. We never guess.
   }
   return map;
+}
+
+/** Process start timestamp (`ps -o lstart`), used with the pid as a stable key. */
+export function startTimeOf(pid: number): string {
+  try {
+    return execSync(`ps -o lstart= -p ${pid}`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Read all RegistryRecords from REGISTRY_DIR (*.json files), silently skip malformed. */
+function readRegistryDirSync(): RegistryRecord[] {
+  try {
+    return readdirSync(REGISTRY_DIR)
+      .filter((f) => f.endsWith(".json"))
+      .flatMap((f) => {
+        try {
+          return [
+            JSON.parse(
+              readFileSync(join(REGISTRY_DIR, f), "utf-8"),
+            ) as RegistryRecord,
+          ];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** Write a RegistryRecord to REGISTRY_DIR/<launchUuid>.json (mkdir -p first). */
+function writeRegistryRecord(rec: RegistryRecord): void {
+  mkdirSync(REGISTRY_DIR, { recursive: true });
+  writeFileSync(
+    join(REGISTRY_DIR, `${rec.launchUuid}.json`),
+    JSON.stringify(rec, null, 2),
+  );
 }
 
 /** Read + parse every channel-relay port file in STATE_DIR. */
@@ -255,6 +378,48 @@ async function main(): Promise<void> {
     return;
   }
 
+  const ppidMap = buildPpidMap();
+  const ancestry = ancestryChain(process.pid, (pid) => ppidMap.get(pid));
+
+  // --- P2: mint/refresh the stable launchUuid — race-free (derived from the
+  // process tree, works even before the relay writes its port file) ---
+  try {
+    if (sessionId && cwd) {
+      const commOf = (pid: number): string | undefined => {
+        try {
+          return execSync(`ps -o comm= -p ${pid}`, {
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+          })
+            .trim()
+            .split("/")
+            .pop();
+        } catch {
+          return undefined;
+        }
+      };
+      const claudePid = deriveClaudePid(ancestry, commOf, undefined);
+      if (claudePid !== undefined) {
+        const startTime = startTimeOf(claudePid);
+        if (startTime) {
+          const { record } = mintDecision(
+            readRegistryDirSync(),
+            claudePid,
+            startTime,
+            sessionId,
+            cwd,
+            input.source ?? "unknown",
+            new Date().toISOString(),
+            crypto.randomUUID(),
+          );
+          writeRegistryRecord(record);
+        }
+      }
+    }
+  } catch (err) {
+    logLine(`registry mint failed: ${err}`);
+  }
+
   const candidates = readPortFiles(stateDir());
 
   if (candidates.length === 0) {
@@ -264,8 +429,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const ppidMap = buildPpidMap();
-  const ancestry = ancestryChain(process.pid, (pid) => ppidMap.get(pid));
   const target = selectPortFile(candidates, cwd!, ancestry);
 
   if (!target) {

@@ -17,6 +17,10 @@ import { getRecentHistory, formatHistoryMessage } from "../sessions/history";
 import { scanPortFiles, updatePortFile } from "../relay/discovery";
 import { recordTopicCreated, recordTopicDeleted } from "./topic-ledger";
 import { getMessageBus } from "../messaging";
+import {
+  resolveSession,
+  getCurrentSnapshot,
+} from "../sessions/resolve-session";
 
 interface ReconcileSession {
   name: string;
@@ -135,11 +139,30 @@ export class TopicManager {
       );
       const topicId = result.message_thread_id;
 
+      // Bind the session's stable launchUuid (minted at hook-session birth, see
+      // src/sessions/registry.ts) onto the topic AT CREATION — this is the
+      // create-on-start half of the launchUuid topic lifecycle (P3 Task 8). Topic
+      // reads now route on it (P3a Tasks 1c/2/3) and the reaper deletes by it
+      // (Task 6). A miss omits the field (Cursor/bare sessions with no launchUuid
+      // stay name-keyed); the watcher's per-refresh backfill fills it in later if
+      // the id wasn't yet resolvable here.
+      let launchUuid: string | undefined;
+      if (sessionId) {
+        const res = resolveSession(
+          { by: "sessionId", sessionId },
+          getCurrentSnapshot(),
+        );
+        if (res.status === "resolved" && res.record.launchUuid) {
+          launchUuid = res.record.launchUuid;
+        }
+      }
+
       addTopicMapping({
         topicId,
         sessionName,
         sessionDir,
         sessionId,
+        ...(launchUuid ? { launchUuid } : {}),
         isOnline: true,
         createdAt: new Date().toISOString(),
       });

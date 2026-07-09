@@ -54,6 +54,7 @@ mock.module("../messaging", () => ({
 mock.module("../settings", () => ({
   getEnablePinnedStatus: () => true,
   getWatchImages: () => true,
+  getVerboseLevel: () => 1,
   getGroupModeSetting: () => undefined,
   getContextNotifyStep: () => 0,
   getCursorEnabled: () => true,

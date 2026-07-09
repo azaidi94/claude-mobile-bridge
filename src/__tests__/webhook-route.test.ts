@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { tmpdir } from "os";
+import { mkdtempSync, rmSync } from "fs";
+import { join } from "path";
 
 // Mock config BEFORE importing the route — the route reads WEBHOOK_SECRET
 // at import time via a top-level binding.
@@ -24,17 +27,19 @@ mock.module("../messaging", () => ({
   }),
 }));
 
-const topicStore = {
-  chatId: -100123,
-  topics: [] as Array<{ sessionName: string; topicId: number }>,
-};
-mock.module("../topics", () => ({
-  getTopicStore: () => topicStore,
-  getTopicBySession: (name: string) =>
-    topicStore.topics.find((t) => t.sessionName === name),
+// getSession is mocked per-test; webhook.ts only pulls `getSession` out of
+// "../../sessions", so this narrow mock is safe.
+const sessionsByName = new Map<string, { pid?: number }>();
+mock.module("../sessions", () => ({
+  getSession: (n: string) => sessionsByName.get(n) ?? null,
 }));
 
 const { createWebhookRouter } = await import("../web/routes/webhook");
+const { clearTopicStore, setChatId, addTopicMapping } =
+  await import("../topics/topic-store");
+const { setCurrentSnapshot } = await import("../sessions/resolve-session");
+
+let testDir: string;
 
 function makeReq(body: unknown, headers: Record<string, string> = {}): Request {
   return new Request("http://localhost/notify", {
@@ -46,9 +51,26 @@ function makeReq(body: unknown, headers: Record<string, string> = {}): Request {
 
 describe("POST /api/webhook/notify", () => {
   beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), "webhook-route-"));
+    process.env.CLAUDE_TELEGRAM_TOPICS_FILE = join(testDir, "topics.json");
     busCalls.length = 0;
-    topicStore.chatId = -100123;
-    topicStore.topics = [{ sessionName: "my-proj", topicId: 5050 }];
+    sessionsByName.clear();
+    clearTopicStore();
+    setChatId(-100123);
+    addTopicMapping({
+      sessionName: "my-proj",
+      topicId: 5050,
+      sessionDir: "/tmp/my-proj",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+    delete process.env.CLAUDE_TELEGRAM_TOPICS_FILE;
+    clearTopicStore();
+    setCurrentSnapshot({ aliveRelays: [], topics: [] });
   });
 
   it("401 without bearer", async () => {
@@ -134,7 +156,7 @@ describe("POST /api/webhook/notify", () => {
   });
 
   it("503 when no chat registered", async () => {
-    topicStore.chatId = 0;
+    clearTopicStore();
     const app = createWebhookRouter();
     const res = await app.fetch(
       makeReq(
@@ -143,5 +165,37 @@ describe("POST /api/webhook/notify", () => {
       ),
     );
     expect(res.status).toBe(503);
+  });
+
+  it("resolves the topic via launchUuid when the session is live, even if the name maps elsewhere", async () => {
+    // A different topic claims launchUuid "U1" under a different session
+    // name — a name-only lookup for "my-proj" would land on topicId 5050
+    // (seeded in beforeEach) instead.
+    addTopicMapping({
+      sessionName: "other",
+      topicId: 77,
+      sessionDir: "/tmp/other",
+      isOnline: true,
+      createdAt: new Date().toISOString(),
+      launchUuid: "U1",
+    });
+
+    const PID = 4242;
+    sessionsByName.set("my-proj", { pid: PID });
+    setCurrentSnapshot({
+      aliveRelays: [],
+      topics: [],
+      launchUuidByPid: new Map([[PID, "U1"]]),
+    });
+
+    const app = createWebhookRouter();
+    const res = await app.fetch(
+      makeReq(
+        { session: "my-proj", text: "deploy green" },
+        { Authorization: "Bearer test-secret" },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(busCalls[0]?.threadId).toBe(77);
   });
 });

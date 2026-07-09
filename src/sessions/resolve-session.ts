@@ -12,6 +12,7 @@ export type Handle =
 
 export interface SessionRecord {
   launchId: string | null; // P1: always null; populated in P2
+  launchUuid: string | null;
   sessionId: string | null;
   claudePid: number;
   cwd: string;
@@ -32,15 +33,25 @@ export type Resolution =
   | { status: "miss" };
 
 export function makeRecord(
-  r: Omit<SessionRecord, "launchId"> & { launchId?: string | null },
+  r: Omit<SessionRecord, "launchId" | "launchUuid"> & {
+    launchId?: string | null;
+    launchUuid?: string | null;
+  },
 ): SessionRecord {
-  const { launchId, ...rest } = r;
-  return { ...rest, launchId: launchId ?? null };
+  const { launchId, launchUuid, ...rest } = r;
+  return {
+    ...rest,
+    launchId: launchId ?? null,
+    launchUuid: launchUuid ?? null,
+  };
 }
 
 export interface ResolveSnapshot {
   aliveRelays: PortFileData[];
   topics: TopicMapping[];
+  launchUuidByPid?: Map<number, string>;
+  /** Authoritative registry `sessionId → launchUuid` (see registry.ts). */
+  launchUuidBySessionId?: Map<string, string>;
 }
 
 /** Build the canonical record set from today's resolver + port-file target fields. */
@@ -63,6 +74,7 @@ function buildRecords(snap: ResolveSnapshot): SessionRecord[] {
       tmuxSocket: pf?.tmuxSocket ?? null,
       cmuxWorkspaceId: pf?.cmuxWorkspaceId ?? null,
       provenance: ri.provenance,
+      launchUuid: snap.launchUuidByPid?.get(ri.claudePid) ?? null,
     });
   });
 }
@@ -92,7 +104,7 @@ export function resolveSession(
       return { status: "miss" }; // 0 or ambiguous siblings
     }
     case "launchId":
-      return { status: "miss" }; // P1: launchId never populated
+      return pick((r) => r.launchUuid === handle.launchId);
   }
 }
 
@@ -102,4 +114,28 @@ export function setCurrentSnapshot(snap: ResolveSnapshot): void {
 }
 export function getCurrentSnapshot(): ResolveSnapshot {
   return _current;
+}
+
+/**
+ * Cheap, in-memory launchUuid lookup for a live Claude pid, sourced from the
+ * watcher-refreshed snapshot (never reads the registry from disk here).
+ */
+export function launchUuidForPid(pid: number | undefined): string | undefined {
+  if (!pid) return undefined;
+  return getCurrentSnapshot().launchUuidByPid?.get(pid);
+}
+
+/**
+ * Cheap, in-memory launchUuid lookup for a session id, sourced from the
+ * watcher-refreshed snapshot's AUTHORITATIVE registry map (see
+ * `launchUuidBySessionId` in registry.ts). Unlike a pid — which the watcher can
+ * mis-assign from a sibling's stolen-id port file — the registry's sessionId
+ * anchor is written by the hook and re-anchored on `/clear`, so it is not
+ * corruptible by port-file id theft.
+ */
+export function launchUuidForSessionId(
+  sessionId: string | undefined,
+): string | undefined {
+  if (!sessionId) return undefined;
+  return getCurrentSnapshot().launchUuidBySessionId?.get(sessionId);
 }
