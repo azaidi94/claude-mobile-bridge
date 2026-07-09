@@ -78,5 +78,11 @@ export { handleCron } from "./cron";
 export { handleRalph } from "./ralph";
 
 export { handlePrompts } from "./prompts";
+export {
+  handleSkills,
+  buildSearch,
+  runSkill,
+  pendingSkillArgs,
+} from "./skills";
 
 export { handleClear, handleCompact, handleContext } from "./inject";

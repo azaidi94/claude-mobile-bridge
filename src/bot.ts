@@ -46,6 +46,7 @@ import {
   handleCron,
   handleRalph,
   handlePrompts,
+  handleSkills,
   handleClear,
   handleCompact,
   handleContext,
@@ -296,6 +297,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("cron", withSctx(handleCron));
   bot.command("ralph", handleRalph);
   bot.command("prompts", withSctx(handlePrompts));
+  bot.command("skills", withSctx(handleSkills));
   bot.command("clear", withSctx(handleClear));
   bot.command("compact", withSctx(handleCompact));
   bot.command("context", withSctx(handleContext));

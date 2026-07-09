@@ -106,6 +106,167 @@ function busReply(
 // sibling forum topics from consuming each other's replies.
 export const pendingPlanFeedback = new Map<string, string>(); // pendingKey -> requestId
 
+/** Origin badge for the skill confirm card. */
+function skillOriginLabel(origin: "user" | "project" | "plugin"): string {
+  if (origin === "project") return "📌 project";
+  if (origin === "plugin") return "🧩 plugin";
+  return "⭐ personal";
+}
+
+/**
+ * Skills-browser callbacks (skill:*). Resolves the entry against the topic's
+ * cwd, renders the confirm card, injects on run, or captures args.
+ */
+async function handleSkillCallback(
+  ctx: Context,
+  data: string,
+  sctx: SessionContext | undefined,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.callbackQuery?.message?.message_thread_id;
+
+  if (data === "skill:noop") {
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  // Landing (⌂ Skills back button) and origin-group drill-down.
+  if (data === "skill:home" || data.startsWith("skill:grp:")) {
+    if (!sctx) {
+      await ctx.answerCallbackQuery({
+        text: "Open /skills in a session topic",
+      });
+      return;
+    }
+    const { buildLanding, buildGroup } = await import("./commands/skills");
+    let built: { text: string; replyMarkup: unknown } | null;
+    if (data === "skill:home") {
+      built = await buildLanding(sctx.sessionDir);
+    } else {
+      const [, , origin, pageStr] = data.split(":");
+      built = buildGroup(
+        sctx.sessionDir,
+        origin as "user" | "project" | "plugin",
+        parseInt(pageStr ?? "", 10) || 0,
+      );
+    }
+    await ctx.answerCallbackQuery().catch(() => {});
+    if (built) {
+      await ctx
+        .editMessageText(built.text, {
+          parse_mode: "HTML",
+          reply_markup: built.replyMarkup as never,
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+
+  // Pagination: skill:pg:<page>:<query...> (query may contain colons).
+  if (data.startsWith("skill:pg:")) {
+    const rest = data.slice("skill:pg:".length);
+    const sep = rest.indexOf(":");
+    const page = parseInt(sep === -1 ? rest : rest.slice(0, sep), 10) || 0;
+    const query = sep === -1 ? "" : rest.slice(sep + 1);
+    if (!sctx) {
+      await ctx.answerCallbackQuery({
+        text: "Open /skills in a session topic",
+      });
+      return;
+    }
+    const { buildSearch } = await import("./commands/skills");
+    const built = buildSearch(sctx.sessionDir, query, page);
+    await ctx.answerCallbackQuery().catch(() => {});
+    if (built) {
+      await ctx
+        .editMessageText(built.text, {
+          parse_mode: "HTML",
+          reply_markup: built.replyMarkup,
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+
+  const m = /^skill:(run|go|args):(\d+)$/.exec(data);
+  if (!m) {
+    await ctx.answerCallbackQuery();
+    return;
+  }
+  const action = m[1];
+  const idx = parseInt(m[2] ?? "", 10);
+
+  if (!sctx || sctx.source !== "cc") {
+    await ctx.answerCallbackQuery({
+      text: "Run /skills in a Claude session topic",
+    });
+    return;
+  }
+  const { discoverSkills } = await import("../skills/discovery");
+  const entry = discoverSkills(sctx.sessionDir)[idx];
+  if (!entry) {
+    await ctx.answerCallbackQuery({
+      text: "Skill list changed — reopen /skills",
+    });
+    return;
+  }
+
+  if (action === "run") {
+    const badge = skillOriginLabel(entry.origin);
+    const desc = entry.description
+      ? escapeHtml(entry.description)
+      : "<i>no description</i>";
+    const reply_markup = {
+      inline_keyboard: [
+        [
+          { text: `▶ Run /${entry.name}`, callback_data: `skill:go:${idx}` },
+          { text: "✎ With args…", callback_data: `skill:args:${idx}` },
+        ],
+      ],
+    };
+    const text = `<b>/${escapeHtml(entry.name)}</b> — ${badge} ${entry.kind}\n${desc}`;
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx
+      .editMessageText(text, { parse_mode: "HTML", reply_markup })
+      .catch(() =>
+        busReply(ctx, text, { format: "html", replyMarkup: reply_markup }),
+      );
+    return;
+  }
+
+  if (action === "args") {
+    if (chatId === undefined) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const { pendingSkillArgs } = await import("./commands/skills");
+    pendingSkillArgs.set(pendingKey(chatId, threadId), entry.name);
+    await ctx.answerCallbackQuery().catch(() => {});
+    // force_reply so the user's next message is captured as args (text.ts).
+    await ctx
+      .reply(`Reply with args for /${entry.name} (or /cancel):`, {
+        message_thread_id: threadId,
+        reply_markup: {
+          force_reply: true,
+          input_field_placeholder: `args for /${entry.name}`,
+        },
+      })
+      .catch(() => {});
+    return;
+  }
+
+  // action === "go": run with no args.
+  const { runSkill } = await import("./commands/skills");
+  await ctx.answerCallbackQuery({ text: `▶ /${entry.name}` }).catch(() => {});
+  const result = await runSkill(sctx, entry.name, "");
+  await busReply(
+    ctx,
+    result.ok
+      ? `▶ Sent /${entry.name} → ${sctx.sessionName}`
+      : `❌ Couldn't send /${entry.name}: ${result.reason}`,
+  );
+}
+
 /**
  * Handle callback queries from inline keyboards.
  */
@@ -137,6 +298,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     ["clear_pick:", "handleClear"],
     ["compact_pick:", "handleCompact"],
     ["context_pick:", "handleContext"],
+    ["skills_pick:", "handleSkills"],
   ] as const) {
     if (callbackData.startsWith(prefix)) {
       const sessionName = callbackData.slice(prefix.length);
@@ -205,6 +367,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
         `❌ ${result === "unavailable" ? "session offline" : "send failed"}`,
       );
     }
+    return;
+  }
+
+  // Skills browser: run / confirm-args / paginate. Injects the chosen slash
+  // command into the desktop TUI (like /clear), NOT via the model relay.
+  if (callbackData.startsWith("skill:")) {
+    await handleSkillCallback(ctx, callbackData, sctx);
     return;
   }
 

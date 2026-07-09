@@ -155,6 +155,7 @@ mock.module("../handlers", () => ({
   handleCron: mock(() => {}),
   handleRalph: mock(() => {}),
   handlePrompts: mock(() => {}),
+  handleSkills: mock(() => {}),
   handleClear: mock(() => {}),
   handleCompact: mock(() => {}),
   handleContext: mock(() => {}),

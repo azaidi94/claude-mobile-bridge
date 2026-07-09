@@ -24,6 +24,7 @@ export {
   handleCron,
   handleRalph,
   handlePrompts,
+  handleSkills,
   handleClear,
   handleCompact,
   handleContext,
