@@ -17,6 +17,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
 - **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI. Run the session under [tmux](#5-reliable-slash-command-injection-optional) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
+- **[Skills browser](docs/skills-menu.md)** — `/skills` surfaces the session's Claude Code skills and slash commands (user/project/plugin) with recents, search, and origin-group drill-down; tap to inject the chosen one — with args — into the desktop TUI.
 - **[Ralph loops](docs/ralph-loops.md)** — `/ralph <repo>` runs an autonomous issue-crunching loop in a desktop terminal; distilled per-iteration beats stream to a dedicated topic.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
@@ -114,7 +115,7 @@ Detach with `Ctrl-b d`; the session stays alive and messageable. If you don't us
 | ---------- | -------------------------------------------------- |
 | Sessions   | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`  |
 | Control    | `/stop`, `/retry`, `/status`, `/model`, `/restart` |
-| Inject     | `/clear`, `/compact`, `/context`                   |
+| Inject     | `/clear`, `/compact`, `/context`, `/skills`        |
 | Automation | `/ralph <path> [N]`, `/cron`                       |
 | Files      | `/pwd`, `/cd`, `/ls`                               |
 | Quota      | `/usage`                                           |
@@ -131,6 +132,7 @@ Detach with `Ctrl-b d`; the session stays alive and messageable. If you don't us
 | [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth          |
 | [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)        |
 | [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization |
+| [Skills browser](docs/skills-menu.md)        | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args   |
 | [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                    |
 | [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                  |
 | [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging                   |
