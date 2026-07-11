@@ -68,6 +68,7 @@ export async function findSessionJsonl(
 async function resolveSessionMeta(
   claudeDir: string,
   sessionId: string,
+  live: boolean,
 ): Promise<TaskSession> {
   const jsonl = await findSessionJsonl(claudeDir, sessionId);
   if (jsonl) {
@@ -77,10 +78,11 @@ async function resolveSessionMeta(
         id: sessionId,
         name: basename(cwd) || sessionId,
         projectDir: cwd,
+        live,
       };
     }
   }
-  return { id: sessionId, name: sessionId, projectDir: "" };
+  return { id: sessionId, name: sessionId, projectDir: "", live };
 }
 
 function toTaskPayload(
@@ -119,8 +121,17 @@ export async function readSessionTask(
   }
 }
 
-/** Scan {claudeDir}/tasks/* and return all sessions + tasks. */
-export async function readSnapshot(claudeDir: string): Promise<TasksSnapshot> {
+/**
+ * Scan {claudeDir}/tasks/* and return all sessions + tasks.
+ *
+ * `liveSessionIds` marks which session dirs belong to a currently-tracked
+ * session; the web UI uses it to offer an "active sessions only" filter so
+ * task files left behind by long-dead sessions don't clutter the board.
+ */
+export async function readSnapshot(
+  claudeDir: string,
+  liveSessionIds: ReadonlySet<string> = new Set(),
+): Promise<TasksSnapshot> {
   const tasksDir = join(claudeDir, "tasks");
   if (!existsSync(tasksDir)) return { sessions: [], tasks: [] };
 
@@ -145,7 +156,9 @@ export async function readSnapshot(claudeDir: string): Promise<TasksSnapshot> {
     }
     if (files.length === 0) continue;
 
-    sessions.push(await resolveSessionMeta(claudeDir, sid));
+    sessions.push(
+      await resolveSessionMeta(claudeDir, sid, liveSessionIds.has(sid)),
+    );
     for (const f of files) {
       const task = await readSessionTask(sid, join(sDir, f));
       if (task) tasks.push(task);

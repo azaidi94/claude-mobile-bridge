@@ -31,7 +31,7 @@ afterEach(() => {
 describe("TasksPage", () => {
   test("loads initial snapshot via api.getTasks and renders cards", async () => {
     (api.getTasks as any).mockResolvedValue({
-      sessions: [{ id: "s1", name: "sA", projectDir: "/x" }],
+      sessions: [{ id: "s1", name: "sA", projectDir: "/x", live: true }],
       tasks: [
         {
           sessionId: "s1",
@@ -81,7 +81,7 @@ describe("TasksPage", () => {
 
   test("removes tasks on task.delete event", async () => {
     (api.getTasks as any).mockResolvedValue({
-      sessions: [{ id: "s1", name: "sA", projectDir: "/x" }],
+      sessions: [{ id: "s1", name: "sA", projectDir: "/x", live: true }],
       tasks: [
         {
           sessionId: "s1",
@@ -108,8 +108,8 @@ describe("TasksPage", () => {
   test("removes all tasks of a session on session.delete event", async () => {
     (api.getTasks as any).mockResolvedValue({
       sessions: [
-        { id: "s1", name: "sA", projectDir: "/x" },
-        { id: "s2", name: "sB", projectDir: "/y" },
+        { id: "s1", name: "sA", projectDir: "/x", live: true },
+        { id: "s2", name: "sB", projectDir: "/y", live: true },
       ],
       tasks: [
         {
@@ -154,8 +154,8 @@ describe("TasksPage", () => {
   test("filter restricts to one session's tasks", async () => {
     (api.getTasks as any).mockResolvedValue({
       sessions: [
-        { id: "s1", name: "sA", projectDir: "/x" },
-        { id: "s2", name: "sB", projectDir: "/y" },
+        { id: "s1", name: "sA", projectDir: "/x", live: true },
+        { id: "s2", name: "sB", projectDir: "/y", live: true },
       ],
       tasks: [
         {
@@ -187,5 +187,48 @@ describe("TasksPage", () => {
 
     expect(screen.getByText("TaskA")).toBeInTheDocument();
     expect(screen.queryByText("TaskB")).not.toBeInTheDocument();
+  });
+
+  test("default 'active' filter hides tasks from ended sessions", async () => {
+    (api.getTasks as any).mockResolvedValue({
+      sessions: [
+        { id: "s1", name: "sA", projectDir: "/x", live: true },
+        { id: "s2", name: "sB", projectDir: "/y", live: false },
+      ],
+      tasks: [
+        {
+          sessionId: "s1",
+          id: "1",
+          subject: "LiveTask",
+          description: "",
+          status: "pending",
+          updatedAt: 1,
+        },
+        {
+          sessionId: "s2",
+          id: "2",
+          subject: "DeadTask",
+          description: "",
+          status: "pending",
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    render(<TasksPage onSwitchToChat={vi.fn()} />);
+
+    await screen.findByText("LiveTask");
+    expect(screen.queryByText("DeadTask")).not.toBeInTheDocument();
+
+    // The ended session is still selectable, marked "(ended)".
+    const select = screen.getByRole("combobox");
+    const optionTexts = Array.from(select.querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    expect(optionTexts).toContain("sB (ended)");
+
+    // Switching to "All sessions" reveals the ended session's tasks.
+    fireEvent.change(select, { target: { value: "all" } });
+    expect(screen.getByText("DeadTask")).toBeInTheDocument();
   });
 });
