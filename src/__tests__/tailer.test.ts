@@ -16,8 +16,10 @@ import {
   findSessionJsonlPath,
   getExpectedJsonlPath,
   encodeProjectPath,
+  isSessionTranscript,
   type TailEvent,
 } from "../sessions/tailer";
+import { mkdtemp } from "fs/promises";
 
 // ============== parseLine ==============
 
@@ -1189,6 +1191,71 @@ describe("tailer: findSessionJsonlPath", () => {
     const result = await findSessionJsonlPath(realSessionId);
     expect(result).not.toBeNull();
     expect(result!).toEndWith(`${realSessionId}.jsonl`);
+  });
+});
+
+// ============== isSessionTranscript ==============
+
+describe("tailer: isSessionTranscript", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "transcript-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("rejects a metadata-only title/name stub", async () => {
+    // The exact shape Claude Code writes for its session-naming sidecar.
+    const stub =
+      JSON.stringify({
+        type: "ai-title",
+        aiTitle: "Debug clinical_notes column schema cache error",
+        sessionId: "e140fac1",
+      }) +
+      "\n" +
+      JSON.stringify({
+        type: "agent-name",
+        agentName: "Debug clinical_notes column schema cache error",
+        sessionId: "e140fac1",
+      }) +
+      "\n";
+    const p = join(dir, "stub.jsonl");
+    await writeFile(p, stub);
+    expect(await isSessionTranscript(p)).toBe(false);
+  });
+
+  test("accepts a transcript with a user turn", async () => {
+    const p = join(dir, "real.jsonl");
+    await writeFile(
+      p,
+      JSON.stringify({ type: "ai-title", aiTitle: "x" }) +
+        "\n" +
+        JSON.stringify({ type: "user", message: { content: "hi" } }) +
+        "\n",
+    );
+    expect(await isSessionTranscript(p)).toBe(true);
+  });
+
+  test("accepts a transcript that carries a cwd but no turn yet", async () => {
+    const p = join(dir, "cwd.jsonl");
+    await writeFile(
+      p,
+      JSON.stringify({ type: "attachment", cwd: "/Users/x/proj" }) + "\n",
+    );
+    expect(await isSessionTranscript(p)).toBe(true);
+  });
+
+  test("rejects an empty file", async () => {
+    const p = join(dir, "empty.jsonl");
+    await writeFile(p, "");
+    expect(await isSessionTranscript(p)).toBe(false);
+  });
+
+  test("returns false for a missing file", async () => {
+    expect(await isSessionTranscript(join(dir, "nope.jsonl"))).toBe(false);
   });
 });
 
