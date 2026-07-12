@@ -7,12 +7,7 @@ import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../../config";
 import { getWorkingDir } from "../../settings";
 import { isAuthorized } from "../../security";
-import {
-  MODEL_DISPLAY_NAMES,
-  getCurrentModel,
-  getCurrentModelDisplayName,
-  type ModelId,
-} from "../../session";
+import { MODEL_OPTIONS, getCurrentModelDisplayName } from "../../session";
 import { getSessionState } from "../../sessions/session-state";
 import { triggerRestart } from "../../lifecycle";
 import { getGitBranch, updatePinnedStatus } from "../../sessions";
@@ -214,7 +209,10 @@ export async function handleStatus(
 }
 
 /**
- * /model - Show/switch model with inline buttons.
+ * /model - Switch the live desktop session's model. Tapping a button injects
+ * `/config model=<arg>` into the session's TUI (see the model: callback); the
+ * session must be an injectable Claude Code session, so this requires session
+ * context exactly like /clear.
  */
 export async function handleModel(
   ctx: Context,
@@ -229,21 +227,36 @@ export async function handleModel(
 
   if (!sctx && (await resolveTopicSession(ctx, "model_pick"))) return;
 
-  // Model state is global (R3).
-  const currentModel = getCurrentModel();
-  const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
+  if (!sctx) {
+    await busReply(ctx, "Use /model in a Claude session topic.");
+    return;
+  }
+  if (sctx.source !== "cc") {
+    await busReply(
+      ctx,
+      `/model isn't supported for ${sctx.source} sessions yet.`,
+    );
+    return;
+  }
 
-  const buttons = models.map(([id, name]) => [
+  // Carry the target session in the callback so the switch injects into the
+  // right TUI regardless of which topic the buttons end up living in (the
+  // General-picker path renders them outside the session's own topic). Encode
+  // the model as its index (1 char), not the configArg, and put the session
+  // name last so `model:<idx>:<name>` stays under Telegram's 64-byte
+  // callback_data limit even for long session names.
+  const buttons = MODEL_OPTIONS.map((o, i) => [
     {
-      text: id === currentModel ? `✓ ${name}` : name,
-      callback_data: `model:${id}`,
+      text: o.label,
+      callback_data: `model:${i}:${sctx.sessionName}`,
     },
   ]);
 
-  await busReply(ctx, `🤖 <b>Model:</b> ${getCurrentModelDisplayName()}`, {
-    format: "html",
-    replyMarkup: { inline_keyboard: buttons },
-  });
+  await busReply(
+    ctx,
+    `🤖 <b>Switch model</b> — <code>${sctx.sessionName}</code>`,
+    { format: "html", replyMarkup: { inline_keyboard: buttons } },
+  );
 }
 
 /**

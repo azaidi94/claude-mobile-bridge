@@ -133,6 +133,20 @@ export const MODEL_DISPLAY_NAMES = {
   haiku: "Haiku 4.5",
 } as const satisfies Record<ShortModelId, string>;
 
+/**
+ * Models offered by the /model picker. `configArg` is injected verbatim into
+ * the live desktop TUI as `/config model=<configArg>` — a documented one-shot
+ * (Claude Code v2.1.182+) that bypasses the interactive picker and persists.
+ * The `[1m]` suffix selects the 1M-context variant; the bare aliases resolve to
+ * the smaller-context default, which is not what we want as the remote default.
+ */
+export const MODEL_OPTIONS = [
+  { configArg: "opus[1m]", label: "Opus (1M)" },
+  { configArg: "sonnet[1m]", label: "Sonnet (1M)" },
+  { configArg: "fable[1m]", label: "Fable (1M)" },
+  { configArg: "haiku", label: "Haiku" },
+] as const;
+
 /** Safe display name for any ModelId — short alias or full claude-* ID. */
 export function getModelDisplayName(m: ModelId): string {
   return m in MODEL_DISPLAY_NAMES ? MODEL_DISPLAY_NAMES[m as ShortModelId] : m;

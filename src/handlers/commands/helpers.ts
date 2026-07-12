@@ -235,7 +235,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "",
       "<b>Session Commands (in topic or General)</b>",
       "/status — session details",
-      "/model — switch model",
+      "/model — switch the live session's model",
       "/stop — interrupt current query",
       "/retry — replay last message",
       "/run &lt;prompt&gt; — async, ping when done",
@@ -283,7 +283,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/retry - Retry last message\n` +
       `/run &lt;prompt&gt; - Async — fire prompt, ping when done\n` +
       `/status - Show session details\n` +
-      `/model - Switch model\n` +
+      `/model - Switch the live session's model\n` +
       `/clear - Send /clear to the desktop session\n` +
       `/compact - Send /compact to the desktop session\n` +
       `/restart - Restart bot\n\n` +

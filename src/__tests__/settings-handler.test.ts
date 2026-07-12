@@ -36,6 +36,12 @@ afterEach(async () => {
 
 // Minimal session mock so renderSettingsBody() can read the model display name.
 mock.module("../session", () => ({
+  MODEL_OPTIONS: [
+    { configArg: "opus[1m]", label: "Opus (1M)" },
+    { configArg: "sonnet[1m]", label: "Sonnet (1M)" },
+    { configArg: "fable[1m]", label: "Fable (1M)" },
+    { configArg: "haiku", label: "Haiku" },
+  ],
   MODEL_DISPLAY_NAMES: {
     opus: "Opus 4.6",
     sonnet: "Sonnet 4.6",

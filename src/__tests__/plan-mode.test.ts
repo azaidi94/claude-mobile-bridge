@@ -248,6 +248,12 @@ const mockSessionMethods = {
 };
 
 mock.module("../session", () => ({
+  MODEL_OPTIONS: [
+    { configArg: "opus[1m]", label: "Opus (1M)" },
+    { configArg: "sonnet[1m]", label: "Sonnet (1M)" },
+    { configArg: "fable[1m]", label: "Fable (1M)" },
+    { configArg: "haiku", label: "Haiku" },
+  ],
   MODEL_DISPLAY_NAMES: {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-5-20250514": "Opus 4.5",

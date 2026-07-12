@@ -10,7 +10,7 @@ import {
   runQueryStreaming,
   runPlanApproval,
   MODEL_DISPLAY_NAMES,
-  getModelDisplayName,
+  MODEL_OPTIONS,
   getCurrentModel,
   getCurrentModelDisplayName,
   setCurrentModel,
@@ -380,63 +380,49 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 2. Handle model switch callbacks: model:{model_id}
+  // 2. Model switch: model:{sessionName}:{configArg}. Injects
+  //    `/config model=<configArg>` into the session's live desktop TUI — a
+  //    documented one-shot that bypasses the interactive picker and persists.
+  //    The tailer echoes the TUI's `Set Model to …` line back to the topic, so
+  //    we don't render a (now-unknowable) current-model checkmark here.
   if (callbackData.startsWith("model:")) {
-    const modelId = callbackData.slice(6) as ModelId; // Remove "model:" prefix
-
-    if (!(modelId in MODEL_DISPLAY_NAMES)) {
+    // Format: model:<idx>:<sessionName> — idx first (fixed, short) keeps
+    // callback_data under Telegram's 64-byte limit; the name is the last
+    // segment so it may itself contain ":".
+    const rest = callbackData.slice(6);
+    const sep = rest.indexOf(":");
+    const idx = sep >= 0 ? Number(rest.slice(0, sep)) : NaN;
+    const sessionName = sep >= 0 ? rest.slice(sep + 1) : "";
+    const opt = MODEL_OPTIONS[idx];
+    if (!opt || !sessionName) {
       await ctx.answerCallbackQuery({ text: "Invalid model" });
       return;
     }
-
-    // Already on this model
-    if (getCurrentModel() === modelId) {
+    const info = getSession(sessionName);
+    if (!info) {
+      await ctx.answerCallbackQuery({ text: "Session not found" });
+      return;
+    }
+    const target = sessionContextFromInfo(info, chatId);
+    if (target.source !== "cc") {
       await ctx.answerCallbackQuery({
-        text: `Already using ${getModelDisplayName(modelId)}`,
+        text: `Not supported for ${target.source} sessions`,
       });
       return;
     }
-
-    setCurrentModel(modelId);
-
-    // Update message with new selection
-    const models = Object.entries(MODEL_DISPLAY_NAMES) as [ModelId, string][];
-    const buttons = models.map(([id, name]) => [
-      {
-        text: id === modelId ? `✓ ${name}` : name,
-        callback_data: `model:${id}`,
-      },
-    ]);
-
-    await ctx.editMessageText(
-      `🤖 <b>Model:</b> ${getModelDisplayName(modelId)}`,
-      {
-        parse_mode: "HTML",
-        reply_markup: { inline_keyboard: buttons },
-      },
-    );
-    await ctx.answerCallbackQuery({
-      text: `Switched to ${getModelDisplayName(modelId)}`,
-    });
-
-    // Update pinned status with new model. Prefer the originating topic's
-    // session name and dir; in the no-sctx (DM) path we can only show the
-    // model — the session name/dir are unknown.
-    const targetDir = sctx?.sessionDir;
-    const sessionName = sctx?.sessionName ?? null;
-    const isPlanMode = sctx
-      ? getSessionState(sctx.sessionName).isPlanMode
-      : false;
-    Promise.resolve(targetDir ? getGitBranch(targetDir) : null)
-      .then((branch) =>
-        updatePinnedStatus(ctx.api, chatId, {
-          sessionName,
-          isPlanMode,
-          model: getCurrentModelDisplayName(),
-          branch,
-        }),
-      )
+    // Ack immediately — TG callback queries expire fast and injection can block.
+    await ctx
+      .answerCallbackQuery({ text: `Switching to ${opt.label}…` })
       .catch(() => {});
+    const { sendKeysToSession } = await import("./commands/terminal-inject");
+    const result = await sendKeysToSession(
+      target,
+      `/config model=${opt.configArg}`,
+    );
+    const body = result.ok
+      ? `🤖 <b>Model → ${opt.label}</b>${result.note ? ` <i>(${result.note})</i>` : ""}`
+      : `❌ Couldn't switch model: ${result.reason}`;
+    await ctx.editMessageText(body, { parse_mode: "HTML" }).catch(() => {});
     return;
   }
 

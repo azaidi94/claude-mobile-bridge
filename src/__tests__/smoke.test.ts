@@ -92,6 +92,12 @@ mock.module("../security", () => ({
 
 // Mock session module
 mock.module("../session", () => ({
+  MODEL_OPTIONS: [
+    { configArg: "opus[1m]", label: "Opus (1M)" },
+    { configArg: "sonnet[1m]", label: "Sonnet (1M)" },
+    { configArg: "fable[1m]", label: "Fable (1M)" },
+    { configArg: "haiku", label: "Haiku" },
+  ],
   getCurrentModel: () => "opus",
   getCurrentModelDisplayName: () => "Opus 4.6",
   setCurrentModel: mock(() => {}),

@@ -24,12 +24,12 @@ launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 
 `/settings` opens a persistent settings panel with tap-to-edit fields:
 
-| Field            | Effect                                                              |
-| ---------------- | ------------------------------------------------------------------- |
-| 🖥 Terminal      | Terminal used by `/new` and `/sessions → Resume`                    |
-| 📁 Working dir   | Default project dir for `/new` (when no arg given)                  |
-| 👁 Auto-watch    | Whether `/new` auto-attaches a watch after spawn                    |
-| 🤖 Model         | Default model — shares state with `/model`                          |
-| 📌 Pinned status | Pin status messages in topics (`enablePinnedStatus`, default: true) |
+| Field            | Effect                                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| 🖥 Terminal      | Terminal used by `/new` and `/sessions → Resume`                                                    |
+| 📁 Working dir   | Default project dir for `/new` (when no arg given)                                                  |
+| 👁 Auto-watch    | Whether `/new` auto-attaches a watch after spawn                                                    |
+| 🤖 Model         | Default model for bot-run queries (`/model` switches a live session directly, via `/config` inject) |
+| 📌 Pinned status | Pin status messages in topics (`enablePinnedStatus`, default: true)                                 |
 
 Values live in `~/.claude-mobile-bridge/settings.json` and override the matching `.env` values. Tap **↺ Reset to default** on any sub-menu to drop the override and fall back to the env value. Auto-watch cycles `default → off → on → default` on each tap.
