@@ -53,7 +53,7 @@ async function load(): Promise<void> {
       }
     }
   } catch (err) {
-    warn(`skill-recents: load failed, starting empty: ${err}`);
+    warn("skill-recents: load failed, starting empty", err);
     cache = { recents: [] };
   }
   loaded = true;
@@ -99,7 +99,7 @@ export async function recordUse(name: string): Promise<void> {
     CAP,
   );
   scheduleSave();
-  info(`skill-recents: used ${name}`);
+  info("skill-recents: used", { name });
 }
 
 /** Test seam. */

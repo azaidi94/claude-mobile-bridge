@@ -86,7 +86,13 @@ export function firePendingRunCompletion(
       content: message,
       format: "html",
     })
-    .catch((err) => debug(`run completion ping: ${err}`));
+    .catch((err) =>
+      debug("run completion ping failed", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: threadId,
+      }),
+    );
 }
 
 /**
@@ -181,7 +187,14 @@ function handleIdleWatch(_botApi: Api, state: WatchState): void {
           format: "html",
         });
       })
-      .catch((err) => debug(`watchdog auto-continue: ${err}`));
+      .catch((err) =>
+        debug("watchdog auto-continue failed", {
+          err: String(err),
+          chatId: state.chatId,
+          topic: state.threadId,
+          session: state.sessionName,
+        }),
+      );
     return;
   }
 
@@ -192,5 +205,12 @@ function handleIdleWatch(_botApi: Api, state: WatchState): void {
       content: `🪫 idle ${idleMin}m in <b>${escapeHtml(state.sessionName)}</b>${tailQuote}`,
       format: "html",
     })
-    .catch((err) => debug(`watchdog notify: ${err}`));
+    .catch((err) =>
+      debug("watchdog notify failed", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: state.threadId,
+        session: state.sessionName,
+      }),
+    );
 }

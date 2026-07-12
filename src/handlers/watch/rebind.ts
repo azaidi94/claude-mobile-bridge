@@ -6,7 +6,7 @@
  * `../../topics/rebind`; this file owns the side effects (store + live watch).
  */
 
-import { warn } from "../../logger";
+import { debug, warn } from "../../logger";
 import {
   getSessionByTopic,
   getTopicBySession,
@@ -31,10 +31,12 @@ function rebindWatchThread(
     if (w.threadId === newThreadId) return false;
     const occupant = watches.get(watchKey(chatId, newThreadId));
     if (occupant && occupant.sessionName !== sessionName) {
-      warn(
-        `identity: rebind blocked, topic ${newThreadId} held by ${occupant.sessionName}`,
-        { chatId, sessionName, newThreadId, occupant: occupant.sessionName },
-      );
+      warn("identity: rebind blocked, topic held by another session", {
+        chatId,
+        sessionName,
+        newThreadId,
+        occupant: occupant.sessionName,
+      });
       return false;
     }
     watches.delete(watchKey(chatId, w.threadId));
@@ -68,15 +70,17 @@ export function reassertSessionTopic(
   // match). Surface the conflict loudly and leave store + watch untouched.
   const occupant = getSessionByTopic(threadId);
   if (occupant && occupant.sessionName !== sessionName) {
-    warn(
-      `identity: rebind blocked, topic ${threadId} mapped to ${occupant.sessionName}`,
-      { sessionName, conflictWith: occupant.sessionName, threadId, chatId },
-    );
+    warn("identity: rebind blocked, topic mapped to another session", {
+      sessionName,
+      conflictWith: occupant.sessionName,
+      threadId,
+      chatId,
+    });
     return;
   }
 
   updateTopicMapping(sessionName, { topicId: threadId });
-  warn(`identity: rebound ${sessionName} ${plan.oldTopicId}→${threadId}`, {
+  debug("identity: rebound session to origin topic", {
     sessionName,
     from: plan.oldTopicId,
     to: threadId,

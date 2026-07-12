@@ -50,7 +50,7 @@ async function load(): Promise<void> {
       if (parsed && Array.isArray(parsed.jobs)) cache = parsed;
     }
   } catch (err) {
-    warn(`cron-store: load failed, starting empty: ${err}`);
+    warn("cron-store: load failed, starting empty", err);
     cache = { jobs: [] };
   }
   loaded = true;
@@ -103,7 +103,7 @@ export async function addJob(
   };
   cache.jobs.push(created);
   scheduleSave();
-  info(`cron-store: added job ${id} (${job.schedule})`);
+  info("cron-store: added job", { jobId: id, schedule: job.schedule });
   return created;
 }
 
@@ -113,7 +113,7 @@ export async function removeJob(id: string): Promise<boolean> {
   cache.jobs = cache.jobs.filter((j) => j.id !== id);
   if (cache.jobs.length !== before) {
     scheduleSave();
-    info(`cron-store: removed job ${id}`);
+    info("cron-store: removed job", { jobId: id });
     return true;
   }
   return false;

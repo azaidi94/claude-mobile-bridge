@@ -87,9 +87,7 @@ function ensureHandle(claudeDir: string): WatcherHandle {
     emitter.emit("event", evt);
   });
 
-  fsWatcher.on("error", (err) =>
-    warn(`tasks watcher error: ${(err as Error).message}`),
-  );
+  fsWatcher.on("error", (err) => warn("tasks: watcher error", err));
 
   const readyPromise = new Promise<void>((resolve) => {
     fsWatcher.once("ready", () => resolve());

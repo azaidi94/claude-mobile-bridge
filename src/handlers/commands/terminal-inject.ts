@@ -75,7 +75,7 @@ export function rememberCmuxWorkspace(cwd: string, stdout: string): void {
   const ref = parseCmuxRef(stdout);
   if (!ref) return;
   cmuxWorkspaceByCwd.set(canonical(cwd), ref);
-  debug(`inject: remembered cmux ${ref} for ${cwd}`);
+  debug("inject: remembered cmux workspace", { ref, cwd });
 }
 
 /** Look up the cmux workspace ref for a session dir (undefined if unknown). */
@@ -538,7 +538,7 @@ export async function resolveCmuxWorkspace(
       }
     }
   } catch (err) {
-    debug(`inject: port-file scan failed: ${err}`);
+    debug("inject: port-file scan failed", { err: String(err) });
   }
   return getCmuxWorkspace(sctx.sessionDir) ?? null;
 }
@@ -613,7 +613,7 @@ export async function resolveTmuxTarget(
       return { pane: byDir[0]!.tmuxPane!, socket: byDir[0]!.tmuxSocket };
     }
   } catch (err) {
-    debug(`inject: tmux target scan failed: ${err}`);
+    debug("inject: tmux target scan failed", { err: String(err) });
   }
   return null;
 }
@@ -695,7 +695,10 @@ async function injectIntoCursor(
   );
   const r = runOsascript(buildCursorInjectScript(folder, text, { focusChord }));
   if (!r.ok) {
-    warn(`inject: cursor osascript failed: ${r.stderr.slice(0, 200)}`);
+    warn("inject: cursor osascript failed", {
+      stderr: r.stderr.slice(0, 200),
+      session: sctx.sessionName,
+    });
     return {
       ok: false,
       app,
@@ -823,7 +826,10 @@ export async function sendKeysToSession(
     }
     const r = runOsascript(buildTtyWriteScript(app, ttys, text));
     if (!r.ok) {
-      warn(`inject: osascript failed: ${r.stderr.slice(0, 200)}`);
+      warn("inject: osascript failed", {
+        stderr: r.stderr.slice(0, 200),
+        session: sctx.sessionName,
+      });
       return {
         ok: false,
         app,

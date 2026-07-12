@@ -329,6 +329,8 @@ async function processArchive(
         requestKind: "archive",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "relay",
         fileName,
@@ -336,11 +338,14 @@ async function processArchive(
       return;
     }
 
-    warn("request: relay " + relayResult, {
+    warn("request: relay incomplete", {
       opId,
       requestKind: "archive",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+      relayResult,
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
@@ -444,6 +449,8 @@ async function processDocuments(
         requestKind: documents.length === 1 ? "document" : "document_batch",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "relay",
         documentCount: documents.length,
@@ -451,11 +458,14 @@ async function processDocuments(
       return;
     }
 
-    warn("request: relay " + relayResult, {
+    warn("request: relay incomplete", {
       opId,
       requestKind: "document",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+      relayResult,
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
@@ -623,6 +633,8 @@ export async function handleDocument(
     chatId,
     userId,
     username,
+    session: sctx?.sessionName,
+    topic: threadId,
     fileName,
   });
 

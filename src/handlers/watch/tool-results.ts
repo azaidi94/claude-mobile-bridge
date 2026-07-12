@@ -77,5 +77,11 @@ export function renderToolResult(
       state.currentToolMsg = stub;
       trackProgress(stub);
     })
-    .catch((err) => debug(`tail tool_result: ${err}`));
+    .catch((err) =>
+      debug("tail tool_result", {
+        err: String(err),
+        chatId,
+        topic: threadId,
+      }),
+    );
 }

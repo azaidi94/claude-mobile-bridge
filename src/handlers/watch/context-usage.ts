@@ -5,7 +5,7 @@
  */
 
 import type { Api } from "grammy";
-import { warn } from "../../logger";
+import { debug } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import {
   recordUsage,
@@ -52,5 +52,12 @@ export async function maybeNotifyContextCrossing(
       format: "plain",
       silent: true,
     })
-    .catch((err) => warn(`context notify: ${err}`));
+    .catch((err) =>
+      debug("context notify failed", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: state.threadId,
+        session: state.sessionName,
+      }),
+    );
 }

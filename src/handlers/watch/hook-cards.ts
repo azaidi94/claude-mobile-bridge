@@ -35,6 +35,12 @@ export function renderHookSummary(
       format: "html",
       silent: !h.preventedContinuation,
     })
-    .catch((err) => debug(`tail hook_summary: ${err}`));
+    .catch((err) =>
+      debug("tail hook_summary", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: threadId,
+      }),
+    );
   firePendingRunCompletion(botApi, state, threadId);
 }

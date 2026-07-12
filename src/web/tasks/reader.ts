@@ -1,7 +1,7 @@
 import { readdir, readFile, stat, open } from "fs/promises";
 import { existsSync } from "fs";
 import { join, basename } from "path";
-import { warn } from "../../logger";
+import { debug } from "../../logger";
 import type { TaskPayload, TaskSession, TasksSnapshot } from "./types";
 
 interface RawTask {
@@ -111,7 +111,10 @@ export async function readSessionTask(
     }
     return toTaskPayload(sessionId, raw, st.mtimeMs);
   } catch (err) {
-    warn(`tasks: failed to read ${filePath}: ${(err as Error).message}`);
+    debug("tasks: failed to read task file", {
+      filePath,
+      err: (err as Error).message,
+    });
     return null;
   }
 }

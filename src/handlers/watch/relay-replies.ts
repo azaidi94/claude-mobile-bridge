@@ -7,7 +7,7 @@
  */
 
 import type { Api } from "grammy";
-import { info, warn, elapsedMs } from "../../logger";
+import { debug, info, elapsedMs } from "../../logger";
 import { getRelayClient } from "../../relay";
 import type { RelayReply, RelayClient } from "../../relay/client";
 import { sendFile, sendPdfReply } from "../../relay/display";
@@ -53,7 +53,7 @@ export async function sendWatchRelay(
     ...(imagePath ? { image_path: imagePath } : {}),
   });
   if (!sent) {
-    warn("watch: relay send failed", {
+    debug("watch: relay send failed", {
       opId,
       chatId,
       threadId,
@@ -124,7 +124,11 @@ export function bindRelayReplyHandler(
     if (msg.files?.length) {
       for (const filePath of msg.files) {
         sendFile(botApi, chatId, filePath, tid).catch((err) =>
-          warn(`${fileErrLabel} file: ${err}`),
+          debug(`${fileErrLabel} file send failed`, {
+            err: String(err),
+            chatId,
+            topic: tid,
+          }),
         );
       }
     }

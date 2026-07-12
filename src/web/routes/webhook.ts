@@ -24,7 +24,7 @@ import { getSession } from "../../sessions";
 import { launchUuidForPid } from "../../sessions/resolve-session";
 import { getMessageBus } from "../../messaging";
 import { escapeHtml } from "../../formatting";
-import { info, warn } from "../../logger";
+import { info, error as logError } from "../../logger";
 
 interface WebhookBody {
   session?: string;
@@ -104,7 +104,10 @@ export function createWebhookRouter(): Hono {
       });
       return c.json({ ok: true });
     } catch (err) {
-      warn(`webhook: send failed: ${err}`);
+      logError("webhook: send failed", err, {
+        session: body.session,
+        topic: threadId,
+      });
       return c.json({ ok: false, error: String(err) }, 500);
     }
   });

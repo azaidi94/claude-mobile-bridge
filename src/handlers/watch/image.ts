@@ -62,7 +62,7 @@ function fromBase64(img: {
   try {
     bytes = Buffer.from(img.dataBase64 ?? "", "base64");
   } catch (err) {
-    debug(`watch image: base64 decode failed: ${err}`);
+    debug("watch image: base64 decode failed", { err: String(err) });
     return null;
   }
   if (bytes.length === 0) return null;
@@ -107,7 +107,10 @@ export function renderImage(
       : null;
   if (!dedupKey) return;
   if (state.lastImageHash === dedupKey) {
-    debug("watch image: skipped duplicate frame");
+    debug("watch image: skipped duplicate frame", {
+      chatId: state.chatId,
+      topic: threadId,
+    });
     return;
   }
 
@@ -152,5 +155,11 @@ export function renderImage(
       },
       silent: true,
     })
-    .catch((err) => debug(`watch image: send failed: ${err}`));
+    .catch((err) =>
+      debug("watch image: send failed", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: threadId,
+      }),
+    );
 }

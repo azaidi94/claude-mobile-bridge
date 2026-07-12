@@ -10,7 +10,7 @@ import { InlineKeyboard } from "grammy";
 import { readFileSync, statSync } from "fs";
 import { resolve } from "path";
 import { escapeHtml } from "../formatting";
-import { info, warn } from "../logger";
+import { error as logError, info } from "../logger";
 import { isAuthorized } from "../security";
 import { ALLOWED_USERS } from "../config";
 import { isProcessAlive } from "../relay/discovery";
@@ -89,7 +89,7 @@ export function startProcess(idx: number, cmd: ExecuteCommand): boolean {
   });
   const pid = child.pid;
   if (!pid) {
-    warn("execute: spawn returned no PID", { name: cmd.name });
+    logError("execute: spawn returned no PID", undefined, { name: cmd.name });
     return false;
   }
   child.unref();

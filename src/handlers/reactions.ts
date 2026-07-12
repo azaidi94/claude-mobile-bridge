@@ -40,7 +40,11 @@ async function setReaction(
   try {
     await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]);
   } catch (err) {
-    debug(`reactions: setMessageReaction failed: ${err}`);
+    debug("reactions: setMessageReaction failed", {
+      chatId,
+      messageId,
+      err: String(err),
+    });
   }
 }
 

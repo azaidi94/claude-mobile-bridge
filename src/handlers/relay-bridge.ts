@@ -26,7 +26,7 @@ import type { TailEvent } from "../sessions/tailer";
 import { SessionTailer, findSessionJsonlPath } from "../sessions/tailer";
 import { RELAY_RESPONSE_TIMEOUT_MS } from "../config";
 import { startTypingIndicator } from "../utils";
-import { debug, elapsedMs, info, warn } from "../logger";
+import { debug, elapsedMs, error as logError, info } from "../logger";
 
 export type RelayResult = "delivered" | "unavailable" | "failed";
 
@@ -116,8 +116,11 @@ export async function sendViaRelay(
   if (!client) return "unavailable";
 
   info("relay: sending", {
+    opId,
     chatId,
     username,
+    session: sctx?.sessionName,
+    topic: threadId,
     sessionDir,
     sessionId,
     hasImage: Boolean(imagePath),
@@ -160,9 +163,11 @@ export async function sendViaRelay(
       ...(imagePath ? { image_path: imagePath } : {}),
     });
     if (!sent) {
-      warn("relay: send failed, not connected", {
+      debug("relay: send failed, not connected", {
         opId,
         chatId,
+        session: sctx?.sessionName,
+        topic: threadId,
         sessionDir,
         sessionId,
       });
@@ -173,20 +178,25 @@ export async function sendViaRelay(
     try {
       await waitForReply(client, displayState, String(chatId));
     } catch (err) {
-      warn("relay: wait failed", err, {
+      debug("relay: wait failed", {
         opId,
         chatId,
+        session: sctx?.sessionName,
+        topic: threadId,
         sessionDir,
         sessionId,
         finalReplyReceived: displayState.finalReplyReceived,
+        err: String(err),
         durationMs: elapsedMs(startedAt),
       });
       cleanupProgressMessages(ctx.api, displayState);
       if (!displayState.finalReplyReceived) {
         result = "failed";
-        warn("relay: delivery failed", {
+        logError("relay: delivery failed", err, {
           opId,
           chatId,
+          session: sctx?.sessionName,
+          topic: threadId,
           sessionDir,
           sessionId,
         });
@@ -197,6 +207,8 @@ export async function sendViaRelay(
       info("relay: completed", {
         opId,
         chatId,
+        session: sctx?.sessionName,
+        topic: threadId,
         sessionDir,
         sessionId,
         durationMs: elapsedMs(startedAt),

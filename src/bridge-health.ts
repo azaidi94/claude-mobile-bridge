@@ -42,7 +42,7 @@ function setOnline(value: boolean): void {
     try {
       l(value);
     } catch (err) {
-      warn(`bridge-health: listener threw: ${err}`);
+      warn("bridge-health: listener threw", err);
     }
   }
 }
@@ -61,9 +61,7 @@ export function installBridgeHealthTransformer(api: Api): void {
       if (err instanceof HttpError) {
         consecutiveFailures++;
         if (online && consecutiveFailures >= FAILURE_THRESHOLD) {
-          warn(
-            `bridge-health: bridge offline (${consecutiveFailures} consecutive HttpError)`,
-          );
+          warn("bridge-health: bridge offline", { consecutiveFailures });
           setOnline(false);
         }
       }

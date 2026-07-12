@@ -410,7 +410,7 @@ function _selectRelayTargetImpl(
   }
 
   if (selector.sessionId) {
-    warn("relay: no exact match for session", {
+    debug("relay: no exact match for session", {
       sessionId: selector.sessionId,
       sessionDir: selector.sessionDir,
       claudePid: selector.claudePid,

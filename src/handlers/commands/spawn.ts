@@ -20,6 +20,7 @@ import { scanPortFiles } from "../../relay";
 import { startWatchingSession } from "../watch";
 import {
   createOpId,
+  debug,
   elapsedMs,
   error as logError,
   info,
@@ -206,7 +207,7 @@ export async function spawnDesktopClaudeSession(
     }
 
     if (!spawnedRelay) {
-      warn("spawn: relay not detected", {
+      debug("spawn: relay not detected", {
         opId,
         chatId,
         userId,
@@ -258,7 +259,7 @@ export async function spawnDesktopClaudeSession(
         topicId = await tm
           .createTopic(spawned.name, spawnCwd, spawned.id)
           .catch((err) => {
-            warn(`spawn: topic creation failed: ${err}`);
+            warn("spawn: topic creation failed", err, { opId, chatId });
             return undefined;
           });
       }

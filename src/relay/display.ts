@@ -14,7 +14,7 @@ import type {
 } from "./client";
 import type { TailDisplayState } from "../handlers/watch";
 import { convertMarkdownToPdf } from "../lib/convert-pdf";
-import { debug, info, warn } from "../logger";
+import { debug, error as logError, info, warn } from "../logger";
 import { getMessageBus } from "../messaging";
 
 export interface RelayDisplayState extends TailDisplayState {
@@ -86,14 +86,22 @@ export function wireRelayDisplay(
             content: msg.text,
             format: "auto",
           })
-          .catch((err) => warn(`relay onReply send: ${err}`));
+          .catch((err) =>
+            logError("relay onReply send failed", err, {
+              chatId,
+              topic: tid,
+            }),
+          );
       }
     }
 
     if (msg.files?.length) {
       for (const filePath of msg.files) {
         sendFile(botApi, chatId, filePath, tid).catch((err) =>
-          warn(`relay sendFile dispatch: ${err}`),
+          logError("relay sendFile dispatch failed", err, {
+            chatId,
+            topic: tid,
+          }),
         );
       }
     }
@@ -112,9 +120,17 @@ export function wireRelayDisplay(
         format: "auto",
       })
       .then((r) => {
-        if (!r.ok) debug(`relay edit not ok: ${r.reason}`);
+        if (!r.ok)
+          debug("relay edit not ok", {
+            reason: r.reason,
+            chatId,
+            topic: tid,
+            messageId,
+          });
       })
-      .catch((err) => debug(`relay edit: ${err}`));
+      .catch((err) =>
+        debug("relay edit failed", { err: String(err), chatId, topic: tid }),
+      );
   };
 
   const onReact = (msg: RelayReact) => {
@@ -133,7 +149,14 @@ export function wireRelayDisplay(
             msg.emoji as import("@grammyjs/types").ReactionTypeEmoji["emoji"],
         },
       ])
-      .catch((err) => debug(`relay react: ${err}`));
+      .catch((err) =>
+        debug("relay react failed", {
+          err: String(err),
+          chatId,
+          topic: tid,
+          messageId,
+        }),
+      );
   };
 
   client.onReply(onReply, scopeChatId);
@@ -173,11 +196,14 @@ export async function sendPdfReply(
       });
       return true;
     } catch (err) {
-      warn(`pdf send: ${err}`);
+      logError("relay pdf send failed", err, { chatId, topic: threadId });
       return false;
     }
   } catch (err) {
-    warn(`pdf convert: ${err}`);
+    warn("relay pdf convert failed, falling back to text", err, {
+      chatId,
+      topic: threadId,
+    });
     const res = await getMessageBus().send({
       chatId,
       threadId,
@@ -229,6 +255,10 @@ export async function sendFile(
       await botApi.sendDocument(chatId, input, { message_thread_id: threadId });
     }
   } catch (err) {
-    warn(`relay file ${name}: ${err}`);
+    logError("relay file send failed", err, {
+      chatId,
+      topic: threadId,
+      file: name,
+    });
   }
 }

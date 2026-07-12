@@ -326,7 +326,7 @@ export class SessionTailer {
       void this.readNew();
     }
 
-    debug(`tailer: started at offset ${this.offset}`);
+    debug("tailer: started", { offset: this.offset });
   }
 
   /**
@@ -347,7 +347,7 @@ export class SessionTailer {
       // ENOENT is expected — file may not exist yet, polling will retry.
       // Warn on anything else (EMFILE, EACCES, etc.) so real failures surface.
       if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
-        warn(`tailer: fs.watch failed: ${err}`);
+        warn("tailer: fs.watch failed", err);
       }
     }
   }
@@ -410,9 +410,11 @@ export class SessionTailer {
       // (rather than re-reading from 0) to avoid replaying the whole rewritten
       // file into the surfaces.
       if (size < this.offset) {
-        warn(
-          `tailer: file shrank (${this.offset} → ${size}), resyncing to EOF: ${this.filePath}`,
-        );
+        warn("tailer: file shrank, resyncing to EOF", undefined, {
+          from: this.offset,
+          to: size,
+          file: this.filePath,
+        });
         this.offset = size;
         return;
       }
@@ -444,12 +446,12 @@ export class SessionTailer {
           try {
             this.callback(event);
           } catch (err) {
-            warn(`tailer: callback error: ${err}`);
+            warn("tailer: callback error", err);
           }
         }
       }
     } catch (err) {
-      debug(`tailer: read error: ${err}`);
+      debug("tailer: read error", { err: String(err) });
     } finally {
       this.readInFlight = false;
       if (this.readPending && !this.stopped) {

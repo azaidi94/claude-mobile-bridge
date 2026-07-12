@@ -1,4 +1,4 @@
-import { warn } from "../logger";
+import { warn, debug } from "../logger";
 
 export interface CdpTarget {
   id: string;
@@ -76,9 +76,10 @@ export class CdpClient {
       try {
         msg = JSON.parse(String(event.data));
       } catch (err) {
-        warn(
-          `cdp-client: dropping malformed CDP frame (${event.data?.toString().slice(0, 120)}): ${err instanceof Error ? err.message : String(err)}`,
-        );
+        debug("cdp-client: dropping malformed CDP frame", {
+          frame: event.data?.toString().slice(0, 120),
+          error: err instanceof Error ? err.message : String(err),
+        });
         return;
       }
 
@@ -99,9 +100,9 @@ export class CdpClient {
           }
         }
       } catch (err) {
-        warn(
-          `cdp-client: dispatch error for ${msg.method ?? "id=" + msg.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        warn("cdp-client: dispatch error", err, {
+          method: msg.method ?? "id=" + msg.id,
+        });
       }
     };
 

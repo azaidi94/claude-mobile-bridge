@@ -146,7 +146,7 @@ function loadSync(): BridgeSettings {
     const parsed = JSON.parse(raw);
     return sanitize(parsed);
   } catch (err) {
-    warn(`settings: load failed (${path}): ${err}`);
+    warn("settings: load failed", err, { path });
     return {};
   }
 }
@@ -178,9 +178,9 @@ export async function saveSetting(
     const path = resolveSettingsPath();
     await mkdir(dirname(path), { recursive: true });
     await Bun.write(path, JSON.stringify(c, null, 2));
-    debug(`settings: saved ${Object.keys(patch).join(",")}`);
+    debug("settings: saved", { keys: Object.keys(patch).join(",") });
   } catch (err) {
-    warn(`settings: save failed: ${err}`);
+    warn("settings: save failed", err);
   }
 }
 

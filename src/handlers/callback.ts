@@ -624,7 +624,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
         parse_mode: "HTML",
         reply_markup: keyboard,
       })
-      .catch((err) => debug(`execute menu refresh: ${err}`));
+      .catch((err) =>
+        debug("execute menu refresh failed", { err: String(err) }),
+      );
     return;
   }
 
@@ -716,6 +718,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
         chatId,
         userId,
         username,
+        session: sctx?.sessionName,
+        topic: threadId,
         action,
       });
       await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
@@ -781,6 +785,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
           chatId,
           userId,
           username,
+          session: sctx?.sessionName,
+          topic: threadId,
           requestId,
         });
         await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
@@ -884,6 +890,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
             chatId,
             userId,
             username,
+            session: sctx?.sessionName,
+            topic: threadId,
             requestId,
           });
           await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`);
@@ -939,7 +947,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
       await ctx.api.deleteForumTopic(chatId, threadId);
       await ctx.answerCallbackQuery({ text: "Topic deleted" });
     } catch (err) {
-      warn(`ralph: delete topic failed: ${err}`);
+      warn("ralph: delete topic failed", err, { chatId, topic: threadId });
       await ctx.answerCallbackQuery({
         text: "Couldn't delete — check bot admin rights",
       });
@@ -1017,6 +1025,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
   } catch (error) {
     logError("callback: failed to load ask-user request", error, {
       chatId,
+      session: sctx?.sessionName,
+      topic: threadId,
       requestId,
       requestFile,
     });
@@ -1076,6 +1086,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
     info("callback: interrupting current query for response", {
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       requestId,
     });
     await legacyState.stop();
@@ -1107,6 +1119,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
       chatId,
       userId,
       username,
+      session: sctx?.sessionName,
+      topic: threadId,
       requestId,
     });
 

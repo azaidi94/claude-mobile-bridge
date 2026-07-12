@@ -306,7 +306,11 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
       loop.chatId = topicChatId;
       loop.topicId = t.message_thread_id;
     } catch (err) {
-      warn(`ralph: createForumTopic failed, using invoking chat: ${err}`);
+      // Degraded fallback: the loop posts to the invoking chat instead of its
+      // own topic — an operator-visible downgrade, so warn (not debug).
+      warn("ralph: createForumTopic failed, using invoking chat", {
+        err: String(err),
+      });
       loop.chatId = ctx.chat?.id;
       loop.topicId = undefined;
     }
@@ -375,7 +379,10 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
   if (getActiveLoopSync()?.id !== loop.id) {
     if (pid !== null) {
       await killRalphTree(pid).catch(() => {});
-      info(`ralph: loop ${loop.id} stopped during spawn — killed pid ${pid}`);
+      info("ralph: loop stopped during spawn, killed pid", {
+        loopId: loop.id,
+        pid,
+      });
     }
     return;
   }
@@ -415,7 +422,7 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
       await pinLatest(ctx.api, loop, res.messageId);
     }
   }
-  info(`ralph: started loop ${loop.id} pid=${pid} repo=${repo}`);
+  info("ralph: started loop", { loopId: loop.id, pid, repo });
 }
 
 async function pollForPid(runDir: string): Promise<number | null> {

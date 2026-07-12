@@ -71,7 +71,11 @@ export function renderText(
       .then((r) => {
         state.textMsgPending = false;
         if (!("messageId" in r)) {
-          debug(`tail text create dropped: ${r.dropped}`);
+          debug("tail text create dropped", {
+            dropped: r.dropped,
+            chatId,
+            topic: threadId,
+          });
           return;
         }
         const stub = busStubMessage(chatId, r.messageId);
@@ -95,14 +99,29 @@ export function renderText(
               format: "auto",
             })
             .then((r2) => {
-              if (!r2.ok) debug(`tail text catch-up edit not ok: ${r2.reason}`);
+              if (!r2.ok)
+                debug("tail text catch-up edit not ok", {
+                  reason: r2.reason,
+                  chatId,
+                  topic: threadId,
+                });
             })
-            .catch((err) => debug(`tail text catch-up edit: ${err}`));
+            .catch((err) =>
+              debug("tail text catch-up edit", {
+                err: String(err),
+                chatId,
+                topic: threadId,
+              }),
+            );
         }
       })
       .catch((err) => {
         state.textMsgPending = false;
-        debug(`tail text create: ${err}`);
+        debug("tail text create", {
+          err: String(err),
+          chatId,
+          topic: threadId,
+        });
       });
   } else if (state.currentTextMsg) {
     bus
@@ -113,9 +132,16 @@ export function renderText(
         format: "auto",
       })
       .then((r) => {
-        if (!r.ok) debug(`tail text edit not ok: ${r.reason}`);
+        if (!r.ok)
+          debug("tail text edit not ok", {
+            reason: r.reason,
+            chatId,
+            topic: threadId,
+          });
       })
-      .catch((err) => debug(`tail text edit: ${err}`));
+      .catch((err) =>
+        debug("tail text edit", { err: String(err), chatId, topic: threadId }),
+      );
   }
 }
 
@@ -209,9 +235,15 @@ export function finalizeTextMessage(
         format: "auto",
       })
       .then((r) => {
-        if (!r.ok) debug(`tail finalize edit not ok: ${r.reason}`);
+        if (!r.ok)
+          debug("tail finalize edit not ok", {
+            reason: r.reason,
+            chatId: state.chatId,
+          });
       })
-      .catch((err) => debug(`tail finalize: ${err}`));
+      .catch((err) =>
+        debug("tail finalize", { err: String(err), chatId: state.chatId }),
+      );
   }
 
   state.currentTextMsg = null;

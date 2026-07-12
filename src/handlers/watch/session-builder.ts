@@ -10,7 +10,7 @@
  */
 
 import type { Api } from "grammy";
-import { info, warn } from "../../logger";
+import { debug, error, info } from "../../logger";
 import { safeSync } from "../../utils/safe-async";
 import {
   forceRefresh,
@@ -51,7 +51,8 @@ function resolveAutoWatchConflict(
   const existing = watches.get(watchKey(chatId, threadId));
   if (!existing) return false;
   if (existing.sessionName !== sessionName) {
-    info(`auto-watch: skipped, topic ${phase} bound to different session`, {
+    info("auto-watch: skipped, topic bound to different session", {
+      phase,
       chatId,
       threadId,
       requestedSession: sessionName,
@@ -92,7 +93,7 @@ export async function startAutoWatch(
 
   const sessionInfo = await _awaitSessionId(sessionName);
   if (!sessionInfo?.id) {
-    warn("auto-watch: start failed, missing session id after retries", {
+    debug("auto-watch: start failed, missing session id after retries", {
       chatId,
       threadId,
       sessionName,
@@ -224,7 +225,7 @@ export async function startWatchingSession(
   }
 
   if (!sessionInfo?.id) {
-    warn("watch: start failed, missing session id", {
+    error("watch: start failed, missing session id", {
       chatId,
       threadId,
       targetName,

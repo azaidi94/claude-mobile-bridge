@@ -7,7 +7,7 @@ import {
 import { CursorSessionLog } from "./session-log";
 import type { CdpClient } from "./cdp-client";
 import type { SessionEventBus, SseEvent } from "../web/sse";
-import { warn, info, debug } from "../logger";
+import { error, info, debug } from "../logger";
 import { updateSessionActivity } from "../sessions";
 
 const HUMAN_BINDING = "cursorBridgeHumanMsg";
@@ -165,9 +165,11 @@ export class CursorBridge {
           const norm = normalizeForCompare(text);
           this.pruneRecentlyInjected();
           if (this.recentlyInjected.has(norm)) {
-            debug(
-              `cursor-bridge: suppressed echo (${text.length} chars): ${text.slice(0, 60)}`,
-            );
+            debug("cursor-bridge: suppressed echo", {
+              chars: text.length,
+              preview: text.slice(0, 60),
+              session: sessionName,
+            });
             // Keep the entry in the map until it ages out — Cursor can
             // re-render the same bubble in multiple panels and each
             // re-render fires another HUMAN_BINDING for the same text.
@@ -179,7 +181,10 @@ export class CursorBridge {
           // A new human message means the prior AI turn is finished —
           // flush any pending AI buffer now so order is preserved.
           this.flushAiBuffer();
-          debug(`cursor-bridge: human msg: ${text.slice(0, 80)}`);
+          debug("cursor-bridge: human msg", {
+            preview: text.slice(0, 80),
+            session: sessionName,
+          });
           // Heartbeat the registry so a long-lived but actively-used
           // Cursor window doesn't get pruned by refresh()'s 24h MAX_AGE
           // check (bug_007). lastActivity was only set at attach time.
@@ -235,17 +240,19 @@ export class CursorBridge {
             const desc =
               (detail as { exception?: { description?: string } }).exception
                 ?.description ?? JSON.stringify(detail);
-            warn(`cursor-bridge: inject threw in page: ${desc}`);
+            error("cursor-bridge: inject threw in page", desc, {
+              session: sessionName,
+            });
           }
         })
         .catch((e: unknown) => {
-          warn(
-            `cursor-bridge: inject transport failed: ${(e as Error).message}`,
-          );
+          error("cursor-bridge: inject transport failed", e, {
+            session: sessionName,
+          });
         });
     });
 
-    info(`cursor-bridge: started for session "${sessionName}"`);
+    info("cursor-bridge: started", { session: sessionName });
   }
 
   stop(): void {
@@ -255,7 +262,7 @@ export class CursorBridge {
     this.unsubBus = null;
     this.flushAiBuffer();
     this.opts.cdpClient.close();
-    info(`cursor-bridge: stopped for session "${this.opts.sessionName}"`);
+    info("cursor-bridge: stopped", { session: this.opts.sessionName });
   }
 
   /** True while the underlying CDP WebSocket is OPEN. */
@@ -332,9 +339,11 @@ export class CursorBridge {
     if (this.aiBuffer.length === 0) return;
     const combined = this.aiBuffer.join("\n\n");
     this.aiBuffer = [];
-    debug(
-      `cursor-bridge: ai msg (${combined.length} chars): ${combined.slice(0, 80)}`,
-    );
+    debug("cursor-bridge: ai msg", {
+      chars: combined.length,
+      preview: combined.slice(0, 80),
+      session: this.opts.sessionName,
+    });
     void this.log?.appendAssistant(combined, "cursor");
     this.opts.bus.emit(this.opts.sessionName, {
       type: "text",

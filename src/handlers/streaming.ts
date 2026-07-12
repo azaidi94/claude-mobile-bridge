@@ -69,7 +69,10 @@ export async function sendFileToTelegram(
 
   // Security: validate path is within allowed directories
   if (!isPathAllowed(resolvedPath)) {
-    warn(`send_file blocked: ${resolvedPath}`);
+    warn("send_file blocked", undefined, {
+      path: resolvedPath,
+      topic: threadId,
+    });
     await busReply(ctx, `⚠️ Cannot send file outside allowed directories.`, {
       threadId,
     });
@@ -111,7 +114,11 @@ export async function sendFileToTelegram(
   const ext = extname(filename).toLowerCase();
   const isPhoto = PHOTO_EXTENSIONS.has(ext);
 
-  info(`send_file: ${filename} (${isPhoto ? "photo" : "document"})`);
+  info("send_file", {
+    filename,
+    kind: isPhoto ? "photo" : "document",
+    topic: threadId,
+  });
 
   const chatId = ctx.chat?.id;
   if (chatId === undefined) return;
@@ -127,7 +134,7 @@ export async function sendFileToTelegram(
     });
     if ("dropped" in photoRes) {
       // Fall back to document if photo send fails (e.g. too large for photo API)
-      debug(`photo fallback to document: ${filename}`);
+      debug("send_file: photo fallback to document", { filename });
       await bus.send({
         chatId,
         threadId,
@@ -348,7 +355,7 @@ export async function checkPendingAskUserRequests(
         await Bun.write(filepath, JSON.stringify(data));
       }
     } catch (err) {
-      warn(`ask-user file: ${err}`);
+      debug("ask-user file: skipped unreadable file", { err: String(err) });
     }
   }
 
@@ -435,7 +442,7 @@ export function createStatusCallback(
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
             // HTML parse failed, fall back to plain text
-            debug(`html reply fallback: ${htmlError}`);
+            debug("html reply fallback", { err: String(htmlError) });
             // TODO(phase-2 status-msg): same as above.
             const msg = await ctx.reply(display, {
               message_thread_id: threadId,
@@ -468,7 +475,7 @@ export function createStatusCallback(
             );
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
-            debug(`html edit fallback: ${htmlError}`);
+            debug("html edit fallback", { err: String(htmlError) });
             try {
               await ctx.api.editMessageText(
                 msg.chat.id,
@@ -477,7 +484,7 @@ export function createStatusCallback(
               );
               state.lastContent.set(segmentId, formatted);
             } catch (editError) {
-              debug(`edit failed: ${editError}`);
+              debug("edit failed", { err: String(editError) });
             }
           }
           state.lastEditTimes.set(segmentId, now);
@@ -503,14 +510,14 @@ export function createStatusCallback(
                 },
               );
             } catch (err) {
-              debug(`final edit: ${err}`);
+              debug("final edit failed", { err: String(err) });
             }
           } else {
             // Too long - delete and split
             try {
               await ctx.api.deleteMessage(msg.chat.id, msg.message_id);
             } catch (err) {
-              debug(`delete for split: ${err}`);
+              debug("delete for split failed", { err: String(err) });
             }
             // Bus chunks at TELEGRAM_SAFE_LIMIT and falls back to plain on
             // parse-entity errors — we no longer need a manual split loop or
@@ -530,7 +537,7 @@ export function createStatusCallback(
         try {
           await sendFileToTelegram(ctx, content, threadId);
         } catch (err) {
-          warn(`send_file error: ${err}`);
+          error("send_file failed", err, { topic: threadId });
           await busReply(ctx, `⚠️ Failed to send file.`, { threadId });
         }
       } else if (statusType === "done") {
@@ -539,12 +546,12 @@ export function createStatusCallback(
           try {
             await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
           } catch (err) {
-            debug(`delete tool msg: ${err}`);
+            debug("delete tool msg failed", { err: String(err) });
           }
         }
       }
     } catch (err) {
-      error(`callback: ${err}`);
+      error("status callback failed", err, { topic: threadId });
     }
   };
 }

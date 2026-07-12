@@ -231,7 +231,7 @@ export async function readSessionHistory(
       }
     }
   } catch (err) {
-    warn(`history: failed reading ${jsonl}: ${(err as Error).message}`);
+    warn("history: failed reading jsonl", err, { jsonl });
   } finally {
     rl.close();
     stream.close();

@@ -11,7 +11,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
-import { info, warn, error } from "../logger";
+import { info, warn, error, debug } from "../logger";
 import { safeAsync } from "../utils/safe-async";
 import {
   scanPortFiles,
@@ -133,9 +133,10 @@ async function loadActiveSession(): Promise<string | null> {
     const trimmed = name.trim();
     if (trimmed) {
       await writeFile(ACTIVE_SESSION_FILE, trimmed, "utf-8");
-      info(
-        `watcher: migrated active session from ${LEGACY_ACTIVE_SESSION_FILE} to ${ACTIVE_SESSION_FILE}`,
-      );
+      info("watcher: migrated active session", {
+        from: LEGACY_ACTIVE_SESSION_FILE,
+        to: ACTIVE_SESSION_FILE,
+      });
     }
     return trimmed || null;
   } catch {
@@ -415,7 +416,7 @@ async function scanSessions(): Promise<{
       }
     }
   } catch (err) {
-    error(`scan: ${err}`);
+    error("scan failed", err);
   }
 
   // Build port-file index by dir (authoritative — represents running relays)
@@ -695,9 +696,11 @@ export function assignPidsToSessions(
         );
       }
     } else if (pids.length > 1 || dirSessions.length > 1) {
-      warn(
-        `watcher: ambiguous pid assignment for ${dir} (${dirSessions.length} sessions, ${pids.length} processes)`,
-      );
+      warn("watcher: ambiguous pid assignment", {
+        dir,
+        sessions: dirSessions.length,
+        processes: pids.length,
+      });
     }
   }
 }
@@ -747,7 +750,7 @@ async function runTopicReaper(): Promise<void> {
       log: (msg, meta) => info(`${msg} ${JSON.stringify(meta ?? {})}`),
     });
   } catch (e) {
-    warn(`topic-reaper: refresh wiring failed: ${String(e)}`);
+    debug("topic-reaper: refresh wiring failed", { err: String(e) });
   }
 }
 
@@ -815,7 +818,10 @@ async function doRefresh(): Promise<SessionDiff> {
     getTopicStore().topics,
   )) {
     updateTopicMapping(sessionName, { sessionId });
-    info(`identity: topic ${sessionName} sessionId refreshed → ${sessionId}`);
+    info("identity: topic sessionId refreshed", {
+      session: sessionName,
+      sessionId,
+    });
   }
 
   // Backfill launchUuid onto topics that already have a sessionId but no
@@ -827,12 +833,13 @@ async function doRefresh(): Promise<SessionDiff> {
       launchUuidBySessionId(readRegistry()),
     )) {
       updateTopicMapping(sessionName, { launchUuid });
-      info(
-        `identity: topic ${sessionName} launchUuid backfilled → ${launchUuid}`,
-      );
+      info("identity: topic launchUuid backfilled", {
+        session: sessionName,
+        launchUuid,
+      });
     }
   } catch (err) {
-    warn(`identity: launchUuid backfill failed: ${err}`);
+    debug("identity: launchUuid backfill failed", { err: String(err) });
   }
 
   // Keep non-desktop sessions (telegram, cursor); only desktop sessions are
@@ -889,7 +896,7 @@ async function doRefresh(): Promise<SessionDiff> {
   for (const s of cache.sessions.values()) {
     if (s.source === "desktop" && !oldDesktop.has(s.name)) {
       added.push(s);
-      info(`session found: ${s.name} (${s.dir})`);
+      info("session found", { session: s.name, dir: s.dir });
     }
   }
 
@@ -923,7 +930,7 @@ async function doRefresh(): Promise<SessionDiff> {
       continue;
     }
     removed.push({ name: old.name, dir: old.dir });
-    info(`session removed: ${old.name} (${old.dir})`);
+    info("session removed", { session: old.name, dir: old.dir });
   }
 
   // Write each desktop session's assigned name back to its relay port file —
@@ -945,7 +952,7 @@ async function doRefresh(): Promise<SessionDiff> {
       portFiles,
     });
   } catch (err) {
-    warn(`identity: invariant check failed: ${err}`);
+    warn("identity: invariant check failed", err);
   }
 
   // Shadow-only (WS-3b): bidirectional — also flag registry ids the resolver doesn't reproduce.
@@ -958,7 +965,7 @@ async function doRefresh(): Promise<SessionDiff> {
         .map((s) => ({ claudePid: s.pid!, sessionId: s.id })),
     });
   } catch (err) {
-    warn(`identity-shadow: comparison failed: ${err}`);
+    debug("identity-shadow: comparison failed", { err: String(err) });
   }
 
   // Validate active session
@@ -1032,9 +1039,7 @@ export async function startWatcher(
 
   // Initial scan (no notifications on startup)
   await refresh();
-  info(
-    `watcher: ${cache.sessions.size} session${cache.sessions.size !== 1 ? "s" : ""}`,
-  );
+  info("watcher: sessions loaded", { count: cache.sessions.size });
 
   // Start fs.watch on projects directory
   try {
@@ -1051,9 +1056,9 @@ export async function startWatcher(
         }, DEBOUNCE_MS);
       }
     });
-    info(`watcher: watching ${PROJECTS_DIR}`);
+    info("watcher: watching", { dir: PROJECTS_DIR });
   } catch (err) {
-    warn(`watcher: fs.watch failed, polling only: ${err}`);
+    warn("watcher: fs.watch failed, polling only", err);
   }
 
   // Watch STATE_DIR for relay port file creation/deletion

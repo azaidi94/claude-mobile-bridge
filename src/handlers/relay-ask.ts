@@ -16,7 +16,7 @@ import { InlineKeyboard } from "grammy";
 import type { RelayClient, RelayAskRemoteRequest } from "../relay/client";
 import { escapeHtml } from "../formatting";
 import { BUTTON_LABEL_MAX_LENGTH } from "../config";
-import { debug, info, warn } from "../logger";
+import { debug, error as logError, info, warn } from "../logger";
 import { globalEventBus } from "../web/sse";
 import { topicForSession } from "../topics/topic-store";
 import { getSession } from "../sessions";
@@ -87,12 +87,12 @@ export function attachAskRemoteToRelay(client: RelayClient): void {
     warn(
       "relay-ask: skipping attach — botApi not yet initialized (ask_remote will silently fail on this client)",
       undefined,
-      { sessionName: client.sessionName, sessionDir: client.sessionDir },
+      { session: client.sessionName, sessionDir: client.sessionDir },
     );
     return;
   }
   debug("relay-ask: attached ask_remote listener", {
-    sessionName: client.sessionName,
+    session: client.sessionName,
     sessionDir: client.sessionDir,
   });
   const api = botApi;
@@ -106,7 +106,7 @@ export function attachAskRemoteToRelay(client: RelayClient): void {
     try {
       await postQuestionToTelegram(api, client, req);
     } catch (err) {
-      warn("relay-ask: failed to post question", err, {
+      logError("relay-ask: failed to post question", err, {
         ask_id: req.ask_id,
         chat_id: req.chat_id,
       });
@@ -130,9 +130,9 @@ export function attachAskRemoteToRelay(client: RelayClient): void {
       if (entry.client === client) orphans.push([id, entry]);
     }
     if (orphans.length === 0) return;
-    debug(
-      `relay-ask: cleaning up ${orphans.length} pending ask(s) after relay disconnect`,
-    );
+    debug("relay-ask: cleaning up pending asks after relay disconnect", {
+      count: orphans.length,
+    });
     for (const [id, entry] of orphans) {
       clearPending(id, entry);
       if (botApi) {
@@ -169,8 +169,8 @@ export async function postQuestionToTelegram(
     if (typeof fallback === "number" && Number.isFinite(fallback)) {
       threadId = fallback;
       debug("relay-ask: resolved thread_id via session→topic store", {
-        sessionName: client.sessionName,
-        threadId,
+        session: client.sessionName,
+        topic: threadId,
       });
     }
   }
@@ -243,8 +243,8 @@ export async function postQuestionToTelegram(
 
   debug("relay-ask: posted question", {
     ask_id: req.ask_id,
-    chat_id: chatId,
-    thread_id: threadId,
+    chatId,
+    topic: threadId,
     options: trimmedOptions.length,
     session: sessionName ?? "(unknown)",
     timeout_ms: timeoutMs,
@@ -614,7 +614,7 @@ export async function editBridgeCardCancelled(
   }[reason];
   await api
     .editMessageText(chatId, messageId, label)
-    .catch((err) => debug(`bridge card edit failed: ${err}`));
+    .catch((err) => debug("bridge card edit failed", { err: String(err) }));
 }
 
 // ── AUQ-bridge callback routing ─────────────────────────────────────────────

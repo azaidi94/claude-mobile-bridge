@@ -66,7 +66,7 @@ import { launchUuidForPid } from "./sessions/resolve-session";
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
-import { info, warn, error as logError } from "./logger";
+import { info, warn, debug, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
 import { WEB_ENABLED } from "./config";
@@ -79,7 +79,7 @@ let topicManager: TopicManager | undefined;
 const bot = createBot({
   token: TELEGRAM_TOKEN,
   onForumGroupDetected: (chatId) => {
-    info(`bot: detected forum group ${chatId}, adopting for topics`);
+    info("bot: detected forum group, adopting for topics", { chatId });
     setChatId(chatId);
     if (!topicManager) {
       topicManager = new TopicManager(bot.api, chatId);
@@ -100,9 +100,10 @@ process.on("unhandledRejection", (reason) => {
 
 // ============== Startup ==============
 
-info(
-  `cwd: ${getWorkingDir()} (${ALLOWED_USERS.length} user${ALLOWED_USERS.length !== 1 ? "s" : ""})`,
-);
+info("startup: cwd", {
+  cwd: getWorkingDir(),
+  users: ALLOWED_USERS.length,
+});
 
 // Load persisted chat IDs and pinned message IDs
 await loadChatIds();
@@ -114,9 +115,9 @@ await loadTopicStore();
 // Idempotent — already-recorded topic ids are skipped.
 try {
   const added = await backfillLedgerFromStore(getTopicStore().topics);
-  if (added > 0) info(`topic-ledger: backfilled ${added} pre-ledger topic(s)`);
+  if (added > 0) info("topic-ledger: backfilled pre-ledger topics", { added });
 } catch (err) {
-  warn(`topic-ledger: backfill failed: ${err}`);
+  warn("topic-ledger: backfill failed", err);
 }
 
 // Wire up pinned-status updates on plan-mode change. Each newly created
@@ -163,7 +164,7 @@ setSessionCleanupCallback((sessionName) => {
 });
 
 const botInfo = await bot.api.getMe();
-info(`bot: @${botInfo.username} ready`);
+info("bot: ready", { username: botInfo.username });
 
 // Wire the ask_remote round-trip glue. After this call, every relay client
 // the bot connects to (now or later) auto-subscribes to ask_remote_request
@@ -183,7 +184,7 @@ startWatchdog(bot.api);
 onBridgeChange((online) => {
   if (!online) return;
   flushBridgeReconnectSummaries(bot.api).catch((err) =>
-    warn(`flush reconnect summaries failed: ${err}`),
+    warn("flush reconnect summaries failed", err),
   );
 });
 
@@ -209,9 +210,11 @@ const autoWatchRetryTimer: Timer = setInterval(() => {
     if (!topic) continue;
     if (isWatching(chatId, topic.topicId)) continue;
     startAutoWatch(bot.api, chatId, topic.topicId, s.name).catch((err) =>
-      warn(
-        `auto-watch retry failed for ${s.name} (topic ${topic.topicId}): ${err}`,
-      ),
+      debug("auto-watch retry failed", {
+        session: s.name,
+        topic: topic.topicId,
+        err: String(err),
+      }),
     );
   }
 }, AUTO_WATCH_RETRY_MS);
@@ -275,11 +278,14 @@ function pingRelayForSession(
           text: `Session Name: ${sessionName}`,
         });
       } catch (err) {
-        warn(`relay ping iteration error for ${sessionName}: ${err}`);
+        debug("relay ping iteration error", {
+          session: sessionName,
+          err: String(err),
+        });
       }
     }
-    warn(`relay ping failed after retries for ${sessionName}`);
-  })().catch((err) => warn(`relay ping error for ${sessionName}: ${err}`));
+    warn("relay ping failed after retries", { session: sessionName });
+  })().catch((err) => warn("relay ping error", err, { session: sessionName }));
 }
 
 const notifyHandler = createNotificationHandler(
@@ -300,9 +306,10 @@ const notifyHandler = createNotificationHandler(
         claudePid,
       );
       startAutoWatch(bot.api, chatId, topicId, sessionName).catch((err) =>
-        warn(
-          `auto-watch on-notify failed for ${sessionName} (topic ${topicId}): ${err}`,
-        ),
+        warn("auto-watch on-notify failed", err, {
+          session: sessionName,
+          topic: topicId,
+        }),
       );
     }
   },
@@ -348,7 +355,7 @@ try {
   const { recoverRalphOnBoot } = await import("./ralph/monitor");
   await recoverRalphOnBoot(bot.api);
 } catch (err) {
-  warn(`ralph: boot recovery failed: ${err}`);
+  warn("ralph: boot recovery failed", err);
 }
 
 if (topicManager && primaryChatId !== undefined) {
@@ -370,9 +377,10 @@ if (topicManager && primaryChatId !== undefined) {
       pingRelayForSession(s.name, s.dir, primaryChatId, s.id, s.pid);
       startAutoWatch(bot.api, primaryChatId, topic.topicId, s.name).catch(
         (err) =>
-          warn(
-            `auto-watch startup failed for ${s.name} (topic ${topic.topicId}): ${err}`,
-          ),
+          warn("auto-watch startup failed", err, {
+            session: s.name,
+            topic: topic.topicId,
+          }),
       );
     }
   }
@@ -422,7 +430,7 @@ if (existsSync(RESTART_FILE)) {
     }
     unlinkSync(RESTART_FILE);
   } catch (e) {
-    warn(`restart msg: ${e}`);
+    warn("restart msg failed", e);
     try {
       unlinkSync(RESTART_FILE);
     } catch {
@@ -453,7 +461,7 @@ function monitorRunner() {
   // poller → Telegram 409 conflicts.
   const scheduleRestart = (reason: string) => {
     if (stopping || monitored !== runner) return;
-    warn(`${reason}, restarting in 3s`);
+    warn("runner restarting in 3s", { reason });
     setTimeout(() => {
       if (stopping || monitored !== runner) return;
       runner = run(bot);
@@ -506,7 +514,7 @@ async function flushStores(): Promise<void> {
       flushSkillRecents(),
     ]);
   } catch (err) {
-    warn(`shutdown flush: ${err}`);
+    warn("shutdown flush failed", err);
   }
 }
 

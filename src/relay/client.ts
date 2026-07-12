@@ -94,7 +94,7 @@ export class RelayClient {
       this.socket.connect(port, "127.0.0.1", () => {
         clearTimeout(timeout);
         this._isConnected = true;
-        debug(`relay: connected to port ${port}`);
+        debug("relay: connected to port", { port });
         resolve();
       });
 
@@ -109,7 +109,7 @@ export class RelayClient {
             const msg = JSON.parse(line);
             this.handleMessage(msg);
           } catch (err) {
-            warn(`relay: parse error: ${err}`);
+            warn("relay: parse error", err);
           }
         }
       });
@@ -124,7 +124,7 @@ export class RelayClient {
         clearTimeout(timeout);
         this._isConnected = false;
         if (!this.socket?.connecting) {
-          warn(`relay: socket error: ${err}`);
+          warn("relay: socket error", err);
         }
         reject(err);
       });
@@ -204,7 +204,7 @@ export class RelayClient {
 
   private send(msg: Record<string, unknown>): boolean {
     if (!this.socket || this.socket.destroyed || !this._isConnected) {
-      warn("relay: cannot send, not connected", { type: msg.type });
+      debug("relay: cannot send, not connected", { type: msg.type });
       return false;
     }
     // Enqueue via the backpressure-aware writer so a slow MCP consumer cannot
@@ -225,7 +225,7 @@ export class RelayClient {
         const text = String(msg.text || "");
         const files = (msg.files as string[]) ?? [];
         if (!text.trim() && files.length === 0) {
-          warn("relay: dropping empty-text reply with no files", {
+          debug("relay: dropping empty-text reply with no files", {
             chatId: msgChatId,
           });
           break;
@@ -246,7 +246,7 @@ export class RelayClient {
       case "edit_message": {
         const text = String(msg.text || "");
         if (!text.trim()) {
-          warn("relay: dropping empty-text edit_message", {
+          debug("relay: dropping empty-text edit_message", {
             chatId: msgChatId,
             messageId: msg.message_id,
           });
@@ -291,7 +291,7 @@ export class RelayClient {
         }
         const askId = String(msg.ask_id || "");
         if (!askId || options.length < 1) {
-          warn("relay: dropping invalid ask_remote_request", {
+          debug("relay: dropping invalid ask_remote_request", {
             ask_id: askId,
             optionCount: options.length,
           });

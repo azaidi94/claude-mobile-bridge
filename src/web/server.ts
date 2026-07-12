@@ -96,5 +96,5 @@ export function startWebServer(): void {
       return app.fetch(request, { remoteAddr: ipInfo?.address ?? null });
     },
   });
-  info(`web: server listening on ${hostname}:${server.port}`);
+  info("web: server listening", { hostname, port: server.port });
 }

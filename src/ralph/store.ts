@@ -16,7 +16,7 @@ import { readFile, writeFile, mkdir, rename, rm } from "fs/promises";
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { STATE_DIR } from "../paths";
-import { info, warn } from "../logger";
+import { info, warn, debug } from "../logger";
 
 export interface RalphLoop {
   id: string; // Date.now().toString(36) style
@@ -80,7 +80,7 @@ async function load(): Promise<void> {
       if (parsed && Array.isArray(parsed.loops)) cache = parsed;
     }
   } catch (err) {
-    warn(`ralph-store: load failed, starting empty: ${err}`);
+    warn("ralph-store: load failed, starting empty", err);
     cache = { loops: [] };
   }
   loaded = true;
@@ -166,16 +166,22 @@ export async function addLoop(
   cache.loops.push(created);
   recomputeActive();
   scheduleSave();
-  info(`ralph-store: added loop ${created.id} (${created.repoPath})`);
+  info("ralph-store: added loop", {
+    loopId: created.id,
+    repoPath: created.repoPath,
+  });
 
   // Prune previous (non-active) records' run dirs.
   for (const old of stale) {
     if (old.runDir) {
       await rm(old.runDir, { recursive: true, force: true }).catch((err) =>
-        warn(`ralph-store: failed to rm old runDir ${old.runDir}: ${err}`),
+        debug("ralph-store: failed to rm old runDir", {
+          runDir: old.runDir,
+          err: String(err),
+        }),
       );
     }
-    info(`ralph-store: pruned old loop ${old.id} (${old.state})`);
+    info("ralph-store: pruned old loop", { loopId: old.id, state: old.state });
   }
 
   return { ok: true, loop: created };

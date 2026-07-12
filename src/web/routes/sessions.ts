@@ -15,7 +15,7 @@ import { getRelayClient } from "../../relay";
 import type { RelayReply } from "../../relay";
 import { readSessionHistory } from "../sessions/history";
 import { findNewestSessionInDir } from "../../sessions/tailer";
-import { warn } from "../../logger";
+import { debug } from "../../logger";
 import {
   submitAnswerFromWeb,
   cancelAnswerFromWeb,
@@ -148,7 +148,7 @@ export function createSessionsRouter(): Hono {
     const sessions = getSessions();
     const known = sessions.find((s) => s.id === sessionId);
     if (!known) {
-      warn("web/sse: session not in registry, using sessionId as bus key", {
+      debug("web/sse: session not in registry, using sessionId as bus key", {
         sessionId,
       });
     }

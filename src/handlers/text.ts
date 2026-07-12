@@ -134,6 +134,8 @@ export async function handleText(
     chatId,
     userId,
     username,
+    session: sctx?.sessionName,
+    topic: incomingThreadId,
     messagePreview: truncate(message, 120),
   });
 
@@ -321,6 +323,8 @@ export async function handleText(
         requestKind: "plan_edit",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "plan_edit",
       });
@@ -330,6 +334,8 @@ export async function handleText(
         requestKind: "plan_edit",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
       });
       await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
@@ -433,6 +439,8 @@ export async function handleText(
           requestKind: wasPlanMode ? "ask_user_custom_plan" : "ask_user_custom",
           chatId,
           userId,
+          session: sctx?.sessionName,
+          topic: threadId,
           durationMs: elapsedMs(requestStartedAt),
           path: "sdk",
         });
@@ -442,6 +450,8 @@ export async function handleText(
           requestKind: wasPlanMode ? "ask_user_custom_plan" : "ask_user_custom",
           chatId,
           userId,
+          session: sctx?.sessionName,
+          topic: threadId,
           durationMs: elapsedMs(requestStartedAt),
         });
         await busReply(ctx, `❌ Error: ${String(err).slice(0, 200)}`, {
@@ -473,6 +483,8 @@ export async function handleText(
       requestKind: "text",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(requestStartedAt),
       path: "cursor_bus",
     });
@@ -509,6 +521,8 @@ export async function handleText(
         requestKind: "text",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "watch_relay",
       });
@@ -521,6 +535,8 @@ export async function handleText(
       requestKind: "text",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(requestStartedAt),
     });
     await busReply(
@@ -570,6 +586,8 @@ export async function handleText(
       requestKind: "text",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(requestStartedAt),
       path: "clear",
     });
@@ -583,7 +601,12 @@ export async function handleText(
   }
 
   // Debug log incoming message
-  debug(`msg: "${truncate(message)}"`);
+  debug("msg received", {
+    opId,
+    session: sctx?.sessionName,
+    topic: threadId,
+    preview: truncate(message),
+  });
 
   // 7.5. Try relay path — inject into running desktop session
   // Slash commands must run locally via the SDK (for <local-command-stdout> handling),
@@ -606,17 +629,22 @@ export async function handleText(
         requestKind: "text",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "relay",
       });
       return;
     }
 
-    warn("request: relay " + relayResult, {
+    warn("request: relay incomplete", {
       opId,
       requestKind: "text",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+      relayResult,
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
@@ -679,11 +707,20 @@ export async function handleText(
       requestKind: "slash_cmd",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(requestStartedAt),
       path: "local_sdk",
     });
   } catch (err) {
-    logError("slash cmd error", err);
+    logError("slash cmd error", err, {
+      opId,
+      requestKind: "slash_cmd",
+      chatId,
+      userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+    });
     await busReply(
       ctx,
       `❌ Error: ${err instanceof Error ? err.message : String(err)}`,

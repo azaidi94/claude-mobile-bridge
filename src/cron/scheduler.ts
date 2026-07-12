@@ -72,7 +72,7 @@ async function fireJob(
       });
     }
   } catch (err) {
-    warn(`cron: relay attempt failed: ${err}`);
+    warn("cron: relay attempt failed", err, { session: job.sessionName });
   }
   if (!relayed) {
     headerLines.push("⚠️ session offline — prompt not delivered");
@@ -87,13 +87,18 @@ async function fireJob(
       silent: true,
     });
   } catch (err) {
-    warn(`cron: header post failed: ${err}`);
+    warn("cron: header post failed", err, {
+      session: job.sessionName,
+      topic: threadId,
+    });
   }
 
   await markRun(job.id, now);
-  info(
-    `cron: fired job=${job.id} session=${job.sessionName} relayed=${relayed}`,
-  );
+  info("cron: fired job", {
+    jobId: job.id,
+    session: job.sessionName,
+    relayed,
+  });
 }
 
 /**
@@ -109,14 +114,15 @@ export async function tick(api: Api, chatId: number, now: Date): Promise<void> {
     try {
       expr = parseCron(job.schedule);
     } catch (err) {
-      warn(
-        `cron: job ${job.id} has invalid schedule "${job.schedule}": ${err}`,
-      );
+      warn("cron: job has invalid schedule", err, {
+        jobId: job.id,
+        schedule: job.schedule,
+      });
       continue;
     }
     if (!matchesAt(expr, boundary)) continue;
     if (ranAt(job, boundary)) {
-      debug(`cron: skipping duplicate fire for ${job.id}`);
+      debug("cron: skipping duplicate fire", { jobId: job.id });
       continue;
     }
     await fireJob(api, chatId, job, boundary);
@@ -144,9 +150,10 @@ export async function evaluateMissedMinutes(
     await tick(api, chatId, minuteDate);
   }
   if (nowMinute > lastMinute + MAX_CATCHUP) {
-    warn(
-      `cron: ${nowMinute - lastMinute} minutes elapsed; skipping ${nowMinute - lastMinute - MAX_CATCHUP} missed minutes`,
-    );
+    warn("cron: minutes elapsed; skipping missed minutes", undefined, {
+      elapsed: nowMinute - lastMinute,
+      skipped: nowMinute - lastMinute - MAX_CATCHUP,
+    });
   }
   return nowMinute;
 }
@@ -173,14 +180,14 @@ export function startCronScheduler(api: Api, chatId: number): void {
             lastEvaluatedMinute,
           );
         } catch (err) {
-          warn(`cron: tick failed: ${err}`);
+          warn("cron: tick failed", err);
         }
         schedule();
       },
       Math.max(0, msUntilNextMinute()),
     );
   };
-  info(`cron: scheduler started (chatId=${chatId})`);
+  info("cron: scheduler started", { chatId });
   schedule();
 }
 

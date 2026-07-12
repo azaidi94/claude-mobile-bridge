@@ -174,7 +174,7 @@ export class SessionState {
    */
   setWorkingDir(dir: string): void {
     this.workingDir = dir;
-    debug(`cwd: ${dir}`);
+    debug("cwd set", { cwd: dir });
   }
 
   /**

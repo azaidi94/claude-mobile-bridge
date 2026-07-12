@@ -17,7 +17,7 @@ import type { InlineKeyboardMarkup } from "grammy/types";
 import { join } from "path";
 import { open, stat, readFile } from "fs/promises";
 import { realpathSync } from "fs";
-import { info, warn } from "../logger";
+import { info, warn, debug } from "../logger";
 import { getMessageBus } from "../messaging";
 import {
   suppressDirNotifications,
@@ -190,7 +190,11 @@ async function post(
       replyMarkup,
     })
     .catch((err) => {
-      warn(`ralph: post failed: ${err}`);
+      debug("ralph: post failed", {
+        err: String(err),
+        topic: loop.topicId,
+        chatId: loop.chatId,
+      });
       return undefined;
     });
   return res && "messageId" in res ? res.messageId : undefined;
@@ -218,7 +222,11 @@ export async function pinLatest(
       await api.unpinChatMessage(loop.chatId, prev).catch(() => {});
     }
   } catch (err) {
-    warn(`ralph: pin failed: ${err}`);
+    debug("ralph: pin failed", {
+      err: String(err),
+      topic: loop.topicId,
+      chatId: loop.chatId,
+    });
   }
 }
 
@@ -314,7 +322,9 @@ async function attachVerboseWatch(api: Api, loop: RalphLoop): Promise<void> {
       const target = fresh[fresh.length - 1]!;
       await w
         .startAutoWatch(api, chatId, topicId, target.name)
-        .catch((err) => warn(`ralph: verbose attach failed: ${err}`));
+        .catch((err) =>
+          debug("ralph: verbose attach failed", { err: String(err) }),
+        );
       // Superseded while startAutoWatch was in flight (finalize/verbose off
       // bumped the gen after its stopWatching ran) — tear down the watch we
       // just registered or it leaks past the loop's end.
@@ -343,7 +353,9 @@ async function attachNewestNow(api: Api, loop: RalphLoop): Promise<void> {
   const target = inDir[inDir.length - 1]!;
   await w
     .startAutoWatch(api, chatId, topicId, target.name)
-    .catch((err) => warn(`ralph: verbose attach-now failed: ${err}`));
+    .catch((err) =>
+      debug("ralph: verbose attach-now failed", { err: String(err) }),
+    );
   if (gen !== attachGen) {
     w.stopWatching(chatId, topicId, api, "ralph-stale-attach");
   }
@@ -477,7 +489,7 @@ async function finalize(
     );
   }
   await flush();
-  info(`ralph: finalized loop ${loop.id} (${reason})`);
+  info("ralph: finalized loop", { loopId: loop.id, reason });
 }
 
 // ---- tick loop --------------------------------------------------------------
@@ -547,12 +559,12 @@ export function startRalphMonitor(api: Api, loop: RalphLoop): void {
     if (ticking) return;
     ticking = true;
     tick(api, loop)
-      .catch((err) => warn(`ralph: tick error: ${err}`))
+      .catch((err) => warn("ralph: tick error", err, { loopId: loop.id }))
       .finally(() => {
         ticking = false;
       });
   }, TICK_MS);
-  info(`ralph: monitor started for loop ${loop.id}`);
+  info("ralph: monitor started", { loopId: loop.id });
 }
 
 /** Clear the tick interval only (used on shutdown). Does not finalize. */
@@ -638,7 +650,7 @@ export async function recoverRalphOnBoot(api: Api): Promise<void> {
   if (loop.pid && isPidAlive(loop.pid)) {
     suppressDirNotifications(loop.repoPath, SUPPRESS_ITER_MS);
     startRalphMonitor(api, loop);
-    info(`ralph: recovered active loop ${loop.id}, resuming monitor`);
+    info("ralph: recovered active loop, resuming monitor", { loopId: loop.id });
     return;
   }
 

@@ -463,9 +463,10 @@ export function createMessageBus(api: Api): MessageBus {
       const rkey = rateKey(msg.chatId, msg.threadId);
       const got = await waitForToken(rkey);
       if (!got) {
-        // Surfaced at warn (not just the structured info line) so a sustained
-        // burst that outruns the token bucket is visible in ops — the user
-        // sees a silent gap otherwise.
+        // A rate-limited send is dropped outright — the message never reaches
+        // the user, so surface it at warn (the file's documented schema keeps
+        // ratelimit at warn). The bus.send telemetry line below mirrors it at
+        // debug for the uniform per-outcome schema.
         warn("bus.send ratelimit drop", {
           opId,
           chatId: msg.chatId,
@@ -537,6 +538,8 @@ export function createMessageBus(api: Api): MessageBus {
           if (i > 0) {
             const chunkToken = await waitForToken(rkey);
             if (!chunkToken) {
+              // A skipped chunk truncates the delivered message — user-visible
+              // partial delivery, so keep it at warn rather than hiding it.
               warn("bus.send chunk ratelimit skip", {
                 opId,
                 chatId: msg.chatId,

@@ -15,7 +15,7 @@ import {
   TRANSCRIPTION_PROMPT,
   TRANSCRIPTION_AVAILABLE,
 } from "./config";
-import { debug, error as logError, info, warn } from "./logger";
+import { debug, error as logError, info } from "./logger";
 
 // ============== OpenAI Client ==============
 
@@ -96,7 +96,7 @@ export async function transcribeVoice(
   filePath: string,
 ): Promise<string | null> {
   if (!openaiClient) {
-    warn("transcription: client unavailable");
+    debug("transcription: client unavailable");
     return null;
   }
 

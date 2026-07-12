@@ -28,7 +28,7 @@ import {
 } from "../../sessions/session-state";
 import { disconnectRelay } from "../../relay";
 import { stopWatchByName } from "../watch";
-import { info, warn } from "../../logger";
+import { debug, info } from "../../logger";
 import {
   assertDesktopSpawnReady,
   busReply,
@@ -136,7 +136,10 @@ export async function killSession(
   const tm = getTopicManager();
   if (tm && !opts.preserveTopic) {
     tm.deleteTopic(sessionInfo.name).catch((err) =>
-      warn(`kill: topic delete failed: ${err}`),
+      debug("kill: topic delete failed", {
+        err: String(err),
+        session: sessionInfo.name,
+      }),
     );
   }
 
@@ -270,7 +273,10 @@ export async function respawnSession(
     const newSession = getSession(sessionName);
     if (!newSession) {
       tm.deleteTopic(sessionName).catch((err) =>
-        warn(`respawn: stale topic delete failed: ${err}`),
+        debug("respawn: stale topic delete failed", {
+          err: String(err),
+          session: sessionName,
+        }),
       );
     }
   }

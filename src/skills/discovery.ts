@@ -231,7 +231,7 @@ export function discoverSkills(cwd: string): SkillEntry[] {
     all.push(...skillEntries(join(userClaudeDir(), "skills"), "user"));
     all.push(...pluginEntries());
   } catch (err) {
-    warn(`skill-discovery: enumeration failed: ${err}`);
+    warn("skill-discovery: enumeration failed", err);
   }
 
   const byName = new Map<string, SkillEntry>();

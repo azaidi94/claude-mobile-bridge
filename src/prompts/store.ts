@@ -48,7 +48,7 @@ async function load(): Promise<void> {
       if (parsed && Array.isArray(parsed.prompts)) cache = parsed;
     }
   } catch (err) {
-    warn(`prompt-store: load failed, starting empty: ${err}`);
+    warn("prompt-store: load failed, starting empty", err);
     cache = { prompts: [] };
   }
   loaded = true;
@@ -106,7 +106,7 @@ export async function addPrompt(
   };
   cache.prompts.push(created);
   scheduleSave();
-  info(`prompt-store: added ${id} (${input.label})`);
+  info("prompt-store: added", { id, label: input.label });
   return created;
 }
 
@@ -116,7 +116,7 @@ export async function removePrompt(id: string): Promise<boolean> {
   cache.prompts = cache.prompts.filter((p) => p.id !== id);
   if (cache.prompts.length !== before) {
     scheduleSave();
-    info(`prompt-store: removed ${id}`);
+    info("prompt-store: removed", { id });
     return true;
   }
   return false;

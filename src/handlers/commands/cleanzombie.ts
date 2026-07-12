@@ -13,7 +13,7 @@ import { getTopicStore, getTopicBySession } from "../../topics";
 import type { LedgerEntry } from "../../topics";
 import { getSessions } from "../../sessions";
 import { scanPortFiles } from "../../relay";
-import { info, warn } from "../../logger";
+import { debug, info, warn } from "../../logger";
 import { busReply, getTopicManager } from "./helpers";
 
 /**
@@ -58,7 +58,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
       );
       reconciled = Math.max(0, before - store.topics.length);
     } catch (err) {
-      warn(`cleanzombie: reconcile failed: ${err}`);
+      debug("cleanzombie: reconcile failed", { err: String(err) });
     }
   }
   const pruneNote =
@@ -123,7 +123,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
         }
       }
     } catch (err) {
-      warn(`cleanzombie: ledger pass failed: ${err}`);
+      debug("cleanzombie: ledger pass failed", { err: String(err) });
     }
   }
 
@@ -199,7 +199,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
     const id = candidates[i]!;
     try {
       await ctx.api.deleteForumTopic(store.chatId, id);
-      info(`cleanzombie: deleted topic ${id}`);
+      info("cleanzombie: deleted topic", { topic: id });
       removed++;
       // Tombstone in the ledger so a future run never re-probes this id, and
       // drop any lingering store mapping for a ledger-sourced zombie.
@@ -213,7 +213,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
           const retryAfter = (err.parameters as { retry_after?: number })
             ?.retry_after;
           const waitMs = Math.max(1000, (retryAfter ?? 1) * 1000);
-          warn(`cleanzombie: 429, waiting ${waitMs}ms before retry`);
+          debug("cleanzombie: 429, waiting before retry", { waitMs });
           await Bun.sleep(waitMs);
           i--;
           continue;
@@ -221,7 +221,7 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
         if (err.error_code === 400) {
           const reason = err.description || "unknown";
           skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
-          info(`cleanzombie: skip topic ${id}: ${reason}`);
+          info("cleanzombie: skip topic", { topic: id, reason });
           // Self-heal: TG says this topic id doesn't exist → tombstone the
           // ledger so future runs skip it. Same treatment for "not found"
           // variants. Drop the snapshot mapping ONLY if the session's current
@@ -241,11 +241,11 @@ export async function handleCleanZombie(ctx: Context): Promise<void> {
           }
         } else {
           failures.push(id);
-          warn(`cleanzombie: delete failed for ${id}: ${err}`);
+          warn("cleanzombie: delete failed", err, { topic: id });
         }
       } else {
         failures.push(id);
-        warn(`cleanzombie: delete failed for ${id}: ${err}`);
+        warn("cleanzombie: delete failed", err, { topic: id });
       }
     }
     // Pace deletes under Telegram's ~30 req/s global limit.

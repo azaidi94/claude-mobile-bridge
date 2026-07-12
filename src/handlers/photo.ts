@@ -119,6 +119,8 @@ async function processPhotos(
         requestKind: photoPaths.length === 1 ? "photo" : "photo_album",
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(requestStartedAt),
         path: "relay",
         itemCount: photoPaths.length,
@@ -126,11 +128,14 @@ async function processPhotos(
       return;
     }
 
-    warn("request: relay " + relayResult, {
+    warn("request: relay incomplete", {
       opId,
       requestKind: "photo",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+      relayResult,
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
@@ -219,6 +224,8 @@ export async function handlePhoto(
     chatId,
     userId,
     username,
+    session: sctx?.sessionName,
+    topic: threadId,
   });
 
   // 2. Relay preflight — avoid download if no session exists.

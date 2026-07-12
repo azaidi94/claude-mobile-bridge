@@ -18,7 +18,14 @@ import { isRelayAvailable } from "../relay";
 import { getSession } from "../sessions";
 import { getSessionState } from "../sessions/session-state";
 import type { SessionContext } from "../sessions/context";
-import { createOpId, debug, elapsedMs, info, warn } from "../logger";
+import {
+  createOpId,
+  debug,
+  elapsedMs,
+  error as logError,
+  info,
+  warn,
+} from "../logger";
 import { getMessageBus } from "../messaging";
 import { isRalphLoopTopic } from "../ralph/store";
 
@@ -101,6 +108,8 @@ export async function handleVoice(
     chatId,
     userId,
     username,
+    session: sctx?.sessionName,
+    topic: threadId,
   });
 
   // 2. Check if transcription is available
@@ -181,6 +190,8 @@ export async function handleVoice(
         opId,
         chatId,
         userId,
+        session: sctx?.sessionName,
+        topic: threadId,
         durationMs: elapsedMs(transcriptionStartedAt),
       });
       await getMessageBus().edit(statusMsg.message_id, {
@@ -195,6 +206,8 @@ export async function handleVoice(
       opId,
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(transcriptionStartedAt),
       transcriptLength: transcript.length,
     });
@@ -236,11 +249,14 @@ export async function handleVoice(
       return;
     }
 
-    warn("request: relay " + relayResult, {
+    warn("request: relay incomplete", {
       opId,
       requestKind: "voice",
       chatId,
       userId,
+      session: sctx?.sessionName,
+      topic: threadId,
+      relayResult,
       durationMs: elapsedMs(requestStartedAt),
     });
     if (relayResult === "failed") {
@@ -259,13 +275,14 @@ export async function handleVoice(
       );
     }
   } catch (error) {
-    warn("voice: processing failed", {
+    logError("voice: processing failed", error, {
       opId,
       chatId,
       userId,
       username,
+      session: sctx?.sessionName,
+      topic: threadId,
       durationMs: elapsedMs(requestStartedAt),
-      err: String(error).slice(0, 200),
     });
     await busReply(ctx, `❌ Error: ${String(error).slice(0, 200)}`, {
       threadId,

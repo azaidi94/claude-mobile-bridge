@@ -232,13 +232,13 @@ async function reconcileBridges(): Promise<void> {
         crossPostUnsubs.get(active.sessionName)?.();
         crossPostUnsubs.delete(active.sessionName);
         removeSession(active.sessionName);
-        info(
-          `cursor-bridge: detached from closed window "${active.sessionName}"`,
-        );
+        info("cursor-bridge: detached from closed window", {
+          session: active.sessionName,
+        });
       } else {
-        info(
-          `cursor-bridge: reconnecting "${active.sessionName}" — CDP WebSocket dead`,
-        );
+        info("cursor-bridge: reconnecting — CDP WebSocket dead", {
+          session: active.sessionName,
+        });
       }
     }
 
@@ -248,7 +248,9 @@ async function reconcileBridges(): Promise<void> {
       await attachBridge(target);
     }
   } catch (err) {
-    warn(`cursor-bridge: target sync failed: ${(err as Error).message}`);
+    debug("cursor-bridge: target sync failed", {
+      error: (err as Error).message,
+    });
   }
 }
 
@@ -259,9 +261,9 @@ async function attachBridge(target: CdpTarget): Promise<void> {
   // adding to `bridges` so the next syncBridges tick re-checks once the
   // workspace title loads.
   if (isUnloadedTitle(target.title)) {
-    debug(
-      `cursor-bridge: skipping attach — title not settled: "${target.title}"`,
-    );
+    debug("cursor-bridge: skipping attach — title not settled", {
+      title: target.title,
+    });
     return;
   }
 
@@ -288,7 +290,7 @@ async function attachBridge(target: CdpTarget): Promise<void> {
     // orphan the entry on a partial CDP failure.
     addCursorSession({ name: finalName, dir: sessionDir });
     bridges.set(target.id, { bridge, sessionName: finalName });
-    info(`cursor-bridge: connected to "${finalName}" via CDP`);
+    info("cursor-bridge: connected via CDP", { session: finalName });
 
     // Only forward to Telegram for the subscribed session. Other windows stay
     // attached (listable + injectable) but silent until the user picks them
@@ -297,9 +299,10 @@ async function attachBridge(target: CdpTarget): Promise<void> {
       void wireCrossPost(finalName, telegramForward);
     }
   } catch (err) {
-    warn(
-      `cursor-bridge: failed to attach to "${target.title}": ${(err as Error).message}`,
-    );
+    warn("cursor-bridge: failed to attach", err, {
+      session: finalName,
+      title: target.title,
+    });
   }
 }
 
@@ -381,24 +384,27 @@ async function wireCrossPost(
           })
           .then((res) => {
             if ("dropped" in res) {
-              warn(
-                `cursor-bridge: cross-post dropped for "${sessionName}": ${res.dropped}`,
-              );
+              debug("cursor-bridge: cross-post dropped", {
+                session: sessionName,
+                dropped: res.dropped,
+              });
             }
           })
           .catch(() => {});
       });
       crossPostUnsubs.set(sessionName, unsub);
-      info(
-        `cursor-bridge: cross-post wired for "${sessionName}" → topic ${initialTopic.topicId}`,
-      );
+      info("cursor-bridge: cross-post wired", {
+        session: sessionName,
+        topic: initialTopic.topicId,
+      });
       return;
     }
     await new Promise((r) => setTimeout(r, TOPIC_POLL_MS));
   }
-  warn(
-    `cursor-bridge: topic not created within ${TOPIC_WAIT_MS}ms for "${sessionName}"`,
-  );
+  warn("cursor-bridge: topic not created", undefined, {
+    session: sessionName,
+    waitedMs: TOPIC_WAIT_MS,
+  });
 }
 
 /**

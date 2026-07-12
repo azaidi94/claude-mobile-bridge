@@ -224,13 +224,14 @@ export async function listTmuxRows(): Promise<TmuxListResult> {
     if (isNoServer(panesRes.stderr)) {
       // Legitimate zero-sessions, but log it — otherwise an empty panel is
       // indistinguishable from the bot querying the WRONG tmux socket/server.
-      info(`tmux: no server on -L ${CC_SOCKET} — 0 sessions`, {
+      info("tmux: no server — 0 sessions", {
+        socket: CC_SOCKET,
         stderr: panesRes.stderr.slice(0, 160),
       });
       return { rows: [] };
     }
     const error = panesRes.stderr.slice(0, 200) || "tmux query failed";
-    warn(`tmux: list-panes failed — ${error}`);
+    warn("tmux: list-panes failed", { error });
     return { rows: [], error };
   }
   const paneByPaneId = new Map(
@@ -486,7 +487,7 @@ export async function handleTmuxCallback(
         )
         .catch(() => {});
     } else {
-      warn(`tmux kill failed: ${res.stderr}`);
+      warn("tmux: kill failed", { stderr: res.stderr });
       await ctx.answerCallbackQuery({ text: "Kill failed." });
     }
     return;

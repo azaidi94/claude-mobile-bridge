@@ -42,5 +42,11 @@ export function renderPermissionMode(
       format: "plain",
       silent: true,
     })
-    .catch((err) => debug(`tail permission_mode: ${err}`));
+    .catch((err) =>
+      debug("tail permission_mode", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: threadId,
+      }),
+    );
 }

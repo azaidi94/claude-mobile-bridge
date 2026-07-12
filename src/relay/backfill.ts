@@ -20,7 +20,7 @@ import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { STATE_DIR, claudeProjectDir } from "../paths";
 import { updatePortFile, isProcessAlive, type PortFileData } from "./discovery";
-import { info, warn } from "../logger";
+import { info, warn, debug } from "../logger";
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -136,17 +136,22 @@ export async function backfillPortFileSessionIds(): Promise<void> {
         { preserveExisting: ["sessionId"] },
       );
       backfilled++;
-      info(
-        `backfill: wrote sessionId=${id} into port file for pid=${pf.pid} cwd=${pf.cwd}`,
-      );
+      info("backfill: wrote sessionId into port file", {
+        sessionId: id,
+        pid: pf.pid,
+        cwd: pf.cwd,
+      });
     }
   } catch (err) {
-    warn(`backfill: port-file sweep failed: ${(err as Error)?.message ?? err}`);
+    warn("backfill: port-file sweep failed", err);
     return;
   }
-  if (scanned > 0) {
-    info(
-      `backfill: scanned ${scanned} port files, backfilled ${backfilled} sessionIds`,
-    );
+  // The sweep runs on every watcher refresh; when it changes nothing (the
+  // steady state) it is pure noise, so keep the no-op summary at debug and
+  // only surface an info line on the ticks that actually backfilled something.
+  if (backfilled > 0) {
+    info("backfill: swept port files", { scanned, backfilled });
+  } else if (scanned > 0) {
+    debug("backfill: swept port files (no change)", { scanned });
   }
 }

@@ -120,9 +120,9 @@ export function parseTerminalApp(raw: string): TerminalApp {
   if (v === "ghostty") return "ghostty";
   if (v === "cmux") return "cmux";
   if (v === "" || v === "terminal") return "terminal";
-  warn(
-    `config: unknown DESKTOP_TERMINAL_APP "${raw}", falling back to Terminal`,
-  );
+  warn("config: unknown DESKTOP_TERMINAL_APP, falling back to Terminal", {
+    value: raw,
+  });
   return "terminal";
 }
 
@@ -181,7 +181,7 @@ try {
   const mcpModule = await import(mcpConfigPath).catch(() => null);
   if (mcpModule?.MCP_SERVERS) {
     MCP_SERVERS = mcpModule.MCP_SERVERS;
-    debug(`mcp: ${Object.keys(MCP_SERVERS).length} servers`);
+    debug("mcp: servers loaded", { count: Object.keys(MCP_SERVERS).length });
   }
 } catch {
   debug("mcp: none configured");

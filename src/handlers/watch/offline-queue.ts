@@ -30,10 +30,22 @@ export async function flushBridgeReconnectSummaries(
         silent: true,
       });
       if ("dropped" in res) {
-        warn(`watch: flush reconnect summary dropped: ${res.dropped}`);
+        // The "you missed N events" notice itself never reached the user, and
+        // nothing else surfaces it — warn so it isn't lost silently.
+        warn("watch: flush reconnect summary dropped", {
+          dropped: res.dropped,
+          chatId: state.chatId,
+          topic: state.threadId,
+          session: state.sessionName,
+        });
       }
     } catch (err) {
-      warn(`watch: flush reconnect summary failed: ${err}`);
+      warn("watch: flush reconnect summary failed", {
+        err: String(err),
+        chatId: state.chatId,
+        topic: state.threadId,
+        session: state.sessionName,
+      });
     }
   }
 }

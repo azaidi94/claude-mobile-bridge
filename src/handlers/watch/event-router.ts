@@ -345,7 +345,9 @@ export function handleTailEvent(
           format: "auto",
           silent: true,
         })
-        .catch((err) => debug(`tail user: ${err}`));
+        .catch((err) =>
+          debug("tail user", { err: String(err), chatId, topic: threadId }),
+        );
       break;
     }
 

@@ -83,6 +83,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       username,
       chatId,
       userId,
+      topic: group.ctx.message?.message_thread_id,
     });
 
     // Update status message
@@ -161,6 +162,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
         username,
         chatId: ctx.chat?.id,
         userId,
+        topic: ctx.message?.message_thread_id,
       });
       // Status message; kept as ctx.reply so api.deleteMessage below can
       // target the returned message_id. TODO(phase-2): refactor status-
@@ -222,6 +224,7 @@ export async function handleProcessingError(
   logError("media-group: processing failed", error, {
     chatId: ctx.chat?.id,
     userId: ctx.from?.id,
+    topic: ctx.message?.message_thread_id,
   });
 
   // Clean up tool messages

@@ -149,9 +149,9 @@ function readClaudeSettingsModel(): ModelId | undefined {
     if (m in MODEL_DISPLAY_NAMES) return m as ModelId;
     // Full ID like "claude-sonnet-4-6" — accepted even if not in display map
     if (m.startsWith("claude-")) return m as ModelId;
-    warn(
-      `settings: unrecognised model "${m}" in ~/.claude/settings.json, ignoring`,
-    );
+    warn("settings: unrecognised model in ~/.claude/settings.json, ignoring", {
+      model: m,
+    });
   } catch {
     // settings file missing or unreadable — not an error
   }
@@ -197,7 +197,7 @@ export function getCurrentModelDisplayName(): string {
  */
 export function setCurrentModel(model: ModelId, persist = true): void {
   _currentModel = model;
-  info(`model: ${model}`);
+  info("model set", { model });
   if (persist) {
     saveSetting({ defaultModel: model }).catch(() => {
       // non-fatal; runtime already updated
@@ -333,11 +333,13 @@ export async function runQueryStreaming(
   }
 
   if (state.sessionId && !isNewSession) {
-    info(
-      `[${model}] resume ${state.sessionName || state.sessionId.slice(0, 8)}`,
-    );
+    info("session: resume", {
+      opId,
+      model,
+      session: state.sessionName || state.sessionId.slice(0, 8),
+    });
   } else {
-    info(`[${model}] new session`);
+    info("session: new", { opId, model });
     state.sessionId = null;
   }
 
@@ -391,7 +393,10 @@ export async function runQueryStreaming(
       // Capture session_id from first message
       if (!state.sessionId && event.session_id) {
         state.sessionId = event.session_id;
-        debug(`session_id: ${state.sessionId!.slice(0, 8)}`);
+        debug("session_id captured", {
+          opId,
+          sessionId: state.sessionId!.slice(0, 8),
+        });
 
         // Update watcher cache with the new session ID
         if (state.sessionName) {
@@ -407,7 +412,7 @@ export async function runQueryStreaming(
         );
         if (match?.[1]) {
           const cmdOutput = match[1].trim();
-          debug(`cmd output: ${cmdOutput.slice(0, 80)}`);
+          debug("cmd output", { opId, preview: cmdOutput.slice(0, 80) });
           if (cmdOutput) {
             responseParts.push(cmdOutput);
             await statusCallback("text", cmdOutput, currentSegmentId);
@@ -442,7 +447,11 @@ export async function runQueryStreaming(
               const command = String(toolInput.command || "");
               const [isSafe, reason] = checkCommandSafety(command);
               if (!isSafe) {
-                warn(`blocked: ${reason}`);
+                warn("blocked command", {
+                  opId,
+                  session: state.sessionName,
+                  reason,
+                });
                 await statusCallback("tool", `BLOCKED: ${reason}`);
                 continue;
               }
@@ -458,7 +467,11 @@ export async function runQueryStreaming(
                     filePath.includes("/.claude/"));
 
                 if (!isTmpRead && !isPathAllowed(filePath)) {
-                  warn(`blocked: path ${filePath}`);
+                  warn("blocked path", {
+                    opId,
+                    session: state.sessionName,
+                    path: filePath,
+                  });
                   await statusCallback("tool", `Access denied: ${filePath}`);
                   continue;
                 }
@@ -481,7 +494,11 @@ export async function runQueryStreaming(
             const toolDisplay = formatToolStatus(toolName, toolInput);
             state.currentTool = toolDisplay;
             state.lastTool = toolDisplay;
-            info(`tool: ${toolDisplay}`);
+            info("tool", {
+              opId,
+              session: state.sessionName,
+              tool: toolDisplay,
+            });
 
             // Don't show tool status for ask_user or TodoWrite (reduces noise)
             if (
@@ -519,7 +536,7 @@ export async function runQueryStreaming(
             if (toolName === "ExitPlanMode") {
               exitPlanModeTriggered = true;
               exitPlanToolUseId = block.id;
-              debug(`ExitPlanMode: ${block.id}`);
+              debug("ExitPlanMode", { opId, toolUseId: block.id });
             }
 
             // Detect AskUserQuestion tool - Claude wants user input
@@ -528,7 +545,7 @@ export async function runQueryStreaming(
               askUserQuestionInput =
                 toolInput as unknown as AskUserQuestionInput;
               askUserQuestionToolUseId = block.id;
-              debug(`AskUserQuestion: ${block.id}`);
+              debug("AskUserQuestion", { opId, toolUseId: block.id });
             }
 
             // Track Write/Edit operations to plan files (for showing plan content later)
@@ -539,7 +556,7 @@ export async function runQueryStreaming(
               const filePath = String(toolInput.file_path || "");
               if (filePath.endsWith(".md") || filePath.includes("plan")) {
                 lastPlanFilePath = filePath;
-                debug(`plan file: ${filePath}`);
+                debug("plan file", { opId, path: filePath });
               }
             }
           }
@@ -605,7 +622,7 @@ export async function runQueryStreaming(
       if (state.stopRequested && !queryCompleted) {
         completionState = "cancelled";
       }
-      debug(`suppressed: ${err}`);
+      debug("suppressed error", { opId, err: String(err) });
     } else {
       error("claude: request failed", err, {
         ...requestFields(),
@@ -677,9 +694,9 @@ export async function runQueryStreaming(
       try {
         const file = Bun.file(lastPlanFilePath);
         planContent = await file.text();
-        debug(`plan: ${planContent.length} chars`);
+        debug("plan content read", { opId, chars: planContent.length });
       } catch (err) {
-        warn(`plan read: ${err}`);
+        debug("plan read failed", { opId, err: String(err) });
       }
     }
 
@@ -788,7 +805,7 @@ export async function runPlanApproval(
     message = `Feedback on plan: ${feedback}`;
   }
 
-  info(`plan ${action}`);
+  info("plan action", { opId: telemetry.opId, action });
 
   return runQueryStreaming(state, {
     message,

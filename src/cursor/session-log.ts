@@ -16,7 +16,7 @@
 import { mkdir, appendFile, rename } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
-import { warn } from "../logger";
+import { debug } from "../logger";
 
 const PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const CURSOR_PROJECT_DIR = join(PROJECTS_DIR, "-cursor-sessions");
@@ -53,7 +53,7 @@ export class CursorSessionLog {
     this.dirReady = mkdir(baseDir, { recursive: true })
       .then(() => undefined)
       .catch((e) => {
-        warn(`cursor-log: mkdir failed: ${(e as Error).message}`);
+        debug("cursor-log: mkdir failed", { error: (e as Error).message });
       });
   }
 
@@ -104,7 +104,7 @@ export class CursorSessionLog {
       await appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf8");
       await this.maybeRotate();
     } catch (e) {
-      warn(`cursor-log: append failed: ${(e as Error).message}`);
+      debug("cursor-log: append failed", { error: (e as Error).message });
     }
   }
 
@@ -124,7 +124,7 @@ export class CursorSessionLog {
       await this.truncateToLast(MAX_LINES);
       this.lineCount = MAX_LINES;
     } catch (e) {
-      warn(`cursor-log: rotate failed: ${(e as Error).message}`);
+      debug("cursor-log: rotate failed", { error: (e as Error).message });
       // Reset count so we retry on next append rather than spinning.
       this.lineCount = null;
     }

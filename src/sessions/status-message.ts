@@ -9,7 +9,7 @@ import { readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { Api } from "grammy";
-import { info, warn, debug } from "../logger";
+import { info, debug } from "../logger";
 import { getEnablePinnedStatus } from "../settings";
 import { STATE_DIR } from "../paths";
 
@@ -68,11 +68,13 @@ export async function loadPinnedMessageIds(): Promise<void> {
   }
   if (migrated) {
     await writeFile(STATUS_FILE, JSON.stringify(parsed)).catch(() => {});
-    info(
-      `status: migrated ${pinnedMessageIds.size} pinned msg(s) from ${LEGACY_STATUS_FILE} to ${STATUS_FILE}`,
-    );
+    info("status: migrated pinned msgs", {
+      count: pinnedMessageIds.size,
+      from: LEGACY_STATUS_FILE,
+      to: STATUS_FILE,
+    });
   } else {
-    debug(`status: loaded ${pinnedMessageIds.size} pinned msg(s)`);
+    debug("status: loaded pinned msgs", { count: pinnedMessageIds.size });
   }
 }
 
@@ -162,11 +164,16 @@ export async function updatePinnedStatus(
     // Try to edit existing message
     try {
       await api.editMessageText(chatId, existingId, text);
-      debug(`status: updated ${key}`);
+      debug("status: updated pinned", { key, chatId, topic: topicId });
       return;
     } catch (err) {
       // Message was deleted or unavailable - create new one
-      debug(`status: recreating for ${key}: ${err}`);
+      debug("status: recreating pinned", {
+        key,
+        chatId,
+        topic: topicId,
+        err: String(err),
+      });
       pinnedMessageIds.delete(key);
     }
   }
@@ -181,9 +188,14 @@ export async function updatePinnedStatus(
     });
     pinnedMessageIds.set(key, msg.message_id);
     await savePinnedMessageIds();
-    info(`status: pinned ${key}`);
+    info("status: pinned", { key, chatId, topic: topicId });
   } catch (err) {
-    warn(`status: pin failed ${key}: ${err}`);
+    debug("status: pin failed", {
+      key,
+      chatId,
+      topic: topicId,
+      err: String(err),
+    });
   }
 }
 
@@ -202,9 +214,14 @@ export async function removePinnedStatus(
   try {
     await api.unpinChatMessage(chatId, existingId);
     await api.deleteMessage(chatId, existingId);
-    debug(`status: removed ${key}`);
+    debug("status: removed pinned", { key, chatId, topic: topicId });
   } catch (err) {
-    debug(`status: remove failed ${key}: ${err}`);
+    debug("status: remove failed", {
+      key,
+      chatId,
+      topic: topicId,
+      err: String(err),
+    });
   }
 
   pinnedMessageIds.delete(key);

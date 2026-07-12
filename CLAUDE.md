@@ -26,6 +26,14 @@ bun run test         # Run tests
 
 Configure via `.env` (see `.env.example`). MCP servers defined in `mcp-config.ts` (copy from `mcp-config.example.ts`).
 
+## Logging
+
+Use `src/logger.ts`: `info/warn/error/debug(msg, fields?)`. Put variable data in the structured `fields` object (`key=value`), not interpolated into `msg`, so lines stay greppable. Levels are gated by `LOG_LEVEL` (default `info`; `DEBUG=1` aliases `debug`).
+
+**Levels**: `error` = user-visible action silently failed; `warn` = degraded-but-recovered / ambiguous / misconfig an operator should see; `info` = lifecycle milestone; `debug` = per-tick mechanics (hidden by default). Don't log no-op periodic ticks at info.
+
+**Correlation fields**: on the message lifecycle (handler → streaming → relay), attach `opId`, `session`, `topic`, `chatId` (exact key names — see `CorrelationFields` in `logger.ts`) so one message is greppable end-to-end.
+
 ## Commit Style
 
 Do not add "Generated with Claude Code" footers or "Co-Authored-By" trailers to commit messages.

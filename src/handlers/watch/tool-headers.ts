@@ -46,7 +46,9 @@ export function renderThinking(
       state.currentToolMsg = stub;
       trackProgress(stub);
     })
-    .catch((err) => debug(`tail thinking: ${err}`));
+    .catch((err) =>
+      debug("tail thinking", { err: String(err), chatId, topic: threadId }),
+    );
 }
 
 export function renderTool(
@@ -103,7 +105,9 @@ export function renderTool(
       state.currentToolMsg = stub;
       trackProgress(stub);
     })
-    .catch((err) => debug(`tail tool: ${err}`));
+    .catch((err) =>
+      debug("tail tool", { err: String(err), chatId, topic: threadId }),
+    );
 }
 
 export function renderAskUserQuestion(
@@ -154,7 +158,13 @@ export function renderAskUserQuestion(
         };
       }
     })
-    .catch((err) => debug(`tail ask_user_question: ${err}`));
+    .catch((err) =>
+      debug("tail ask_user_question", {
+        err: String(err),
+        chatId,
+        topic: threadId,
+      }),
+    );
 }
 
 /**
@@ -177,7 +187,7 @@ export function finalizeAskCard(
   const html = formatAskUserQuestionAnswered(pending.questions, event.content);
   botApi
     .editMessageText(chatId, pending.messageId, html, { parse_mode: "HTML" })
-    .catch((err) => debug(`tail ask finalize: ${err}`));
+    .catch((err) => debug("tail ask finalize", { err: String(err), chatId }));
 
   // The card now holds a final resolved state — detach it from currentToolMsg
   // so the next tool/text event doesn't delete it.

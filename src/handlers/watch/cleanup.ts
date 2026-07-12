@@ -8,7 +8,7 @@
 
 import type { Api } from "grammy";
 import { escapeHtml } from "../../formatting";
-import { info, warn } from "../../logger";
+import { debug, info, warn } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import { getSession, setActiveSession, getSessionState } from "../../sessions";
 import { forgetUsage } from "../../sessions/context-usage";
@@ -107,7 +107,14 @@ export function notifySessionOffline(_botApi: Api, sessionName: string): void {
         content: `📴 <b>${escapeHtml(state.sessionName)}</b> went offline.\nSend a message to continue here.`,
         format: "html",
       })
-      .catch((err) => warn(`watch offline notify: ${err}`));
+      .catch((err) =>
+        debug("watch offline notify failed", {
+          err: String(err),
+          chatId,
+          topic: threadId,
+          session: state.sessionName,
+        }),
+      );
 
     warn("watch: session went offline", {
       chatId,
