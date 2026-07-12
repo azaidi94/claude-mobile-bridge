@@ -16,7 +16,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.
 - **Extended thinking** — `think` for deeper reasoning, `ultrathink` for 50k tokens.
 - **Interrupt with `!`** — prefix a message to interrupt the current query.
-- **Remote slash commands** — `/clear`, `/compact`, and `/context` typed straight into the desktop session's TUI. Run the session under [tmux](#5-tmux-launcher-recommended) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
+- **Remote slash commands** — `/clear`, `/compact`, `/context`, and `/model` typed straight into the desktop session's TUI (`/model` picks a model, injecting `/config model=…` to switch the live session). Run the session under [tmux](#5-tmux-launcher-recommended) and injection uses `tmux send-keys` — no accessibility, works in any terminal (Cursor included).
 - **[Skills browser](docs/skills-menu.md)** — `/skills` surfaces the session's Claude Code skills and slash commands (user/project/plugin) with recents, search, and origin-group drill-down; tap to inject the chosen one — with args — into the desktop TUI.
 - **tmux control** — `/tmux` opens a button panel of your sessions (peek · kill · start); `/peek` shows a session's live terminal screen as a snapshot with 🔄 refresh. Run several sessions in one folder with the `cct` launcher — each gets its own topic, routed by a stable per-session id.
 - **Verbosity control** — `/verbose 0|1|2` (or the 🔊 Verbosity row in `/settings`) dials how much streams to a topic: quiet (final text only), normal, or detailed.
