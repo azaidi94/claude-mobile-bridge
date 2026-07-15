@@ -24,6 +24,7 @@ const session: TaskSession = {
   id: "s1",
   name: "proj",
   projectDir: "/workspace/proj",
+  live: true,
 };
 
 beforeEach(() => {

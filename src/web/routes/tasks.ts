@@ -2,6 +2,11 @@ import { Hono } from "hono";
 import { authMiddleware } from "../auth";
 import { readSnapshot } from "../tasks/reader";
 import { subscribe } from "../tasks/watcher";
+import { getSessions } from "../../sessions";
+
+function liveSessionIds(): Set<string> {
+  return new Set(getSessions().map((s) => s.id));
+}
 
 function getClaudeDir(): string {
   // Read dynamically so tests that set CLAUDE_DIR after config load still work.
@@ -13,7 +18,7 @@ export function createTasksRouter(): Hono {
   app.use("*", authMiddleware);
 
   app.get("/", async (c) => {
-    const snapshot = await readSnapshot(getClaudeDir());
+    const snapshot = await readSnapshot(getClaudeDir(), liveSessionIds());
     return c.json(snapshot);
   });
 

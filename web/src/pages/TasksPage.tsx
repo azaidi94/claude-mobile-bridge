@@ -19,7 +19,7 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
   const [tasks, setTasks] = useState<Map<string, TaskPayload>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>(
-    () => localStorage.getItem(FILTER_KEY) ?? "all",
+    () => localStorage.getItem(FILTER_KEY) ?? "active",
   );
   const [open, setOpen] = useState<TaskPayload | null>(null);
   const streamRef = useRef<(() => void) | null>(null);
@@ -48,14 +48,28 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
           next.set(keyOf(evt.sessionId, evt.task.id), evt.task);
           return next;
         });
-        setSessions((prev) =>
-          prev.find((s) => s.id === evt.sessionId)
-            ? prev
-            : [
-                ...prev,
-                { id: evt.sessionId, name: evt.sessionId, projectDir: "" },
-              ],
-        );
+        // A task write means this session is active now, so ensure it's
+        // present and marked live — including flipping a session the snapshot
+        // had marked ended (or whose id hadn't resolved at load) back to live.
+        setSessions((prev) => {
+          const existing = prev.find((s) => s.id === evt.sessionId);
+          if (existing) {
+            return existing.live
+              ? prev
+              : prev.map((s) =>
+                  s.id === evt.sessionId ? { ...s, live: true } : s,
+                );
+          }
+          return [
+            ...prev,
+            {
+              id: evt.sessionId,
+              name: evt.sessionId,
+              projectDir: "",
+              live: true,
+            },
+          ];
+        });
       } else if (evt.type === "task.delete") {
         setTasks((prev) => {
           const next = new Map(prev);
@@ -89,11 +103,19 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
     [sessions],
   );
 
+  const liveIds = useMemo(
+    () => new Set(sessions.filter((s) => s.live).map((s) => s.id)),
+    [sessions],
+  );
+
   const visible = useMemo(() => {
     const all = [...tasks.values()];
     if (filter === "all") return all;
+    if (filter === "active") return all.filter((t) => liveIds.has(t.sessionId));
     return all.filter((t) => t.sessionId === filter);
-  }, [tasks, filter]);
+  }, [tasks, filter, liveIds]);
+
+  const multiSession = filter === "all" || filter === "active";
 
   return (
     <div className="flex flex-col h-full">
@@ -106,10 +128,12 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
           onChange={(e) => setFilter(e.target.value)}
           className="bg-terminal-bg border border-terminal-border text-terminal-text text-xs rounded px-2 py-1"
         >
+          <option value="active">Active sessions</option>
           <option value="all">All sessions</option>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
+              {s.live ? "" : " (ended)"}
             </option>
           ))}
         </select>
@@ -129,7 +153,7 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
         <KanbanBoard
           tasks={visible}
           sessionsById={sessionsById}
-          showSessionLabel={filter === "all"}
+          showSessionLabel={multiSession}
           onCardTap={setOpen}
         />
       )}

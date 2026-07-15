@@ -77,6 +77,7 @@ export interface TaskSession {
   id: string;
   name: string;
   projectDir: string;
+  live: boolean;
 }
 
 export type TaskStatus = "pending" | "in_progress" | "completed";

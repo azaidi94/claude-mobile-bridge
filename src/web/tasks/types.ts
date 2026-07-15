@@ -4,6 +4,7 @@ export interface TaskSession {
   id: string; // session uuid (directory name under tasks/)
   name: string; // human name (slug from jsonl, else last segment of projectDir)
   projectDir: string; // decoded absolute path, or empty if unknown
+  live: boolean; // true if the session is currently tracked/running
 }
 
 export interface TaskPayload {

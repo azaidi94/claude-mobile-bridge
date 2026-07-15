@@ -7,6 +7,7 @@ const session: TaskSession = {
   id: "s1",
   name: "my-project",
   projectDir: "/Users/x/my-project",
+  live: true,
 };
 
 const tasks: TaskPayload[] = [
