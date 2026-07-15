@@ -231,4 +231,53 @@ describe("TasksPage", () => {
     fireEvent.change(select, { target: { value: "all" } });
     expect(screen.getByText("DeadTask")).toBeInTheDocument();
   });
+
+  test("a task.upsert flips a snapshot-ended session back to live", async () => {
+    // Regression: an ended session (live:false at load) that then writes a task
+    // must reappear under the default "active" filter, not stay hidden.
+    (api.getTasks as any).mockResolvedValue({
+      sessions: [{ id: "s1", name: "sA", projectDir: "/x", live: false }],
+      tasks: [
+        {
+          sessionId: "s1",
+          id: "1",
+          subject: "OldTask",
+          description: "",
+          status: "pending",
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    render(<TasksPage onSwitchToChat={vi.fn()} />);
+
+    // Default "active" filter hides the ended session's task.
+    await screen.findByText("no tasks");
+    expect(screen.queryByText("OldTask")).not.toBeInTheDocument();
+
+    act(() => {
+      capturedOnEvent!({
+        type: "task.upsert",
+        sessionId: "s1",
+        task: {
+          sessionId: "s1",
+          id: "2",
+          subject: "FreshTask",
+          description: "",
+          status: "in_progress",
+          updatedAt: 2,
+        },
+      });
+    });
+
+    // Session is now live: both its tasks show under the active filter.
+    expect(await screen.findByText("FreshTask")).toBeInTheDocument();
+    expect(screen.getByText("OldTask")).toBeInTheDocument();
+    // And it's no longer labelled "(ended)" in the picker.
+    const optionTexts = Array.from(
+      screen.getByRole("combobox").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(optionTexts).toContain("sA");
+    expect(optionTexts).not.toContain("sA (ended)");
+  });
 });

@@ -48,20 +48,28 @@ export function TasksPage({ onSwitchToChat }: TasksPageProps) {
           next.set(keyOf(evt.sessionId, evt.task.id), evt.task);
           return next;
         });
-        setSessions((prev) =>
-          prev.find((s) => s.id === evt.sessionId)
-            ? prev
-            : [
-                ...prev,
-                {
-                  id: evt.sessionId,
-                  name: evt.sessionId,
-                  projectDir: "",
-                  // A live upsert means this session is writing tasks now.
-                  live: true,
-                },
-              ],
-        );
+        // A task write means this session is active now, so ensure it's
+        // present and marked live — including flipping a session the snapshot
+        // had marked ended (or whose id hadn't resolved at load) back to live.
+        setSessions((prev) => {
+          const existing = prev.find((s) => s.id === evt.sessionId);
+          if (existing) {
+            return existing.live
+              ? prev
+              : prev.map((s) =>
+                  s.id === evt.sessionId ? { ...s, live: true } : s,
+                );
+          }
+          return [
+            ...prev,
+            {
+              id: evt.sessionId,
+              name: evt.sessionId,
+              projectDir: "",
+              live: true,
+            },
+          ];
+        });
       } else if (evt.type === "task.delete") {
         setTasks((prev) => {
           const next = new Map(prev);

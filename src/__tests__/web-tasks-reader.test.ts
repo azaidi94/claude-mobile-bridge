@@ -125,6 +125,55 @@ describe("readSnapshot", () => {
     expect(snap.sessions[0]!.name).toBe("my-project");
     expect(snap.sessions[0]!.projectDir).toBe("/Users/test/my-project");
   });
+
+  test("stamps live from the passed liveSessionIds set", async () => {
+    const liveSid = "1111aaaa-2222-3333-4444-555566667777";
+    const deadSid = "9999bbbb-2222-3333-4444-555566667777";
+    for (const sid of [liveSid, deadSid]) {
+      const dir = join(TMP, "tasks", sid);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "1.json"),
+        JSON.stringify({
+          id: "1",
+          subject: "x",
+          description: "",
+          activeForm: "",
+          status: "pending",
+          blocks: [],
+          blockedBy: [],
+        }),
+      );
+    }
+
+    const { readSnapshot } = await loadReader();
+    const snap = await readSnapshot(TMP, new Set([liveSid]));
+    const byId = new Map(snap.sessions.map((s) => [s.id, s]));
+    expect(byId.get(liveSid)!.live).toBe(true);
+    expect(byId.get(deadSid)!.live).toBe(false);
+  });
+
+  test("defaults live to false when no set is passed", async () => {
+    const sid = "0000cccc-2222-3333-4444-555566667777";
+    const dir = join(TMP, "tasks", sid);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "1.json"),
+      JSON.stringify({
+        id: "1",
+        subject: "x",
+        description: "",
+        activeForm: "",
+        status: "pending",
+        blocks: [],
+        blockedBy: [],
+      }),
+    );
+
+    const { readSnapshot } = await loadReader();
+    const snap = await readSnapshot(TMP);
+    expect(snap.sessions[0]!.live).toBe(false);
+  });
 });
 
 describe("readSessionTask", () => {
