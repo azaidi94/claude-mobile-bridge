@@ -6,16 +6,18 @@
 
 import "./ensure-test-env";
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { writeFile, rm } from "fs/promises";
+import { writeFile, rm, mkdtemp, mkdir, utimes } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
 
 // Import directly from source to avoid barrel export issues
 import {
   SessionTailer,
   findSessionJsonlPath,
+  findNewestSessionInDir,
   getExpectedJsonlPath,
   encodeProjectPath,
+  isSessionTranscript,
   type TailEvent,
 } from "../sessions/tailer";
 
@@ -1189,6 +1191,134 @@ describe("tailer: findSessionJsonlPath", () => {
     const result = await findSessionJsonlPath(realSessionId);
     expect(result).not.toBeNull();
     expect(result!).toEndWith(`${realSessionId}.jsonl`);
+  });
+});
+
+// ============== isSessionTranscript ==============
+
+describe("tailer: isSessionTranscript", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "transcript-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("rejects a metadata-only title/name stub", async () => {
+    // The exact shape Claude Code writes for its session-naming sidecar.
+    const stub =
+      JSON.stringify({
+        type: "ai-title",
+        aiTitle: "Debug clinical_notes column schema cache error",
+        sessionId: "e140fac1",
+      }) +
+      "\n" +
+      JSON.stringify({
+        type: "agent-name",
+        agentName: "Debug clinical_notes column schema cache error",
+        sessionId: "e140fac1",
+      }) +
+      "\n";
+    const p = join(dir, "stub.jsonl");
+    await writeFile(p, stub);
+    expect(await isSessionTranscript(p)).toBe(false);
+  });
+
+  test("accepts a transcript with a user turn", async () => {
+    const p = join(dir, "real.jsonl");
+    await writeFile(
+      p,
+      JSON.stringify({ type: "ai-title", aiTitle: "x" }) +
+        "\n" +
+        JSON.stringify({ type: "user", message: { content: "hi" } }) +
+        "\n",
+    );
+    expect(await isSessionTranscript(p)).toBe(true);
+  });
+
+  test("accepts a transcript that carries a cwd but no turn yet", async () => {
+    const p = join(dir, "cwd.jsonl");
+    await writeFile(
+      p,
+      JSON.stringify({ type: "attachment", cwd: "/Users/x/proj" }) + "\n",
+    );
+    expect(await isSessionTranscript(p)).toBe(true);
+  });
+
+  test("rejects an empty file", async () => {
+    const p = join(dir, "empty.jsonl");
+    await writeFile(p, "");
+    expect(await isSessionTranscript(p)).toBe(false);
+  });
+
+  test("returns false for a missing file", async () => {
+    expect(await isSessionTranscript(join(dir, "nope.jsonl"))).toBe(false);
+  });
+});
+
+// ============== findNewestSessionInDir ==============
+
+describe("tailer: findNewestSessionInDir", () => {
+  // findNewestSessionInDir resolves against the real ~/.claude/projects via
+  // PROJECTS_DIR, so — like history.test.ts — we materialize a real project
+  // dir under an encoded, unique cwd and tear it down afterwards.
+  let cwd: string;
+  let projectDir: string;
+
+  beforeEach(async () => {
+    cwd = join(tmpdir(), `newest-session-${Date.now()}-${process.pid}`);
+    projectDir = join(homedir(), ".claude", "projects", encodeProjectPath(cwd));
+    await mkdir(projectDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
+
+  const TRANSCRIPT =
+    JSON.stringify({ type: "user", message: { content: "hi" } }) + "\n";
+  const STUB =
+    JSON.stringify({ type: "ai-title", aiTitle: "x", sessionId: "s" }) + "\n";
+
+  async function writeJsonl(id: string, body: string, mtimeSec: number) {
+    const p = join(projectDir, `${id}.jsonl`);
+    await writeFile(p, body);
+    await utimes(p, mtimeSec, mtimeSec);
+  }
+
+  test("returns the real transcript even when a stub was touched more recently", async () => {
+    // The regression: a stale-but-real transcript, plus a freshly-touched
+    // metadata stub that sorts newest by mtime. Must still pick the real one.
+    await writeJsonl("real-session", TRANSCRIPT, 1000);
+    await writeJsonl("title-stub", STUB, 2000);
+
+    expect(await findNewestSessionInDir(cwd)).toBe("real-session");
+  });
+
+  test("returns null when only stubs exist", async () => {
+    await writeJsonl("stub-a", STUB, 1000);
+    await writeJsonl("stub-b", STUB, 2000);
+
+    expect(await findNewestSessionInDir(cwd)).toBeNull();
+  });
+
+  test("picks the newest among multiple real transcripts", async () => {
+    await writeJsonl("older-real", TRANSCRIPT, 1000);
+    await writeJsonl("newer-real", TRANSCRIPT, 2000);
+
+    expect(await findNewestSessionInDir(cwd)).toBe("newer-real");
+  });
+
+  test("honours excludeIds", async () => {
+    await writeJsonl("excluded-real", TRANSCRIPT, 2000);
+    await writeJsonl("kept-real", TRANSCRIPT, 1000);
+
+    expect(await findNewestSessionInDir(cwd, new Set(["excluded-real"]))).toBe(
+      "kept-real",
+    );
   });
 });
 

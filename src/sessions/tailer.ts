@@ -6,7 +6,7 @@
  */
 
 import { watch, type FSWatcher } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, readFile, stat, open } from "fs/promises";
 import { join } from "path";
 import { formatToolStatus } from "../formatting";
 import { debug, warn } from "../logger";
@@ -848,10 +848,64 @@ export async function findSessionJsonlPath(
 }
 
 /**
+ * True when a JSONL file is a real conversation transcript rather than one of
+ * the metadata-only sidecar files Claude Code drops into the same project dir
+ * (e.g. `{ai-title}` / `{agent-name}` stubs it writes for session naming).
+ * A genuine transcript always carries at least one conversation turn
+ * (`user`/`assistant`/`system`) or a line bearing the session's `cwd`; a
+ * title/name stub carries neither. Reads only the file head — the qualifying
+ * lines appear within the first few KB, and the stubs are tiny anyway.
+ *
+ * Used to keep drift detection from rebinding a watch onto a stub whose mtime
+ * momentarily makes it the "newest" file — which otherwise spams the topic
+ * with "🔄 started a new conversation" every time the stub is touched.
+ * Exported as a test seam.
+ */
+export async function isSessionTranscript(jsonlPath: string): Promise<boolean> {
+  let fh;
+  try {
+    fh = await open(jsonlPath, "r");
+    const { buffer, bytesRead } = await fh.read({
+      buffer: Buffer.alloc(65536),
+      position: 0,
+    });
+    const content = buffer.toString("utf8", 0, bytesRead);
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(line);
+      } catch {
+        // A truncated final line (head cut mid-record) — skip it.
+        continue;
+      }
+      if (typeof data.cwd === "string" && data.cwd.length > 0) return true;
+      if (
+        data.type === "user" ||
+        data.type === "assistant" ||
+        data.type === "system"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    // Unreadable/missing: treat as non-transcript so we don't drift onto it.
+    return false;
+  } finally {
+    await fh?.close();
+  }
+}
+
+/**
  * Find the session ID with the most recently modified JSONL file for a project.
  * Used to detect session changes when the port file has a stale session ID
  * (e.g. after /clear on desktop — the MCP server isn't restarted so the port
  * file keeps the old ID).
+ *
+ * Candidates are considered newest-first and validated as real transcripts:
+ * Claude Code writes metadata-only title/name stubs into the same dir, and a
+ * freshly-touched stub must not be mistaken for a new conversation.
  */
 export async function findNewestSessionInDir(
   cwd: string,
@@ -861,20 +915,23 @@ export async function findNewestSessionInDir(
 
   try {
     const files = await readdir(dir);
-    let newest: { id: string; mtime: number } | null = null;
+    const candidates: { id: string; mtime: number; path: string }[] = [];
 
     for (const file of files) {
       if (!file.endsWith(".jsonl")) continue;
       const id = file.slice(0, -6);
       if (excludeIds?.has(id)) continue;
-      const s = await stat(join(dir, file)).catch(() => null);
+      const path = join(dir, file);
+      const s = await stat(path).catch(() => null);
       if (!s) continue;
-      if (!newest || s.mtimeMs > newest.mtime) {
-        newest = { id, mtime: s.mtimeMs };
-      }
+      candidates.push({ id, mtime: s.mtimeMs, path });
     }
 
-    return newest?.id ?? null;
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    for (const c of candidates) {
+      if (await isSessionTranscript(c.path)) return c.id;
+    }
+    return null;
   } catch {
     return null;
   }
