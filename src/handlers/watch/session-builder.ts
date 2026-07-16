@@ -10,6 +10,7 @@
  */
 
 import type { Api } from "grammy";
+import type { SessionInfo } from "../../sessions/types";
 import { debug, error, info } from "../../logger";
 import { safeSync } from "../../utils/safe-async";
 import {
@@ -32,6 +33,7 @@ import {
   inspectDirSiblings,
   setupIdDriftDetection,
 } from "./jsonl-tailer";
+import { ralphBlocksTopicWatch } from "../../ralph/store";
 import { watchKey, watches } from "./registry";
 import { bindRelayReplyHandler } from "./relay-replies";
 import { buildWatchState, type WatchState } from "./state";
@@ -91,12 +93,44 @@ export async function startAutoWatch(
     return false;
   }
 
+  // Best-effort early refusal: if the session's dir is already known and a
+  // ralph loop owns it, bail before _awaitSessionId burns up to ~37s of id
+  // polling. The post-await check below is the authoritative net (the dir may
+  // still be unknown this early, or the loop may start mid-wait).
+  if (
+    existingInfo?.dir &&
+    ralphBlocksTopicWatch(existingInfo.dir, chatId, threadId)
+  ) {
+    info("auto-watch: refused early — dir owned by active ralph loop", {
+      chatId,
+      threadId,
+      sessionName,
+      sessionDir: existingInfo.dir,
+    });
+    return false;
+  }
+
   const sessionInfo = await _awaitSessionId(sessionName);
   if (!sessionInfo?.id) {
     debug("auto-watch: start failed, missing session id after retries", {
       chatId,
       threadId,
       sessionName,
+    });
+    return false;
+  }
+
+  // Refuse to auto-watch a session living in a dir owned by an active ralph
+  // loop — it's (or will become) one of the loop's ephemeral iteration claudes,
+  // and streaming it into this topic leaks the loop and bypasses the /ralph
+  // verbose gate. Exempt the loop's own beat topic, whose verbose watch is
+  // meant to follow the iteration claude.
+  if (ralphBlocksTopicWatch(sessionInfo.dir, chatId, threadId)) {
+    info("auto-watch: refused — dir owned by active ralph loop", {
+      chatId,
+      threadId,
+      sessionName,
+      sessionDir: sessionInfo.dir,
     });
     return false;
   }
@@ -192,6 +226,61 @@ export async function startAutoWatch(
     sessionName,
     sessionId: sessionInfo.id,
     sessionDir: sessionInfo.dir,
+  });
+  return true;
+}
+
+/**
+ * Watch a specific Claude PID's live transcript in `threadId`, bypassing the
+ * name-keyed session registry. For the ralph loop topic: the loop's repo holds
+ * several same-named sessions the registry collapses to one, so `startAutoWatch`
+ * (name → registry) can't select the loop's iteration claude. The caller
+ * resolves the exact session (via the runner's process tree) and passes it here.
+ *
+ * The JSONL is resolved by the session's exact id — never newest-in-dir, which
+ * would grab a sibling. `pinnedPid` makes the drift loop keep tracking this PID
+ * (across /clear) instead of name/mtime. Output-only: no relay-reply binding
+ * (the loop topic doesn't route replies — invariant 2). Returns true on start.
+ */
+export async function startPinnedWatch(
+  botApi: Api,
+  chatId: number,
+  threadId: number,
+  session: SessionInfo,
+): Promise<boolean> {
+  if (!session.id || session.pid === undefined) return false;
+  if (watches.has(watchKey(chatId, threadId))) {
+    stopWatching(chatId, threadId, botApi, "pin-replace");
+  }
+  const resolved = await _resolveLiveJsonlPath(session, {
+    allowNewestInDirFallback: false,
+    timeoutMs: 4_000,
+  });
+  const watchState = buildWatchState({
+    sessionName: session.name,
+    sessionId: resolved.sessionId,
+    sessionDir: session.dir,
+    sessionPid: session.pid,
+    chatId,
+    threadId,
+  });
+  watchState.pinnedPid = true;
+  watchState.speculativeTailerPath = resolved.speculative;
+  const tailer = new SessionTailer(
+    resolved.path,
+    makeWatchTailHandler(botApi, watchState),
+  );
+  watchState.tailer = tailer;
+  watches.set(watchKey(chatId, threadId), watchState);
+  await tailer.start();
+  setupIdDriftDetection(botApi, watchState);
+  setupCrossPostSubscription(botApi, watchState);
+  info("watch: pinned to iteration claude", {
+    chatId,
+    threadId,
+    sessionName: session.name,
+    sessionId: resolved.sessionId,
+    claudePid: session.pid,
   });
   return true;
 }

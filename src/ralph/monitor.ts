@@ -19,12 +19,10 @@ import { open, stat, readFile } from "fs/promises";
 import { realpathSync } from "fs";
 import { info, warn, debug } from "../logger";
 import { getMessageBus } from "../messaging";
-import {
-  suppressDirNotifications,
-  forceRefresh,
-  getSessions,
-} from "../sessions";
+import { suppressDirNotifications } from "../sessions";
 import { escapeHtml } from "../formatting";
+import { scanPortFiles, type PortFileData } from "../relay";
+import type { SessionInfo } from "../sessions/types";
 import { RalphLogParser, type RalphEvent } from "./events";
 import { collectTree } from "./tree";
 import {
@@ -74,6 +72,30 @@ let _watchMod: WatchMod | null = null;
 async function watch(): Promise<WatchMod> {
   if (!_watchMod) _watchMod = await import("../handlers/watch");
   return _watchMod;
+}
+
+/**
+ * Detach any session-topic watch bound to the loop's repo dir so the loop's
+ * ephemeral iteration claudes (which share the repo's session name) can't leak
+ * their transcript into an unrelated topic. Exempts the loop's own beat topic.
+ * Fire-and-forget: the dynamic import is async but the teardown itself is sync.
+ */
+async function quiesceRepoWatches(api: Api, loop: RalphLoop): Promise<void> {
+  const except =
+    loop.chatId !== undefined && loop.topicId !== undefined
+      ? { chatId: loop.chatId, threadId: loop.topicId }
+      : undefined;
+  const n = (await watch()).stopWatchesForDir(
+    loop.repoPath,
+    api,
+    "ralph-owns-dir",
+    except,
+  );
+  if (n > 0)
+    info("ralph: quiesced session-topic watches on repo", {
+      loopId: loop.id,
+      count: n,
+    });
 }
 
 async function defaultPgrep(pid: number): Promise<number[]> {
@@ -283,7 +305,99 @@ function deleteTopicKeyboard(loop: RalphLoop): InlineKeyboardMarkup {
 
 // ---- verbose transcript watch ----------------------------------------------
 
-/** Snapshot in-dir session ids/pids, then poll for a NEW session to attach. */
+/** Port-file birth time in ms (0 when absent/unparseable) — newest-wins key. */
+function portStartedMs(p: PortFileData): number {
+  const t = Date.parse(p.startedAt);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Identify the loop's current iteration claude by walking the runner's process
+ * tree and matching it to a relay port file in the repo, returning a
+ * SessionInfo pinned to that claude's PID + live sessionId. This is the ONLY
+ * reliable way to pick the iteration out of the several same-named `athletiq`
+ * sessions the name-keyed registry collapses to one. Null until an iteration
+ * claude with a live relay exists in the tree.
+ *
+ * Exported (underscore-prefixed) as a test seam with injectable `pgrep`/`scan`,
+ * mirroring how `collectTree` takes an injectable pgrep.
+ */
+export async function _resolveIterationClaude(
+  loop: RalphLoop,
+  deps?: {
+    pgrep?: (pid: number) => Promise<number[]>;
+    scan?: (force?: boolean) => Promise<PortFileData[]>;
+  },
+): Promise<SessionInfo | null> {
+  if (!loop.pid) return null;
+  const pgrep = deps?.pgrep ?? defaultPgrep;
+  const scan = deps?.scan ?? scanPortFiles;
+  const tree = await collectTree(loop.pid, pgrep).catch(() => []);
+  if (tree.length === 0) return null;
+  const treeSet = new Set(tree);
+  const repo = tryRealpath(loop.repoPath);
+  const ports = await scan(true).catch(() => []);
+  // A relay port file's `ppid` is the Claude PID that spawned it; keep the ones
+  // that are both a descendant of the runner and rooted in the repo dir.
+  const matches = ports.filter(
+    (p) =>
+      !!p.sessionId &&
+      p.ppid !== undefined &&
+      treeSet.has(p.ppid) &&
+      tryRealpath(p.cwd) === repo,
+  );
+  if (matches.length === 0) return null;
+  // More than one can match — a dying iteration's relay overlapping the next
+  // (timeout/retry), or a subagent carrying its own port file. Prefer the
+  // newest (latest port-file birth time; highest ppid breaks ties) so a plain
+  // `.find` never pins the stale/dying claude.
+  matches.sort(
+    (a, b) =>
+      portStartedMs(b) - portStartedMs(a) || (b.ppid ?? 0) - (a.ppid ?? 0),
+  );
+  const pf = matches[0]!;
+  return {
+    id: pf.sessionId!,
+    // Synthetic name so this never cross-wires with the registry's collapsed
+    // `athletiq` entry — the pinned watch resolves by PID, not name.
+    name: `ralph:${loop.id}`,
+    // The matched port file's OWN cwd, not loop.repoPath: the pinned drift loop
+    // compares `cwd` by exact string, so under a symlinked repo path both sides
+    // must use the same string or /clear-follow silently stops.
+    dir: pf.cwd,
+    lastActivity: Date.now(),
+    source: "desktop",
+    pid: pf.ppid,
+  };
+}
+
+/**
+ * Pin the loop topic to `iter`'s PID, then—if a newer attach superseded us
+ * while startPinnedWatch was in flight (finalize / verbose-off / next iteration
+ * bumped `attachGen` after its stopWatching ran)—tear the watch back down so it
+ * can't leak past the loop's end. Shared resolve→pin→stale-check tail of both
+ * attach paths.
+ */
+async function pinIfCurrent(
+  api: Api,
+  loop: RalphLoop,
+  iter: SessionInfo,
+  gen: number,
+): Promise<void> {
+  const { chatId, topicId } = loop;
+  if (chatId === undefined || topicId === undefined) return;
+  const w = await watch();
+  await w
+    .startPinnedWatch(api, chatId, topicId, iter)
+    .catch((err) =>
+      debug("ralph: verbose attach failed", { err: String(err) }),
+    );
+  if (gen !== attachGen) {
+    w.stopWatching(chatId, topicId, api, "ralph-stale-attach");
+  }
+}
+
+/** Poll for the loop's iteration claude, then pin the loop topic to its PID. */
 async function attachVerboseWatch(api: Api, loop: RalphLoop): Promise<void> {
   const { chatId, topicId } = loop;
   if (chatId === undefined || topicId === undefined) return;
@@ -291,74 +405,30 @@ async function attachVerboseWatch(api: Api, loop: RalphLoop): Promise<void> {
   const w = await watch();
   w.stopWatching(chatId, topicId, api, "ralph-iter");
 
-  const cache = new Map<string, string>();
-  const canon = (p: string): string => {
-    const hit = cache.get(p);
-    if (hit !== undefined) return hit;
-    const r = tryRealpath(p);
-    cache.set(p, r);
-    return r;
-  };
-  const repo = canon(loop.repoPath);
-  const seenIds = new Set<string>();
-  const seenPids = new Set<number>();
-  for (const s of getSessions()) {
-    if (canon(s.dir) !== repo) continue;
-    if (s.id) seenIds.add(s.id);
-    if (s.pid !== undefined) seenPids.add(s.pid);
-  }
-
   const deadline = Date.now() + VERBOSE_ATTACH_DEADLINE_MS;
   while (Date.now() < deadline) {
     if (gen !== attachGen) return; // superseded (newer iteration / verbose off)
-    await forceRefresh();
-    const fresh = getSessions().filter(
-      (s) =>
-        canon(s.dir) === repo &&
-        ((s.id && !seenIds.has(s.id)) ||
-          (s.pid !== undefined && !seenPids.has(s.pid))),
-    );
-    if (fresh.length && gen === attachGen) {
-      const target = fresh[fresh.length - 1]!;
-      await w
-        .startAutoWatch(api, chatId, topicId, target.name)
-        .catch((err) =>
-          debug("ralph: verbose attach failed", { err: String(err) }),
-        );
-      // Superseded while startAutoWatch was in flight (finalize/verbose off
-      // bumped the gen after its stopWatching ran) — tear down the watch we
-      // just registered or it leaks past the loop's end.
-      if (gen !== attachGen) {
-        w.stopWatching(chatId, topicId, api, "ralph-stale-attach");
-      }
+    const iter = await _resolveIterationClaude(loop);
+    if (iter && gen === attachGen) {
+      await pinIfCurrent(api, loop, iter, gen);
       return;
     }
     await Bun.sleep(2_000);
   }
-  info("ralph: verbose watch — no new session appeared this iteration");
+  info("ralph: verbose watch — no iteration claude appeared this iteration");
 }
 
-/** Verbose toggled on mid-loop: attach to the newest existing in-dir session. */
+/** Verbose toggled on mid-loop: pin to the iteration claude if one exists now. */
 async function attachNewestNow(api: Api, loop: RalphLoop): Promise<void> {
   const { chatId, topicId } = loop;
   if (chatId === undefined || topicId === undefined) return;
   const gen = ++attachGen; // cancel any in-flight per-iteration poll
   const w = await watch();
   w.stopWatching(chatId, topicId, api, "ralph-verbose-on");
-  await forceRefresh();
-  if (gen !== attachGen) return; // superseded while refreshing
-  const repo = tryRealpath(loop.repoPath);
-  const inDir = getSessions().filter((s) => tryRealpath(s.dir) === repo);
-  if (!inDir.length) return; // nothing running yet — next iteration will attach
-  const target = inDir[inDir.length - 1]!;
-  await w
-    .startAutoWatch(api, chatId, topicId, target.name)
-    .catch((err) =>
-      debug("ralph: verbose attach-now failed", { err: String(err) }),
-    );
-  if (gen !== attachGen) {
-    w.stopWatching(chatId, topicId, api, "ralph-stale-attach");
-  }
+  const iter = await _resolveIterationClaude(loop);
+  if (gen !== attachGen) return; // superseded while resolving
+  if (!iter) return; // nothing running yet — next iteration will attach
+  await pinIfCurrent(api, loop, iter, gen);
 }
 
 // ---- event handling ---------------------------------------------------------
@@ -555,6 +625,13 @@ export function startRalphMonitor(api: Api, loop: RalphLoop): void {
   parser = new RalphLogParser();
   stopPending = false;
   ++attachGen;
+  // Tear down any pre-existing session-topic watch on the loop's repo. The
+  // loop's ephemeral iteration claudes share the repo's session name, so an
+  // already-attached watch would resolve that name to a loop iteration and leak
+  // its transcript into the wrong topic. The drift/auto-watch guards keep new
+  // ones from re-attaching; this clears the ones already running. Exempt the
+  // loop's own beat topic (its verbose watch lives there).
+  void quiesceRepoWatches(api, loop);
   intervalTimer = setInterval(() => {
     if (ticking) return;
     ticking = true;

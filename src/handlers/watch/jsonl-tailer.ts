@@ -21,6 +21,7 @@ import {
   findSessionJsonlPath,
   getExpectedJsonlPath,
 } from "../../sessions/tailer";
+import { ralphBlocksTopicWatch } from "../../ralph/store";
 import { killedSessionIds, watchKey, watches } from "./registry";
 import type { WatchState } from "./state";
 import { makeWatchTailHandler } from "./tail-handler";
@@ -202,6 +203,18 @@ async function liveSessionIdForPid(
 export async function _resolveDriftTargetId(
   watchState: WatchState,
 ): Promise<string | undefined> {
+  // PID-pinned (ralph iteration) watches ignore name/mtime entirely: the dir
+  // holds several same-named sessions, so only the relay port file keyed by
+  // this exact Claude PID attributes the transcript. Tracks /clear; on a miss
+  // (relay down / between iterations) keep the current id rather than drifting.
+  if (watchState.pinnedPid) {
+    const byPid = await liveSessionIdForPid(
+      watchState.sessionDir,
+      watchState.sessionPid,
+    );
+    return byPid ?? watchState.sessionId;
+  }
+
   let sharesDir = false;
   for (const other of watches.values()) {
     if (other === watchState) continue;
@@ -258,6 +271,13 @@ export function setupIdDriftDetection(
   const intervalMs = watchState.speculativeTailerPath ? 1_000 : 5_000;
   watchState.idCheckInterval = setInterval(async () => {
     if (!watches.has(watchKey(chatId, threadId))) return;
+    // Freeze drift while a ralph loop owns this dir: its ephemeral per-iteration
+    // claudes write the newest JSONL in the repo, so newest-in-dir resolution
+    // would drag this (unrelated) session-topic watch onto the loop's transcript
+    // — leaking the loop into the wrong topic and bypassing the /ralph verbose
+    // gate. Exempt the loop's OWN beat topic: its verbose watch legitimately
+    // follows each iteration's claude.
+    if (ralphBlocksTopicWatch(watchState.sessionDir, chatId, threadId)) return;
     // Recover a mis-seeded watch that adopted a *sibling's* JSONL (its own
     // file didn't exist yet at spawn). This runs BEFORE the sole-owner guard
     // below — without it, a sibling sharing the dir would mute recovery
@@ -344,9 +364,13 @@ export function setupIdDriftDetection(
       chatId,
       sessionName,
       sessionId: newId,
-      suppressedNotice: wasSpawnSeed,
+      suppressedNotice: wasSpawnSeed || watchState.pinnedPid === true,
     });
-    if (wasSpawnSeed) return;
+    // Suppress the "started a new conversation" notice on a spawn-seed rebind
+    // AND on a PID-pinned (ralph iteration) rebind: the pinned watch's name is
+    // the synthetic `ralph:<loopId>`, so the notice would post that gibberish
+    // into the beat topic on every within-iteration /clear.
+    if (wasSpawnSeed || watchState.pinnedPid) return;
     getMessageBus()
       .send({
         chatId,

@@ -7,6 +7,7 @@
  */
 
 import type { Api } from "grammy";
+import { realpathSync } from "fs";
 import { escapeHtml } from "../../formatting";
 import { debug, info, warn } from "../../logger";
 import { getMessageBus } from "../../messaging";
@@ -51,6 +52,47 @@ export function stopWatching(
     });
   }
   return state;
+}
+
+/**
+ * Stop every watch tailing `dir`, except the one on `exceptTopic` (the ralph
+ * loop's own beat topic). Called when a ralph loop takes over a repo: its
+ * ephemeral per-iteration claudes share the repo's session name, so an
+ * already-attached session-topic watch would otherwise resolve that name to a
+ * loop iteration and stream its transcript into the wrong topic. The drift /
+ * auto-watch guards keep them from re-attaching while the loop owns the dir;
+ * this tears down the ones already running. Realpath-compared so a symlinked
+ * sessionDir still matches the loop's canonical repoPath. Returns the count.
+ */
+export function stopWatchesForDir(
+  dir: string,
+  botApi: Api,
+  reason: string,
+  exceptTopic?: { chatId: number; threadId: number },
+): number {
+  const target = realpathOr(dir);
+  let stopped = 0;
+  // Snapshot the entries first — stopWatching mutates the `watches` map.
+  for (const w of [...watches.values()]) {
+    if (
+      exceptTopic &&
+      w.chatId === exceptTopic.chatId &&
+      w.threadId === exceptTopic.threadId
+    )
+      continue;
+    if (realpathOr(w.sessionDir) !== target) continue;
+    stopWatching(w.chatId, w.threadId, botApi, reason);
+    stopped++;
+  }
+  return stopped;
+}
+
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 /**
