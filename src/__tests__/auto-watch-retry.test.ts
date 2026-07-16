@@ -23,10 +23,22 @@ let findNewestSessionInDirImpl: (
 ) => Promise<string | null> = async () => null;
 let lastExcludeIds: unknown;
 let scanPortFilesImpl: () => Promise<any[]> = async () => [];
+let ralphBlocksTopicWatchImpl: (
+  dir: string,
+  chatId?: number,
+  threadId?: number,
+) => boolean = () => false;
 
 mock.module("../relay", () => ({
   scanPortFiles: () => scanPortFilesImpl(),
   getRelayClient: async () => null,
+}));
+
+// The only ralph/store surface the watch graph touches. Default false → the
+// ralph guards are inert (no active loop), matching production with no loop.
+mock.module("../ralph/store", () => ({
+  ralphBlocksTopicWatch: (dir: string, chatId?: number, threadId?: number) =>
+    ralphBlocksTopicWatchImpl(dir, chatId, threadId),
 }));
 
 mock.module("../sessions/tailer", () => ({
@@ -172,8 +184,27 @@ describe("startAutoWatch intent-preservation guards", () => {
 
   beforeEach(async () => {
     forceRefreshCalls = 0;
+    ralphBlocksTopicWatchImpl = () => false;
     const mod = await import("../handlers/watch");
     mod._resetWatchesForTests();
+  });
+
+  test("refuses early (before id-polling) when a ralph loop owns the dir", async () => {
+    // Session dir known up front → refuse before _awaitSessionId burns ~37s.
+    getSessionImpl = () => SESSION;
+    ralphBlocksTopicWatchImpl = () => true;
+    const mod = await import("../handlers/watch");
+
+    const result = await mod.startAutoWatch(
+      fakeBotApi,
+      CHAT_ID,
+      THREAD_ID,
+      "AHZ_Claw",
+    );
+
+    expect(result).toBe(false);
+    expect(forceRefreshCalls).toBe(0); // bailed before the id-poll loop
+    expect(mod._getWatchForTests(CHAT_ID, THREAD_ID)).toBeUndefined();
   });
 
   test("pre-wait: bails immediately when topic already bound to different session", async () => {
@@ -517,6 +548,38 @@ describe("_resolveDriftTargetId", () => {
     expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
   });
 
+  test("pinnedPid: resolves by this pid's port file, ignoring newest-in-dir", async () => {
+    // The ralph loop topic: several same-named sessions in the dir, so only the
+    // port file keyed by the iteration claude's exact pid attributes it. Even as
+    // sole owner (no sibling watch), newest-in-dir must NOT be consulted.
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 100, sessionId: "iter-live-id" },
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-athletiq" },
+    ];
+    findNewestSessionInDirImpl = async () => "sibling-athletiq";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ pinnedPid: true, sessionPid: 100 });
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("iter-live-id");
+  });
+
+  test("pinnedPid: keeps the current id when this pid has no live port file", async () => {
+    // Between iterations the claude died — no port file for its pid. Must hold
+    // the current id, never drift onto a sibling athletiq's newest JSONL.
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-athletiq" },
+    ];
+    findNewestSessionInDirImpl = async () => "sibling-athletiq";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({
+      pinnedPid: true,
+      sessionPid: 100,
+      sessionId: "cur",
+    });
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("cur");
+  });
+
   test("shared dir: uses the port file matched by this session's pid (not newest-in-dir)", async () => {
     scanPortFilesImpl = async () => [
       { cwd: "/dir", ppid: 100, sessionId: "my-live-id" },
@@ -644,5 +707,162 @@ describe("_isBackwardDriftTarget (anti-flap guard)", () => {
     expect(
       await mod._isBackwardDriftTarget(join(dir, "missing.jsonl"), "prev"),
     ).toBe(false);
+  });
+});
+
+describe("stopWatchesForDir", () => {
+  const fakeBotApi = {} as never;
+
+  const makeWatch = (over: Record<string, unknown>): any => ({
+    chatId: 1,
+    threadId: 2,
+    sessionName: "sess",
+    sessionId: "id",
+    sessionDir: "/dir",
+    currentToolMsg: null,
+    currentTextMsg: null,
+    currentTextContent: "",
+    lastTextUpdate: 0,
+    segmentDone: true,
+    lastEventTime: Date.now(),
+    tailer: { stop: () => {} },
+    ...over,
+  });
+
+  beforeEach(async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+  });
+
+  test("stops watches on the dir but exempts the ralph beat topic", async () => {
+    const mod = await import("../handlers/watch");
+    // Session topic on the repo (the leak) + the loop's own beat topic (exempt)
+    // + an unrelated dir's topic (untouched).
+    mod._registerWatchForTests(
+      makeWatch({ chatId: 1, threadId: 100, sessionDir: "/repo" }),
+    );
+    mod._registerWatchForTests(
+      makeWatch({ chatId: 1, threadId: 200, sessionDir: "/repo" }),
+    );
+    mod._registerWatchForTests(
+      makeWatch({ chatId: 1, threadId: 300, sessionDir: "/other" }),
+    );
+
+    const n = mod.stopWatchesForDir("/repo", fakeBotApi, "ralph-owns-dir", {
+      chatId: 1,
+      threadId: 200,
+    });
+
+    expect(n).toBe(1);
+    expect(mod._getWatchForTests(1, 100)).toBeUndefined(); // leaked session topic torn down
+    expect(mod._getWatchForTests(1, 200)).toBeDefined(); // ralph beat topic exempt
+    expect(mod._getWatchForTests(1, 300)).toBeDefined(); // other dir untouched
+  });
+
+  test("no exemption stops every watch on the dir", async () => {
+    const mod = await import("../handlers/watch");
+    mod._registerWatchForTests(
+      makeWatch({ chatId: 1, threadId: 100, sessionDir: "/repo" }),
+    );
+    mod._registerWatchForTests(
+      makeWatch({ chatId: 1, threadId: 200, sessionDir: "/repo" }),
+    );
+    expect(mod.stopWatchesForDir("/repo", fakeBotApi, "r")).toBe(2);
+  });
+});
+
+describe("startPinnedWatch", () => {
+  const CHAT = 7;
+  const THREAD = 8;
+  const fakeBotApi = {} as never;
+
+  const makeSession = (over: Partial<SessionInfo> = {}): SessionInfo => ({
+    id: "pin-id",
+    name: "ralph:abc",
+    dir: "/dir",
+    lastActivity: Date.now(),
+    source: "desktop",
+    pid: 100,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    const mod = await import("../handlers/watch");
+    mod._resetWatchesForTests();
+    // Direct hit → _resolveLiveJsonlPath resolves non-speculative immediately
+    // (no 4s poll), and the pinned drift loop stays quiet (scan returns []).
+    findSessionJsonlPathImpl = async () => "/dir/pin.jsonl";
+    scanPortFilesImpl = async () => [];
+  });
+
+  test("returns false without a session id", async () => {
+    const mod = await import("../handlers/watch");
+    const ok = await mod.startPinnedWatch(
+      fakeBotApi,
+      CHAT,
+      THREAD,
+      makeSession({ id: "" }),
+    );
+    expect(ok).toBe(false);
+    expect(mod._getWatchForTests(CHAT, THREAD)).toBeUndefined();
+  });
+
+  test("returns false when the pid is undefined", async () => {
+    const mod = await import("../handlers/watch");
+    const ok = await mod.startPinnedWatch(
+      fakeBotApi,
+      CHAT,
+      THREAD,
+      makeSession({ pid: undefined }),
+    );
+    expect(ok).toBe(false);
+    expect(mod._getWatchForTests(CHAT, THREAD)).toBeUndefined();
+  });
+
+  test("registers a PID-pinned watch and flags pinnedPid", async () => {
+    const mod = await import("../handlers/watch");
+    const ok = await mod.startPinnedWatch(
+      fakeBotApi,
+      CHAT,
+      THREAD,
+      makeSession(),
+    );
+    expect(ok).toBe(true);
+    const ws = mod._getWatchForTests(CHAT, THREAD)!;
+    expect(ws).toBeDefined();
+    expect(ws.pinnedPid).toBe(true);
+    expect(ws.sessionPid).toBe(100);
+    expect(ws.sessionId).toBe("pin-id");
+    expect(ws.speculativeTailerPath).toBe(false); // direct-hit path, not guessed
+  });
+
+  test("replaces an existing watch on the topic (pin-replace)", async () => {
+    const mod = await import("../handlers/watch");
+    // A stale watch already on the topic — startPinnedWatch must tear it down.
+    mod._registerWatchForTests({
+      chatId: CHAT,
+      threadId: THREAD,
+      sessionName: "old",
+      sessionId: "old-id",
+      sessionDir: "/dir",
+      currentToolMsg: null,
+      currentTextMsg: null,
+      currentTextContent: "",
+      lastTextUpdate: 0,
+      segmentDone: true,
+      lastEventTime: Date.now(),
+      tailer: { stop: () => {} },
+    } as any);
+
+    const ok = await mod.startPinnedWatch(
+      fakeBotApi,
+      CHAT,
+      THREAD,
+      makeSession(),
+    );
+    expect(ok).toBe(true);
+    const ws = mod._getWatchForTests(CHAT, THREAD)!;
+    expect(ws.sessionName).toBe("ralph:abc"); // the new pinned watch, not "old"
+    expect(ws.pinnedPid).toBe(true);
   });
 });

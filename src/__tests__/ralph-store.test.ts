@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "os";
-import { mkdtempSync, rmSync, existsSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 
 let testDir: string;
@@ -128,6 +128,41 @@ describe("ralph store", () => {
     expect(m.isRalphLoopTopic(undefined, undefined)).toBe(false);
     await m.updateLoop("abc", { state: "ended" });
     expect(m.isRalphLoopTopic(100, 7)).toBe(false); // no active loop
+  });
+
+  it("isRalphOwnedDir matches the active loop's repo, else false", async () => {
+    const m = await freshModule();
+    expect(m.isRalphOwnedDir("/tmp/repo")).toBe(false); // no active loop
+    await m.addLoop(baseLoop({ repoPath: "/tmp/repo" }));
+    expect(m.isRalphOwnedDir("/tmp/repo")).toBe(true);
+    expect(m.isRalphOwnedDir("/tmp/other")).toBe(false);
+    await m.updateLoop("abc", { state: "ended" });
+    expect(m.isRalphOwnedDir("/tmp/repo")).toBe(false); // loop no longer active
+  });
+
+  it("isRalphOwnedDir resolves symlinked dirs to the same repo", async () => {
+    const m = await freshModule();
+    // Real repo dir + a symlink pointing at it — a watch's sessionDir may be
+    // either form, so both must be recognized as owned.
+    const repo = join(testDir, "real-repo");
+    const link = join(testDir, "link-repo");
+    mkdirSync(repo);
+    symlinkSync(repo, link);
+    await m.addLoop(baseLoop({ repoPath: repo }));
+    expect(m.isRalphOwnedDir(link)).toBe(true);
+  });
+
+  it("ralphBlocksTopicWatch: owned dir blocks non-beat topics, exempts the beat topic", async () => {
+    const m = await freshModule();
+    // No active loop → never blocks.
+    expect(m.ralphBlocksTopicWatch("/tmp/repo", 5, 9)).toBe(false);
+    await m.addLoop(baseLoop({ repoPath: "/tmp/repo", chatId: 5, topicId: 9 }));
+    // Owned dir + some unrelated session topic → blocked.
+    expect(m.ralphBlocksTopicWatch("/tmp/repo", 5, 42)).toBe(true);
+    // Owned dir + the loop's OWN beat topic → exempt.
+    expect(m.ralphBlocksTopicWatch("/tmp/repo", 5, 9)).toBe(false);
+    // Different dir → not owned, never blocked.
+    expect(m.ralphBlocksTopicWatch("/tmp/other", 5, 42)).toBe(false);
   });
 
   it("writes a JSON file on flush", async () => {

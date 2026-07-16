@@ -10,6 +10,12 @@ bun run typecheck    # Typecheck
 bun run test         # Run tests
 ```
 
+**Always start `bun run dev` from inside the cmux session** (e.g. the terminal cmux
+opened, or a Claude Code background shell running as a cmux workspace) — never
+`nohup`/detached. The bot launches desktop sessions & ralph loops via `cmux
+new-workspace`, which needs the live `CMUX_SOCKET_PATH` env; a detached launch
+fails with "Could not open terminal — Failed to write to socket".
+
 ## Patterns
 
 **Adding a command**: Create handler in `handlers/commands.ts`, register in `bot.ts` with `bot.command("name", handler)`

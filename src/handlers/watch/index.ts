@@ -60,9 +60,14 @@ export {
   notifySessionOffline,
   stopWatchByName,
   stopWatching,
+  stopWatchesForDir,
 } from "./cleanup";
 
-export { startAutoWatch, startWatchingSession } from "./session-builder";
+export {
+  startAutoWatch,
+  startPinnedWatch,
+  startWatchingSession,
+} from "./session-builder";
 
 export {
   handleUnwatch,

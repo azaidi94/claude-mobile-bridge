@@ -13,7 +13,7 @@
  */
 
 import { readFile, writeFile, mkdir, rename, rm } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { dirname, join } from "path";
 import { STATE_DIR } from "../paths";
 import { info, warn, debug } from "../logger";
@@ -140,6 +140,42 @@ export function isRalphLoopTopic(chatId?: number, threadId?: number): boolean {
   return (
     rl?.topicId !== undefined && rl.chatId === chatId && rl.topicId === threadId
   );
+}
+
+/**
+ * True when an active ralph loop owns `dir` (i.e. it's the loop's repo). The
+ * loop's ephemeral per-iteration claudes churn through fresh JSONLs in this
+ * directory sharing the repo's session name, so any *unrelated* session-topic
+ * watch on the same dir must not adopt them (that would stream the loop into
+ * the wrong topic, bypassing the /ralph verbose gate). Realpath-compared so a
+ * symlinked session dir still matches the loop's canonical repoPath. Sync +
+ * cache-backed — safe to call from the watch hot path.
+ */
+export function isRalphOwnedDir(dir: string): boolean {
+  const rl = activeLoopCache;
+  if (!rl) return false;
+  if (rl.repoPath === dir) return true;
+  try {
+    return realpathSync(rl.repoPath) === realpathSync(dir);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when an active ralph loop owns `dir` AND (chatId, threadId) is NOT the
+ * loop's own beat topic — i.e. this topic's watch must be kept off the loop's
+ * churning per-iteration JSONLs. Single source for the "exempt the beat topic"
+ * rule shared by the drift-freeze predicate (jsonl-tailer) and the auto-watch
+ * refusal (session-builder); keeping it here stops the two guards from drifting
+ * apart. See [[isRalphOwnedDir]] / [[isRalphLoopTopic]] for the two halves.
+ */
+export function ralphBlocksTopicWatch(
+  dir: string,
+  chatId?: number,
+  threadId?: number,
+): boolean {
+  return isRalphOwnedDir(dir) && !isRalphLoopTopic(chatId, threadId);
 }
 
 /**

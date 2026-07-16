@@ -128,6 +128,16 @@ export interface WatchState extends TailDisplayState {
    * once a real on-disk JSONL is bound.
    */
   speculativeTailerPath?: boolean;
+  /**
+   * Bind this watch to a specific Claude PID, not a session name. Set for the
+   * ralph loop topic's per-iteration transcript watch: the loop's repo holds
+   * several same-named `athletiq` sessions (the name-keyed registry collapses
+   * them to one), so name resolution can't pick the loop's iteration claude.
+   * When set, drift resolution ALWAYS attributes by `sessionPid` via the relay
+   * port file (tracks /clear within the iteration) and never falls back to
+   * newest-JSONL-in-dir.
+   */
+  pinnedPid?: boolean;
 }
 
 /**
