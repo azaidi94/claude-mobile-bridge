@@ -79,6 +79,7 @@ import {
   buildExecuteMenu,
 } from "./execute";
 import { handleAskRemoteCallback, handleBridgeCallback } from "./relay-ask";
+import { handlePermissionCallback } from "./permission-relay";
 import { getMessageBus } from "../messaging";
 
 /**
@@ -949,6 +950,21 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
     const consumed = await handleAskRemoteCallback(
+      ctx.api,
+      callbackData,
+      queryId,
+    );
+    if (consumed) return;
+  }
+
+  // Permission relay: perm:<request_id>:<allow|deny>
+  if (callbackData.startsWith("perm:")) {
+    const queryId = ctx.callbackQuery?.id;
+    if (!queryId) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const consumed = await handlePermissionCallback(
       ctx.api,
       callbackData,
       queryId,

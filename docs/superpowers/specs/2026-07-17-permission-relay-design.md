@@ -1,7 +1,7 @@
 # Permission Relay Design
 
 **Date:** 2026-07-17
-**Status:** Designed, not implemented
+**Status:** Implemented and verified end-to-end (2026-07-17)
 **Supersedes:** `2026-07-16-bash-permission-bridge-design.md` (branch
 `feat/bash-permission-bridge`, abandoned at `1f05947`)
 
@@ -75,6 +75,25 @@ Claude calls a tool needing approval
 **Back** — `notifications/claude/channel/permission` with `{request_id, behavior}`,
 `behavior ∈ {'allow','deny'}`. Neither verdict affects future calls.
 
+**Observed live** (2026-07-17, spike: capability declared + handler logging only,
+in an interactive bypass session; `rm -rf` → hook `ask` → dialog opened):
+
+```json
+{
+  "request_id": "cmssh",
+  "tool_name": "Bash",
+  "description": "Delete the victim.txt test fixture",
+  "input_preview": "{ \"command\": \"rm -rf /private/tmp/…/victim.txt\", \"description\": \"Delete the victim.txt test fixture\" }"
+}
+```
+
+The dialog stayed live on the desktop throughout, and was then answered there
+normally. This settles the one link that could have killed the design: the
+notification **does** fire for a hook-originated `ask` under
+`--dangerously-skip-permissions`. Note `description` arrived as the model's real
+description rather than the `Run shell command` constant — do not rely on that;
+`input_preview` is the field that carries the command.
+
 Because the relay runs _inside_ the session, it already knows its own
 `sessionId` — topic routing is free. The abandoned hook design had to
 reverse-engineer this and frequently failed (`no topic` in
@@ -100,21 +119,33 @@ construction.
 
 ### Card
 
-Reuse the AUQ card's _renderer_ (`relay-ask.ts:542 sendBridgeQuestion` /
-`editBridgeCardCancelled`) for a consistent look, under our **own** callback
-namespace (`perm:*`), the way `bridge:*` already sits beside `askremote:*`.
+Matches the AUQ card's look, but renders its own rather than calling
+`relay-ask.ts`'s `sendBridgeQuestion` / `editBridgeCardCancelled`: those are
+built around AUQ's question/options shape and its `bridge:*` registry, so
+reusing them would couple this feature to the exact code the standing constraint
+says not to touch. `perm:*` sits beside `bridge:*` and `askremote:*` instead.
 
 Standing constraint: **purely additive**. The existing `ask_remote` / AUQ paths
 must not change — they work for existing users.
 
 Card states:
 
-- live → `✅ Allow` / `🚫 Deny`
-- tapped → terminal label. Unlike the abandoned design, a tap needs no
-  provisional "sending…" stage: the verdict is a notification to the process that
-  owns the dialog, not a keystroke that might miss.
-- desktop answered first → retire to `🖥️ Answered at the desktop`. Claude Code
-  drops our late verdict silently, so this is cosmetic, not a correctness risk.
+- live → `✅ Allow once` / `🚫 Deny`
+- tapped → `✅ Allow sent` / `🚫 Deny sent`
+- send failed → `⚠️ Couldn't deliver — answer at the desktop`
+- session gone → `✖ Session disconnected`
+
+**"Sent", not "allowed" — the card may not claim an outcome.** Nothing in this
+path acks. A verdict is a fire-and-forget notification, and Claude Code silently
+drops one for a prompt that is already resolved. That is not an edge case: it is
+the _common_ case, because answering at the desktop leaves the card standing —
+nothing tells the bot it happened. So a tap only ever proves "we sent it".
+
+An earlier revision of this document specified a `🖥️ Answered at the desktop`
+state. **No such state is implementable**: there is no signal for a desktop
+answer, which is the whole reason the card must not assert one. Claiming "🚫
+Denied" for an `rm -rf` that had already run would be a worse lie than the
+abandoned design's, and review found the code doing exactly that.
 
 **Routing: the session's topic only.** No General fallback. The relay knows its
 own `sessionId`, so a topic is the natural home; a session with no topic gets no
@@ -125,9 +156,21 @@ it must not have.
 **Lifetime: leave the card live.** No expiry timer. The desktop dialog waits
 indefinitely, so the card should match it: a card that self-retires while the
 prompt is still open would reproduce the exact lie the abandoned design shipped
-(card says expired, terminal still blocked). A stale-looking button is safe — a
-late verdict for an already-answered prompt is dropped by Claude Code, and one
-for a still-open prompt is simply correct, however old the card is.
+(card says expired, terminal still blocked). A late verdict for an
+already-answered prompt is dropped by Claude Code, so an old button is harmless
+— given the safety note below.
+
+**`request_id` is unique per session, NOT globally — key cards by a bot-minted
+token.** Five letters from a 25-letter alphabet, drawn independently by each
+session. Keying the bot's pending-card map by it (as the first implementation
+did) meant a second session drawing the same id silently overwrote the first
+entry, and a tap on session A's card sent the verdict to session B's client:
+**the user approves the command they are looking at and a different, unseen one
+runs.** Review caught this with a working repro. Cards are therefore keyed by a
+random per-card token which carries its own client, so a tap can only ever
+answer the prompt whose card it is on. This is also what makes "leave the card
+live" safe: stale cards accumulate (desktop answers leave them behind), so
+collisions are birthday-scale over a session's lifetime, not per-pair.
 
 ## Sender gating (the hard prerequisite)
 
@@ -277,11 +320,19 @@ first-class API. Check for the supported mechanism before reconstructing it.
 - **Relay has no hot-reload.** Editing `src/mcp/channel-relay/*` needs a Claude
   session restart; only the bot runs under `bun --watch`. Testing is
   restart-gated.
-- **Unverified end-to-end.** Every prerequisite is confirmed — several
-  empirically — but no permission prompt has yet been relayed through this
-  channel. Specifically unproven: that `permission_request` fires for a
-  hook-originated `ask` under bypass in an interactive session. That is the first
-  thing to test, and the cheapest way to be wrong.
+- **Both directions verified live** (2026-07-17), **single-session**: a `/new`
+  session's `rm -rf` opened the desktop dialog and posted a 🔐 card to its topic;
+  tapping Allow closed the dialog and the command ran. Note what that did _not_
+  cover: the cross-session collision above was live-green and still broken. One
+  happy-path run is not evidence of correctness.
+- **Multi-session is covered by tests, not by a live run.** Two concurrent
+  sessions with colliding `request_id`s are exercised in
+  `permission-relay.test.ts`; nobody has driven two real sessions at once.
+- **No opt-out.** The capability is declared unconditionally, so a user _not_
+  running `--dangerously-skip-permissions` gets a card for every Bash/Write/Edit
+  approval. Fine for the operator (bypass + `ask` hooks = a small, high-signal
+  set — see above), potentially noisy for anyone else. If it bites, gate it on a
+  `BridgeSettings` toggle the way `cursorEnabled` / `watchImages` are.
 - **Sessions with no `ask` hooks see nothing.** Under bypass, the relay's value is
   exactly the operator's hook policy. A user without `ask` hooks gets an
   installed feature that never fires — worth saying out loud in any user-facing

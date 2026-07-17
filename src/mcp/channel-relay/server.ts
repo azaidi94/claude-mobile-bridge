@@ -16,6 +16,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { createServer, type Socket } from "net";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
@@ -28,6 +29,7 @@ import {
   statSync,
 } from "fs";
 import { writeJsonLine } from "../../utils/socket-writer";
+import { PermissionGate } from "./permission-gate";
 import { join } from "path";
 import {
   STATE_DIR,
@@ -546,7 +548,13 @@ function handleBotMessage(msg: {
   ask_id?: string;
   answer?: string;
   error?: string;
+  request_id?: string;
+  behavior?: string;
 }): void {
+  if (msg.type === "permission_verdict") {
+    handlePermissionVerdict(msg.request_id, msg.behavior);
+    return;
+  }
   if (msg.type === "ask_remote_answer") {
     const askId = String(msg.ask_id || "");
     const entry = pendingAsks.get(askId);
@@ -602,6 +610,11 @@ const mcp = new Server(
       tools: {},
       experimental: {
         "claude/channel": {},
+        // Opt in to permission relay: Claude Code forwards every tool-approval
+        // prompt here in parallel with the local dialog. Safe to declare only
+        // because the bot gates on the *sender* (bot.ts) — anyone who can reply
+        // through this channel can approve tool use in the session.
+        "claude/channel/permission": {},
       },
     },
     instructions: [
@@ -937,6 +950,81 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       throw new Error(`Unknown tool: ${name}`);
   }
 });
+
+// ── Permission relay: Claude Code → bot → tap → verdict ───────────────
+//
+// Claude Code calls the notification handler below whenever a tool-approval
+// dialog opens, and keeps that local dialog live regardless of what we do. We
+// forward it to the bot (which posts the card) and send the tap back as a
+// verdict. Claude Code applies whichever answer lands first and drops the
+// other, so there is no arbitration to do here — and nothing to undo if the
+// bot never answers.
+//
+// Declaring `claude/channel/permission` means anyone who can reply through this
+// channel can approve tool use in the session. That is only safe because the
+// bot gates on the *sender* before any tap reaches us (see bot.ts).
+
+const PermissionRequestSchema = z.object({
+  method: z.literal("notifications/claude/channel/permission_request"),
+  params: z.object({
+    request_id: z.string(),
+    tool_name: z.string(),
+    // Tolerate absence, not just emptiness: the bot already renders a missing
+    // preview from the description and vice versa, so a payload that drops a
+    // field should still produce a card rather than fail the parse and
+    // silently show nothing.
+    description: z.string().optional().default(""),
+    input_preview: z.string().optional().default(""),
+  }),
+});
+
+const permissionGate = new PermissionGate();
+
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  permissionGate.forward(params.request_id);
+  const ok = sendToBot({
+    type: "permission_request",
+    request_id: params.request_id,
+    tool_name: params.tool_name,
+    description: params.description,
+    input_preview: params.input_preview,
+  });
+  process.stderr.write(
+    `channel-relay: permission_request ${params.request_id} (${params.tool_name}) ${
+      ok ? "forwarded" : "NOT forwarded — bot not connected"
+    }\n`,
+  );
+});
+
+function handlePermissionVerdict(
+  requestId: string | undefined,
+  behavior: string | undefined,
+): void {
+  const id = String(requestId || "");
+  const accepted = permissionGate.accept(id, behavior);
+  if (!accepted) {
+    process.stderr.write(
+      `channel-relay: permission_verdict dropped (id=${id} behavior=${behavior})\n`,
+    );
+    return;
+  }
+  mcp
+    .notification({
+      method: "notifications/claude/channel/permission",
+      params: { request_id: id, behavior: accepted },
+    })
+    .catch((err) => {
+      // Emitting failed, so the desktop dialog is still waiting. The bot's card
+      // already says "sent" and we cannot take that back — but an unhandled
+      // rejection here would take the whole relay down with it.
+      process.stderr.write(
+        `channel-relay: permission notification failed (id=${id}): ${err}\n`,
+      );
+    });
+  process.stderr.write(
+    `channel-relay: permission_verdict ${id} → ${accepted}\n`,
+  );
+}
 
 // ── Cleanup ────────────────────────────────────────────────────────────
 

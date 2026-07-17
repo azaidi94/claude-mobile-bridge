@@ -71,6 +71,7 @@ import pkg from "../package.json";
 import { startWebServer } from "./web/server";
 import { WEB_ENABLED } from "./config";
 import { initRelayAsk } from "./handlers/relay-ask";
+import { initPermissionRelay } from "./handlers/permission-relay";
 import { setBotApiForBridge } from "./handlers/auq-bridge";
 
 let topicManager: TopicManager | undefined;
@@ -170,6 +171,9 @@ info("bot: ready", { username: botInfo.username });
 // the bot connects to (now or later) auto-subscribes to ask_remote_request
 // frames and posts the question to TG with an inline keyboard.
 initRelayAsk(bot.api);
+// Same deal for permission prompts: any relay the bot connects to mirrors its
+// tool-approval dialogs into the session's topic.
+initPermissionRelay(bot.api);
 setBotApiForBridge(bot.api);
 if (WEB_ENABLED) {
   startWebServer();

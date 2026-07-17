@@ -13,6 +13,7 @@ import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
 import { STATE_DIR, parseRelayPortFilePid } from "../paths";
 import { debug, info, warn } from "../logger";
 import { attachAskRemoteToRelay } from "../handlers/relay-ask";
+import { attachPermissionRelayToRelay } from "../handlers/permission-relay";
 import {
   resolveSession,
   launchUuidForPid,
@@ -344,6 +345,9 @@ export async function getRelayClient(
       // itself (initRelayAsk has been called). Safe to call before init:
       // it no-ops.
       attachAskRemoteToRelay(client);
+      // Mirror this session's tool-permission prompts to its topic. Also
+      // no-ops until initPermissionRelay has run.
+      attachPermissionRelayToRelay(client);
       info("relay: connected", {
         cwd: target.cwd,
         relayPort: target.port,
