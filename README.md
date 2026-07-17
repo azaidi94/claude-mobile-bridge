@@ -22,6 +22,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **Verbosity control** — `/verbose 0|1|2` (or the 🔊 Verbosity row in `/settings`) dials how much streams to a topic: quiet (final text only), normal, or detailed.
 - **[Ralph loops](docs/ralph-loops.md)** — `/ralph <repo>` runs an autonomous issue-crunching loop in a desktop terminal; distilled per-iteration beats stream to a dedicated topic.
 - **[Remote-answerable AskUserQuestion](docs/advanced-hooks.md)** — clarifying-question cards relay to Telegram/Web; tap to answer, first answer wins.
+- **[Remote tool permissions](docs/superpowers/specs/2026-07-17-permission-relay-design.md)** — when a session hits a tool-approval prompt (`Bash wants to run …`), the desktop dialog is untouched and a 🔐 card also appears in that session's topic; answer from either, first answer wins. Pairs with `--dangerously-skip-permissions` (the default for `/new`): a `PreToolUse` hook returning `ask` still prompts through bypass, so if you gate `rm -rf` and friends that way, those — and only those — reach your phone.
 - **[Cursor integration](docs/cursor.md)** — bridge Cursor IDE windows into the same Telegram/Web UI.
 - **MCP support** — configure external tools in `mcp-config.ts`.
 
