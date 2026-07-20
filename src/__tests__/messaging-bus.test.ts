@@ -328,6 +328,54 @@ describe("MessageBus.send — dedup", () => {
     expect("messageId" in r1).toBe(true);
     expect("messageId" in r2).toBe(true);
   });
+
+  test("same dedupKey to a different chat is NOT suppressed (scoped)", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const r1 = await bus.send({ chatId: 1, content: "x", dedupKey: "k" });
+    const r2 = await bus.send({ chatId: 2, content: "x", dedupKey: "k" });
+    expect("messageId" in r1).toBe(true);
+    expect("messageId" in r2).toBe(true);
+    expect(api.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("same dedupKey to a different thread is NOT suppressed (scoped)", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    const r1 = await bus.send({
+      chatId: 1,
+      threadId: 7,
+      content: "x",
+      dedupKey: "k",
+    });
+    const r2 = await bus.send({
+      chatId: 1,
+      threadId: 9,
+      content: "x",
+      dedupKey: "k",
+    });
+    expect("messageId" in r1).toBe(true);
+    expect("messageId" in r2).toBe(true);
+    expect(api.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("two concurrent sends with same key+dest → exactly one delivers", async () => {
+    const api = makeApi();
+    const bus = createMessageBus(api as any);
+    // Fire both in the same tick (the two-racing-tailers case): the key is
+    // reserved synchronously at the gate, so the second sees it and drops.
+    const [r1, r2] = await Promise.all([
+      bus.send({ chatId: 1, threadId: 7, content: "x", dedupKey: "k" }),
+      bus.send({ chatId: 1, threadId: 7, content: "x", dedupKey: "k" }),
+    ]);
+    const delivered = [r1, r2].filter((r) => "messageId" in r).length;
+    const dropped = [r1, r2].filter(
+      (r) => "dropped" in r && (r as any).dropped === "dedup",
+    ).length;
+    expect(delivered).toBe(1);
+    expect(dropped).toBe(1);
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

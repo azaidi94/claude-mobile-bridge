@@ -39,6 +39,7 @@ export function renderThinking(
       content: `🧠 <i>${escapeHtml(preview)}</i>`,
       format: "html",
       silent: true,
+      dedupKey: event.eventId,
     })
     .then((r) => {
       if (!("messageId" in r)) return;
@@ -98,6 +99,7 @@ export function renderTool(
       content: event.content,
       format: "html",
       silent: true,
+      dedupKey: event.eventId,
     })
     .then((r) => {
       if (!("messageId" in r)) return;
@@ -141,6 +143,7 @@ export function renderAskUserQuestion(
       content: html,
       format: "html",
       silent: true,
+      dedupKey: event.eventId,
     })
     .then((r) => {
       if (!("messageId" in r)) return;

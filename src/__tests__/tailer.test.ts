@@ -138,6 +138,38 @@ describe("tailer: parseLine", () => {
     expect(events[1]!.type).toBe("text");
   });
 
+  test("stamps eventId as `${uuid}:${blockIndex}` for render-path blocks", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "abc-123",
+      message: {
+        content: [
+          { type: "thinking", thinking: "hmm" },
+          { type: "tool_use", name: "Read", input: { file_path: "/a.ts" } },
+          { type: "text", text: "done" },
+        ],
+      },
+    });
+
+    const events = tailer.parseLine(line);
+    // Two racing tailers reading this same line produce identical eventIds,
+    // so the bus dedup cache collapses the duplicate posts.
+    expect(events[0]!.eventId).toBe("abc-123:0"); // thinking
+    expect(events[1]!.eventId).toBe("abc-123:1"); // tool
+    expect(events[2]!.eventId).toBe("abc-123:2"); // text
+  });
+
+  test("eventId is undefined when the entry has no uuid", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "hi" }] },
+    });
+
+    const events = tailer.parseLine(line);
+    expect(events[0]!.type).toBe("text");
+    expect(events[0]!.eventId).toBeUndefined();
+  });
+
   test("parses user text message (string content)", () => {
     const line = JSON.stringify({
       type: "user",

@@ -431,6 +431,16 @@ export function createMessageBus(api: Api): MessageBus {
       const startedAt = Date.now();
       const kind: "text" | AttachmentKind = msg.attachment?.kind ?? "text";
 
+      // Scope the dedup key to the destination. Callers pass a content-stable
+      // key (e.g. a tailer's `${uuid}:${blockIndex}`); two duplicate sends to
+      // the SAME chat+thread collapse, but the same transcript block legitimately
+      // rendered to a DIFFERENT topic (a rebound session, a second watcher) is
+      // never cross-suppressed. Undefined key → dedup inert (keyless callers).
+      const dedupKey =
+        msg.dedupKey !== undefined
+          ? `${msg.chatId}:${msg.threadId ?? ""}:${msg.dedupKey}`
+          : undefined;
+
       // Outbound topic discovery — if we're sending into a thread the ledger
       // doesn't know about, record it. Catches code paths that bypass the
       // snapshot (cursor-bridge, relay, etc). Fire-and-forget.
@@ -444,8 +454,13 @@ export function createMessageBus(api: Api): MessageBus {
           .catch(() => {});
       }
 
-      // Dedup gate (check only — record after successful send).
-      if (isDedup(msg.dedupKey)) {
+      // Dedup gate. Reserve the key SYNCHRONOUSLY here (before the first
+      // await), not after the send — otherwise two sends fired in the same
+      // tick (e.g. two leaked tailers polling together) both pass the check
+      // and both post. Released again on any path that doesn't deliver: the
+      // rate-limit drop below and the catch's deleteDedup (so a failed send
+      // never poisons the cache and a genuine retry still goes through).
+      if (isDedup(dedupKey)) {
         debug("bus.send", {
           opId,
           chatId: msg.chatId,
@@ -453,16 +468,20 @@ export function createMessageBus(api: Api): MessageBus {
           kind,
           durationMs: elapsedMs(startedAt),
           result: "drop:dedup",
-          dedupKey: msg.dedupKey,
+          dedupKey,
           chunkCount: 0,
         });
         return { dropped: "dedup" };
       }
+      recordDedup(dedupKey);
 
       // Rate limit.
       const rkey = rateKey(msg.chatId, msg.threadId);
       const got = await waitForToken(rkey);
       if (!got) {
+        // Release the dedup reservation — this send never delivered, so a
+        // later retry of the same content must not be falsely deduped.
+        deleteDedup(dedupKey);
         // A rate-limited send is dropped outright — the message never reaches
         // the user, so surface it at warn (the file's documented schema keeps
         // ratelimit at warn). The bus.send telemetry line below mirrors it at
@@ -480,7 +499,7 @@ export function createMessageBus(api: Api): MessageBus {
           kind,
           durationMs: elapsedMs(startedAt),
           result: "drop:ratelimit",
-          dedupKey: msg.dedupKey,
+          dedupKey,
           chunkCount: 0,
         });
         return { dropped: "ratelimit" };
@@ -506,7 +525,7 @@ export function createMessageBus(api: Api): MessageBus {
             formatHint,
             msg.silent === true,
           );
-          recordDedup(msg.dedupKey);
+          // Key already reserved at the gate above (kept on this success path).
           debug("bus.send", {
             opId,
             chatId: msg.chatId,
@@ -514,7 +533,7 @@ export function createMessageBus(api: Api): MessageBus {
             kind,
             durationMs: elapsedMs(startedAt),
             result: "ok",
-            dedupKey: msg.dedupKey,
+            dedupKey,
             chunkCount: 1,
           });
           return { messageId };
@@ -568,9 +587,7 @@ export function createMessageBus(api: Api): MessageBus {
           if (firstMessageId === null) firstMessageId = id;
         }
 
-        // Record dedup key only after successful send (no dedup poisoning).
-        recordDedup(msg.dedupKey);
-
+        // Key already reserved at the gate above (kept on this success path).
         debug("bus.send", {
           opId,
           chatId: msg.chatId,
@@ -578,14 +595,14 @@ export function createMessageBus(api: Api): MessageBus {
           kind,
           durationMs: elapsedMs(startedAt),
           result: "ok",
-          dedupKey: msg.dedupKey,
+          dedupKey,
           chunkCount: sendChunks.length,
         });
         return { messageId: firstMessageId ?? 0 };
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         // Ensure a failed send does not poison the dedup cache.
-        deleteDedup(msg.dedupKey);
+        deleteDedup(dedupKey);
         warn("bus.send error", {
           opId,
           chatId: msg.chatId,
@@ -599,7 +616,7 @@ export function createMessageBus(api: Api): MessageBus {
           kind,
           durationMs: elapsedMs(startedAt),
           result: "drop:error",
-          dedupKey: msg.dedupKey,
+          dedupKey,
           chunkCount: 0,
         });
         return { dropped: "error", reason };

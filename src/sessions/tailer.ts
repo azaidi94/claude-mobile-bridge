@@ -156,6 +156,14 @@ export interface TailEvent {
   type: TailEventType;
   content: string;
   /**
+   * Stable per-block identity: `${entry.uuid}:${blockIndex}`. Every tailer
+   * reading the same JSONL line produces the same value, so render-path sends
+   * can pass it as the bus `dedupKey` — two racing/leaked tailers on one topic
+   * then post each block once instead of 2×/3×. Undefined for events whose
+   * source entry has no uuid (defensive; standard CC transcripts always do).
+   */
+  eventId?: string;
+  /**
    * Surface-of-origin for channel-relay-routed events.
    * - "web" for web UI sends
    * - A Telegram chat id as string (e.g. "-1003968796171") for Telegram sends
@@ -691,13 +699,19 @@ export class SessionTailer {
         if (!Array.isArray(content)) return [];
 
         const events: TailEvent[] = [];
-        for (const block of content) {
+        // `${uuid}:${idx}` is stable across every tailer that reads this line,
+        // so render-path sends can dedup a duplicated stream (leaked tailers).
+        const entryUuid =
+          typeof entry.uuid === "string" ? entry.uuid : undefined;
+        for (let idx = 0; idx < content.length; idx++) {
+          const block = content[idx];
+          const eventId = entryUuid ? `${entryUuid}:${idx}` : undefined;
           if (block.type === "thinking" && block.thinking) {
             const preview =
               block.thinking.length > 200
                 ? block.thinking.slice(0, 200) + "..."
                 : block.thinking;
-            events.push({ type: "thinking", content: preview });
+            events.push({ type: "thinking", content: preview, eventId });
           }
 
           if (block.type === "tool_use") {
@@ -711,6 +725,7 @@ export class SessionTailer {
                 content: "",
                 questions,
                 toolUseId: block.id,
+                eventId,
               });
               continue;
             }
@@ -725,7 +740,12 @@ export class SessionTailer {
               const originChat =
                 typeof input.chat_id === "string" ? input.chat_id : undefined;
               if (text) {
-                events.push({ type: "relay_reply", content: text, originChat });
+                events.push({
+                  type: "relay_reply",
+                  content: text,
+                  originChat,
+                  eventId,
+                });
               }
               continue;
             }
@@ -751,11 +771,12 @@ export class SessionTailer {
               toolName: block.name,
               toolInput: input,
               toolUseId: block.id,
+              eventId,
             });
           }
 
           if (block.type === "text" && block.text) {
-            events.push({ type: "text", content: block.text });
+            events.push({ type: "text", content: block.text, eventId });
           }
         }
 

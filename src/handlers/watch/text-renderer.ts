@@ -67,6 +67,14 @@ export function renderText(
         content: rawDisplay,
         format: "auto",
         silent: true,
+        // Drop a second tailer's copy of this segment's opening bubble. Keyed
+        // on the first text block of the segment; both tailers open from the
+        // same block id, so only one bubble is created and it accretes edits.
+        // Caveat: a segment spanning multiple text blocks (text→thinking→text)
+        // only fully dedups its first block — a losing tailer can reopen on a
+        // later block's id. Reduces, doesn't eliminate, two-tailer text dup;
+        // the real cure is one tailer per topic.
+        dedupKey: event.eventId,
       })
       .then((r) => {
         state.textMsgPending = false;
@@ -170,6 +178,7 @@ export function renderRelayReply(
         threadId,
         content: event.content,
         format: "auto",
+        dedupKey: event.eventId,
       })
       .catch(() => {});
   } else {
@@ -183,13 +192,16 @@ export function renderRelayReply(
       return;
     }
     // TCP didn't claim this turn (failure, race, or not wired) — tailer
-    // is the fallback so the Telegram topic still sees the reply.
+    // is the fallback so the Telegram topic still sees the reply. Turn-claims
+    // are per-WatchState, so a second tailer's fallback isn't caught there;
+    // eventId dedup at the bus drops it.
     bus
       .send({
         chatId,
         threadId,
         content: event.content,
         format: "auto",
+        dedupKey: event.eventId,
       })
       .catch(() => {});
   }
