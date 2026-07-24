@@ -10,8 +10,20 @@ import { describe, expect, test, beforeEach, mock } from "bun:test";
 import type { Api } from "grammy";
 import type { SessionInfo } from "../sessions/types";
 
+// The notify handler resolves the LIVE session at fire time to gate topic
+// creation on a resolved sessionId. Default: every name resolves to a session
+// with a non-empty id (so pre-existing tests behave as before). Individual
+// tests override `getSessionImpl` to simulate id-less / vanished relays.
+let getSessionImpl: (name: string) => SessionInfo | null = (name) => ({
+  id: `id-${name}`,
+  name,
+  dir: `/tmp/${name}`,
+  lastActivity: 0,
+  source: "desktop",
+});
 mock.module("../sessions/watcher", () => ({
   getActiveSession: mock(() => null),
+  getSession: (name: string) => getSessionImpl(name),
 }));
 
 // Stub the message bus — notifications.broadcast() now sends via the bus
@@ -54,6 +66,7 @@ import {
   createNotificationHandler,
   suppressDirNotifications,
   setSessionCleanupCallback,
+  __setIdWaitTimingForTests,
 } from "../sessions/notifications";
 
 const TEST_CHAT_ID = 999_888_777;
@@ -92,6 +105,15 @@ function broadcastsContaining(
 describe("notifications: suppressDirNotifications", () => {
   beforeEach(() => {
     registerChatId(TEST_CHAT_ID);
+    // Reset the id resolver + timing to defaults between tests.
+    getSessionImpl = (name) => ({
+      id: `id-${name}`,
+      name,
+      dir: `/tmp/${name}`,
+      lastActivity: 0,
+      source: "desktop",
+    });
+    __setIdWaitTimingForTests(45_000, 2_000);
   });
 
   test("control: added event fires online broadcast after flap buffer", async () => {
@@ -229,5 +251,89 @@ describe("notifications: suppressDirNotifications", () => {
     expect(broadcastsContaining(sendMessage, "stale-drop").length).toBe(3);
 
     removeChatId(good);
+  });
+});
+
+describe("notifications: id-less relay gating", () => {
+  beforeEach(() => {
+    registerChatId(TEST_CHAT_ID);
+    getSessionImpl = (name) => ({
+      id: `id-${name}`,
+      name,
+      dir: `/tmp/${name}`,
+      lastActivity: 0,
+      source: "desktop",
+    });
+    __setIdWaitTimingForTests(45_000, 2_000);
+  });
+
+  function makeManager() {
+    const createTopic = mock(() => Promise.resolve(4242));
+    const manager = {
+      createTopic,
+      deleteTopic: () => Promise.resolve(),
+    } as unknown as import("../topics").TopicManager;
+    return { manager, createTopic };
+  }
+
+  test("id-less relay never creates a topic or online broadcast (skips after deadline)", async () => {
+    const { api, sendMessage } = makeFakeApi();
+    const { manager, createTopic } = makeManager();
+    const handler = createNotificationHandler(api, () => manager);
+    // Relay is present but never resolves a sessionId; deadline already elapsed
+    // by the time the 2s flap timer fires, so it hits the give-up branch.
+    getSessionImpl = (name) => ({
+      id: "",
+      name,
+      dir: `/tmp/${name}`,
+      lastActivity: 0,
+      source: "desktop",
+    });
+    __setIdWaitTimingForTests(100, 50);
+
+    handler({ added: [makeSession("phantom", "/tmp/phantom")], removed: [] });
+    await Bun.sleep(FLAP_BUFFER_MS + 300);
+
+    expect(createTopic).toHaveBeenCalledTimes(0);
+    expect(broadcastsContaining(sendMessage, "phantom").length).toBe(0);
+  });
+
+  test("a relay that vanishes before resolving an id never creates a topic", async () => {
+    const { api, sendMessage } = makeFakeApi();
+    const { manager, createTopic } = makeManager();
+    const handler = createNotificationHandler(api, () => manager);
+    getSessionImpl = () => null; // gone by fire time
+
+    handler({ added: [makeSession("vanished", "/tmp/vanished")], removed: [] });
+    await Bun.sleep(FLAP_BUFFER_MS + 300);
+
+    expect(createTopic).toHaveBeenCalledTimes(0);
+    expect(broadcastsContaining(sendMessage, "vanished").length).toBe(0);
+  });
+
+  test("topic is created once an initially id-less relay resolves its sessionId", async () => {
+    const { api, sendMessage } = makeFakeApi();
+    const { manager, createTopic } = makeManager();
+    const handler = createNotificationHandler(api, () => manager);
+    // Start id-less, then stamp an id shortly after — the re-arm loop should
+    // pick it up and create the topic exactly once.
+    let resolved = false;
+    getSessionImpl = (name) => ({
+      id: resolved ? `id-${name}` : "",
+      name,
+      dir: `/tmp/${name}`,
+      lastActivity: 0,
+      source: "desktop",
+    });
+    __setIdWaitTimingForTests(5_000, 100);
+
+    handler({ added: [makeSession("slow-id", "/tmp/slow-id")], removed: [] });
+    setTimeout(() => {
+      resolved = true;
+    }, FLAP_BUFFER_MS + 250);
+    await Bun.sleep(FLAP_BUFFER_MS + 700);
+
+    expect(createTopic).toHaveBeenCalledTimes(1);
+    expect(broadcastsContaining(sendMessage, "slow-id").length).toBe(1);
   });
 });
