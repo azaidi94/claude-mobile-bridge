@@ -7,12 +7,18 @@ import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../../config";
 import { getWorkingDir } from "../../settings";
 import { isAuthorized } from "../../security";
-import { MODEL_OPTIONS, getCurrentModelDisplayName } from "../../session";
+import {
+  MODEL_OPTIONS,
+  getCurrentModelDisplayName,
+  getModelDisplayName,
+  type ModelId,
+} from "../../session";
 import { getSessionState } from "../../sessions/session-state";
 import { triggerRestart } from "../../lifecycle";
 import { getGitBranch, updatePinnedStatus } from "../../sessions";
 import type { SessionContext } from "../../sessions/context";
 import { getLastUsage, formatContextLine } from "../../sessions/context-usage";
+import { readTranscriptModel } from "../../sessions/transcript-model";
 import { isRelayAvailable } from "../../relay";
 import { getWatch } from "../watch";
 import { getMessageBus } from "../../messaging";
@@ -131,8 +137,23 @@ export async function handleStatus(
 
   const lines: string[] = [`📊 <b>${sessionName}</b>\n`];
 
-  // Model (global per R3)
-  lines.push(`🤖 ${getCurrentModelDisplayName()}`);
+  // Resolve the session id first — both the model line and the context line
+  // key off it. Prefer the live watch's id: it tracks ID drift (compact / new
+  // conversation in the desktop CC) more reliably than the SessionState snapshot.
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  const watch =
+    chatId && threadId !== undefined ? getWatch(chatId, threadId) : undefined;
+  const sid =
+    watch?.sessionId || sctx?.sessionId || state?.sessionId || undefined;
+  const sessionDir = sctx?.sessionDir || state?.workingDir;
+
+  // Model: the session's real model, read from its transcript. Falls back to
+  // the bot's process-global default when there's no transcript to read.
+  const transcriptModel = await readTranscriptModel(sid, sessionDir);
+  lines.push(
+    `🤖 ${transcriptModel ? getModelDisplayName(transcriptModel as ModelId) : getCurrentModelDisplayName()}`,
+  );
 
   // Session/query status — read entirely from per-state
   if (state) {
@@ -161,14 +182,7 @@ export async function handleStatus(
     }
   }
 
-  // Context window usage. Prefer the live watch's sessionId — it tracks ID
-  // drift (compact / new conversation in the desktop CC) more reliably than
-  // the SessionState snapshot.
-  const chatId = ctx.chat?.id;
-  const threadId = ctx.message?.message_thread_id;
-  const watch =
-    chatId && threadId !== undefined ? getWatch(chatId, threadId) : undefined;
-  const sid = watch?.sessionId || sctx?.sessionId || state?.sessionId;
+  // Context window usage.
   if (sid) {
     const usage = getLastUsage(sid);
     if (usage) {
@@ -180,22 +194,17 @@ export async function handleStatus(
     lines.push(`⚠️ ${state.lastError.slice(0, 50)}`);
   }
 
-  const dir = (
-    sctx?.sessionDir ||
-    state?.workingDir ||
-    getWorkingDir()
-  ).replace(/^\/Users\/[^/]+/, "~");
+  const dir = (sessionDir || getWorkingDir()).replace(/^\/Users\/[^/]+/, "~");
   lines.push(`📁 <code>${dir}</code>`);
 
-  const branchDir = sctx?.sessionDir || state?.workingDir;
-  const branch = branchDir ? await getGitBranch(branchDir) : null;
+  const branch = sessionDir ? await getGitBranch(sessionDir) : null;
   if (branch) {
     lines.push(`🌿 <code>${branch}</code>`);
   }
 
   const relayUp = await isRelayAvailable({
     sessionId: sctx?.sessionId || state?.sessionId || undefined,
-    sessionDir: sctx?.sessionDir || state?.workingDir,
+    sessionDir,
     claudePid: sctx?.sessionPid,
   });
   lines.push(relayUp ? "📡 Relay: connected" : "📡 Relay: unavailable");

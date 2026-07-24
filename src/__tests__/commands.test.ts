@@ -456,6 +456,15 @@ mock.module("../session", () => ({
   runPlanApproval: mock(async () => "Plan response"),
 }));
 
+// /status reads the session's real model off its JSONL. Mocked so the tests
+// never touch the developer's actual ~/.claude/projects (a real transcript for
+// a fixture dir like /tmp/mydir would otherwise change the model line).
+let mockTranscriptModel: string | null = null;
+
+mock.module("../sessions/transcript-model", () => ({
+  readTranscriptModel: mock(async () => mockTranscriptModel),
+}));
+
 // SessionContext helper for tests. After task 7g, handleStatus / /pwd / /cd /
 // /ls / /stop / /pin require a SessionContext (the singleton fallback is
 // gone). When a test sets `mockActiveSession`, this returns a CC sctx
@@ -526,6 +535,7 @@ function createMockContext(
 function resetMocks() {
   mockSessions.length = 0;
   mockActiveSession = null;
+  mockTranscriptModel = null;
   mockSessionState.isRunning = false;
   mockSessionState.isActive = false;
   mockSessionState.sessionId = null;
@@ -878,6 +888,40 @@ describe("commands: /status", () => {
     await handleStatus(ctx as any, mkSctx());
 
     expect(ctx._replies[0]?.text).toContain("No session");
+  });
+
+  test("handleStatus shows the model read from the transcript", async () => {
+    const { handleStatus } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "model-session",
+      info: { dir: "/tmp/model", name: "model-session" },
+    };
+    mockSessionState.isActive = true;
+    mockSessionState.sessionId = "test-model-id";
+    mockTranscriptModel = "claude-opus-5";
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handleStatus(ctx as any, mkSctx());
+
+    const text = ctx._replies[0]?.text || "";
+    expect(text).toContain("claude-opus-5");
+    expect(text).not.toContain("Opus 4.6");
+  });
+
+  test("handleStatus falls back to the global model when no transcript", async () => {
+    const { handleStatus } = await import("../handlers/commands");
+    mockActiveSession = {
+      name: "no-transcript",
+      info: { dir: "/tmp/no-transcript", name: "no-transcript" },
+    };
+    mockSessionState.isActive = true;
+    mockSessionState.sessionId = "test-no-transcript";
+    mockTranscriptModel = null;
+    const ctx = createMockContext({ userId: 123456 });
+
+    await handleStatus(ctx as any, mkSctx());
+
+    expect(ctx._replies[0]?.text || "").toContain("Opus 4.6");
   });
 
   test("handleStatus shows running status when query running", async () => {

@@ -147,9 +147,29 @@ export const MODEL_OPTIONS = [
   { configArg: "haiku", label: "Haiku" },
 ] as const;
 
-/** Safe display name for any ModelId — short alias or full claude-* ID. */
+/**
+ * Safe display name for any ModelId — short alias or full claude-* ID.
+ * Full IDs are derived rather than table-driven (`claude-opus-4-6` → `Opus 4.6`,
+ * `claude-haiku-4-5-20251001` → `Haiku 4.5`) so a model the bot has never heard
+ * of still renders as a label; anything that doesn't fit the family-version
+ * shape falls through as the raw ID.
+ */
 export function getModelDisplayName(m: ModelId): string {
-  return m in MODEL_DISPLAY_NAMES ? MODEL_DISPLAY_NAMES[m as ShortModelId] : m;
+  if (m in MODEL_DISPLAY_NAMES) return MODEL_DISPLAY_NAMES[m as ShortModelId];
+
+  const rest = m
+    .replace(/^claude-/, "")
+    .replace(/\[1m\]$/i, "") // 1M-context variant — same model
+    .replace(/-\d{8}$/, ""); // trailing release date
+  const [family, ...version] = rest.split("-").filter(Boolean);
+  if (
+    !family ||
+    version.length === 0 ||
+    !version.every((p) => /^\d+$/.test(p))
+  ) {
+    return m;
+  }
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version.join(".")}`;
 }
 
 function readClaudeSettingsModel(): ModelId | undefined {
