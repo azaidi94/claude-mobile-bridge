@@ -50,6 +50,7 @@ import {
   spawnDesktopClaudeSession,
   handleGroupModeCallback,
   handleTmuxCallback,
+  handleTuiCallback,
   handleCursorBridgeCallback,
   handleCursorSubscribe,
   respawnSession,
@@ -902,6 +903,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // /groupmode selector: gm:<on|off|auto>
   if (callbackData.startsWith("gm:")) {
     await handleGroupModeCallback(ctx, callbackData.slice(3));
+    return;
+  }
+
+  // /tui key panel: tui:<action>:<launchUuid>
+  if (callbackData.startsWith("tui:")) {
+    await handleTuiCallback(ctx, callbackData);
     return;
   }
 

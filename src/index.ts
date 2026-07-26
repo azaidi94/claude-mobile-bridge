@@ -73,6 +73,7 @@ import { WEB_ENABLED } from "./config";
 import { initRelayAsk } from "./handlers/relay-ask";
 import { initPermissionRelay } from "./handlers/permission-relay";
 import { setBotApiForBridge } from "./handlers/auq-bridge";
+import { startModalWatchdog } from "./tmux/watchdog";
 
 let topicManager: TopicManager | undefined;
 
@@ -322,6 +323,9 @@ const notifyHandler = createNotificationHandler(
 // refresh cycle (see doRefresh), so it covers both startup and any session
 // that appears later — no separate startup sweep needed here.
 await startWatcher(notifyHandler);
+// Stopped in stopRunner: an orphaned tick would keep polling tmux and posting
+// into a torn-down topic store.
+const stopModalWatchdog = startModalWatchdog();
 
 // Cursor integration is opt-out. Disabled if CURSOR_BRIDGE_ENABLED env var
 // is false/0/no/off, OR if the user has toggled it off via /cursor off.
@@ -405,6 +409,10 @@ await bot.api.setMyCommands([
   { command: "usage", description: "Claude Code quota stats" },
   { command: "execute", description: "Start/stop configured scripts" },
   { command: "settings", description: "Persistent settings panel" },
+  {
+    command: "verbose",
+    description: "Stream verbosity: 0 quiet, 1, 2 detailed",
+  },
   { command: "groupmode", description: "Toggle group vs private routing" },
   { command: "cursor", description: "Enable or disable Cursor AI bridge" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
@@ -415,6 +423,8 @@ await bot.api.setMyCommands([
   { command: "clear", description: "Send /clear to the desktop session" },
   { command: "compact", description: "Send /compact to the desktop session" },
   { command: "context", description: "Send /context to the desktop session" },
+  { command: "tmux", description: "Session panel — peek · kill · start" },
+  { command: "peek", description: "Snapshot a session's live terminal screen" },
   { command: "help", description: "Show commands" },
   { command: "restart", description: "Restart bot" },
 ]);
@@ -489,6 +499,7 @@ const stopRunner = () => {
     info("stopping bot");
     stopCronSchedulerFn?.();
     stopWatchdog();
+    stopModalWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
     stopCursorBridge();

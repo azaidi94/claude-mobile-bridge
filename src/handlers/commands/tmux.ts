@@ -20,6 +20,14 @@ import { getTopicByLaunchUuid } from "../../topics/topic-store";
 import { getMessageBus } from "../../messaging";
 import { escapeHtml } from "../../formatting";
 import { info, warn } from "../../logger";
+import { runTmux, isNoServer } from "../../tmux/exec";
+import {
+  buildTuiKeyboard,
+  needsConfirm,
+  parseTuiCallback,
+  tuiKeyArgv,
+  type TuiAction,
+} from "../../tmux/keys";
 
 const CC_SOCKET = "claude";
 /**
@@ -29,6 +37,15 @@ const CC_SOCKET = "claude";
  * `<pre>` wrapper + header).
  */
 const CAPTURE_MAX_ESCAPED = 3800;
+
+/**
+ * Pause after send-keys before re-capturing. Too short and the capture returns
+ * pre-keypress state, the edit becomes a no-op ("message is not modified"), and
+ * the user stares at a stale TUI. Measured upstream on Claude Code 2.1.118:
+ * fast redraws 15-20ms; Escape closing a menu ~80ms; a mid-thinking redraw lands
+ * on the next render tick ~200ms. Their original 50ms missed every slow case.
+ */
+const SEND_KEYS_SETTLE_MS = 500;
 
 /**
  * Bus send that resolves the thread from EITHER a command (`ctx.message`) or a
@@ -155,6 +172,54 @@ export function captureArgs(target: string): string[] {
   return ["tmux", "-L", CC_SOCKET, "capture-pane", "-p", "-t", target];
 }
 
+export function sendKeysArgs(pane: string, keys: string[]): string[] {
+  return ["tmux", "-L", CC_SOCKET, "send-keys", "-t", pane, ...keys];
+}
+
+/** What a `tui:` tap must do. Pure — the IO lives in handleTuiCallback. */
+export function planTuiTap(action: TuiAction): {
+  sendArgv: string[][];
+  recapture: boolean;
+  closeMsg: boolean;
+} {
+  if (action === "close")
+    return { sendArgv: [], recapture: false, closeMsg: true };
+  if (action === "refresh")
+    return { sendArgv: [], recapture: true, closeMsg: false };
+  const keys = tuiKeyArgv(action) ?? [];
+  // One send-keys invocation carrying every key: `esc2` must deliver both
+  // Escapes without a round-trip between them.
+  return {
+    sendArgv: keys.length ? [keys] : [],
+    recapture: true,
+    closeMsg: false,
+  };
+}
+
+/** How long an armed ⌃C stays armed. */
+export const CONFIRM_WINDOW_MS = 5_000;
+
+/**
+ * Two-tap gate for the panel's one destructive key. Pure — the arm state lives
+ * in the caller.
+ *
+ * `armedAt` is when this session last armed. Expiry is deliberate: an arm left
+ * over from minutes ago is not consent, it's a forgotten tap.
+ */
+export function planConfirmTap(
+  action: TuiAction,
+  armedAt: number | undefined,
+  now: number,
+): { send: boolean; notice?: string } {
+  if (!needsConfirm(action)) return { send: true };
+  if (armedAt !== undefined && now - armedAt <= CONFIRM_WINDOW_MS)
+    return { send: true };
+  return {
+    send: false,
+    notice: `Tap ⌃C again within ${Math.round(CONFIRM_WINDOW_MS / 1000)}s to interrupt`,
+  };
+}
+
 export function killArgs(session: string): string[] {
   return ["tmux", "-L", CC_SOCKET, "kill-session", "-t", session];
 }
@@ -178,38 +243,7 @@ export function fitEscapedCapture(
 
 // ── IO seam ─────────────────────────────────────────────────────────────
 
-function runTmux(argv: string[]): {
-  ok: boolean;
-  stdout: string;
-  stderr: string;
-} {
-  try {
-    const r = Bun.spawnSync(argv);
-    return {
-      ok: r.exitCode === 0,
-      stdout: (r.stdout ?? Buffer.alloc(0)).toString(),
-      stderr: (r.stderr ?? Buffer.alloc(0)).toString().trim(),
-    };
-  } catch (e) {
-    // Bun.spawnSync THROWS on a missing binary (ENOENT) — e.g. tmux not on the
-    // launchd PATH. Return an error instead of crashing the whole handler.
-    return { ok: false, stdout: "", stderr: `tmux not runnable: ${String(e)}` };
-  }
-}
-
-/**
- * `tmux list-panes` exits non-zero when NO server is running on the socket —
- * that's the legitimate "you have zero sessions" case (e.g. after
- * `tmux -L claude kill-server`), not a failure. Anything else (tmux missing from
- * PATH, socket permissions…) is a real error the user must see, rather than
- * being silently rendered as "no sessions".
- */
-export function isNoServer(stderr: string): boolean {
-  // Our own ENOENT wrapper (missing tmux binary) can contain "no such file or
-  // directory" — that is a REAL failure, never "no server". Check it first.
-  if (/not runnable/i.test(stderr)) return false;
-  return /no server running|error connecting to/i.test(stderr);
-}
+export { isNoServer } from "../../tmux/exec";
 
 export interface TmuxListResult {
   rows: TmuxSessionRow[];
@@ -376,13 +410,16 @@ async function sendCapture(
     else await reply(ctx, msg, "html");
     return;
   }
+  if (!row.launchUuid) {
+    const msg = "This session has no launchUuid — the key panel needs one.";
+    if (edit) await ctx.editMessageText(msg).catch(() => {});
+    else await reply(ctx, msg);
+    return;
+  }
   const body = `🔍 <b>${escapeHtml(rowLabel(row))}</b>\n<pre>${fitEscapedCapture(
     res.stdout,
   )}</pre>`;
-  const kb = new InlineKeyboard().text(
-    "🔄 Refresh",
-    `tmux:refresh:${row.launchUuid}`,
-  );
+  const kb = buildTuiKeyboard(row.launchUuid);
   if (edit) {
     await ctx
       .editMessageText(body, { parse_mode: "HTML", reply_markup: kb })
@@ -494,4 +531,116 @@ export async function handleTmuxCallback(
   }
 
   await ctx.answerCallbackQuery({ text: "Unknown action" });
+}
+
+// ── callback dispatch (tui:*) ───────────────────────────────────────────
+
+/**
+ * Serialize taps per session. A tap while one is in flight is REJECTED, not
+ * queued: a queued keystroke lands in a TUI whose state has already moved on,
+ * which is exactly how the wrong dialog item gets confirmed.
+ */
+const inFlight = new Set<string>();
+
+/** launchUuid → when ⌃C was armed. Cleared by any tap that actually sends. */
+const armedAtByLaunchUuid = new Map<string, number>();
+
+/** Handle a `tui:*` callback. `data` is the full callback string. */
+export async function handleTuiCallback(
+  ctx: Context,
+  data: string,
+): Promise<void> {
+  if (!authed(ctx)) {
+    await ctx.answerCallbackQuery({ text: "Unauthorized." });
+    return;
+  }
+  const parsed = parseTuiCallback(data);
+  if (!parsed) {
+    await ctx.answerCallbackQuery({ text: "Unknown action" });
+    return;
+  }
+  const { action, launchUuid } = parsed;
+
+  if (action === "close") {
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.deleteMessage().catch(() => {});
+    return;
+  }
+
+  if (inFlight.has(launchUuid)) {
+    await ctx.answerCallbackQuery({ text: "busy" });
+    return;
+  }
+  inFlight.add(launchUuid);
+  try {
+    // Re-resolve every tap: a keyboard outliving its session must never drive
+    // another pane. This is the stale-keyboard guard.
+    const row = await rowForLaunchUuid(launchUuid);
+    if (!row) {
+      await ctx.answerCallbackQuery({ text: "Session gone." });
+      return;
+    }
+
+    const confirm = planConfirmTap(
+      action,
+      armedAtByLaunchUuid.get(launchUuid),
+      Date.now(),
+    );
+    if (!confirm.send) {
+      armedAtByLaunchUuid.set(launchUuid, Date.now());
+      await ctx
+        .answerCallbackQuery({ text: confirm.notice, show_alert: true })
+        .catch(() => {});
+      return;
+    }
+    // Any tap that sends disarms — a ⌃C armed before an unrelated key is no
+    // longer two deliberate taps in a row.
+    armedAtByLaunchUuid.delete(launchUuid);
+
+    const plan = planTuiTap(action);
+    await ctx.answerCallbackQuery().catch(() => {});
+
+    for (const keys of plan.sendArgv) {
+      const r = runTmux(sendKeysArgs(row.pane, keys));
+      if (!r.ok) {
+        // The on-screen pane is still accurate; don't edit it, just report.
+        await ctx
+          .answerCallbackQuery({ text: "send-keys failed" })
+          .catch(() => {});
+        return;
+      }
+    }
+
+    if (plan.recapture) {
+      if (plan.sendArgv.length) await Bun.sleep(SEND_KEYS_SETTLE_MS);
+      await sendCapture(ctx, row, true);
+    }
+  } finally {
+    inFlight.delete(launchUuid);
+  }
+}
+
+/**
+ * Render a refusal with the live pane + key panel, so the user can answer
+ * whatever is on screen.
+ *
+ * `headline` must come from the caller, not be hardcoded here: the guard
+ * distinguishes "a modal is genuinely up" from "the session isn't accepting
+ * input but no modal footer is detectable" (`/usage` does exactly that on
+ * Claude Code 2.1.206). Asserting a dialog exists when none was detected sends
+ * the user hunting for something that isn't there.
+ */
+export async function replyBlockedPanel(
+  ctx: Context,
+  launchUuid: string,
+  pane: string,
+  headline = "Session is blocked on a dialog.",
+): Promise<void> {
+  const body =
+    `⚠️ <b>${escapeHtml(headline)}</b>\n` +
+    `Nothing was sent.\n\n<pre>${fitEscapedCapture(pane)}</pre>`;
+  await reply(ctx, body, {
+    format: "html",
+    replyMarkup: buildTuiKeyboard(launchUuid),
+  });
 }

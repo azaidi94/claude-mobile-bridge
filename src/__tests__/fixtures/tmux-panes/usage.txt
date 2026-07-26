@@ -1,0 +1,50 @@
+
+╭─── Claude Code v2.1.206 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.2264
+   Total duration (API):  11s
+   Total duration (wall): 4m 2s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage by model:
+       claude-haiku-4-5:  522 input, 13 output, 0 cache read, 0 cache write ($0.0006)
+        claude-opus-4-8:  8.0k input, 419 output, 130.6k cache read, 11.0k cache write ($0.2258)
+
+   Current session
+   █                                                  2% used
+   Resets 2:39pm (Europe/London)
+
+   Current week (all models)
+   █▌                                                 3% used
+   Resets Jul 15 at 8:59pm (Europe/London)
+
+   Current week (Fable)
+                                                      0% used
+
+   What's contributing to your limits usage?
+   Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+
+   Last 24h · these are independent characteristics of your usage, not a breakdown
+
+   85% of your usage was at >150k context
+    Longer sessions are more expensive even when cached. /compact mid-task, /clear
+    when switching to new tasks.
+
+   18% of your usage came from subagent-heavy sessions
+    Each subagent runs its own requests. Be deliberate about spawning them — and
+    consider configuring a cheaper model for simpler subagents.
+
+   10% of your usage came from plugin "superpowers"
+    Review what this plugin contributes — its agents, skills, and MCP tools all
+    count toward your limit.
+
+   Skills                  % of usage
+   /superpowers:writing-plans      4%
+   /claude-api                     2%
+   /superpowers:systematic-deb…    2%
+   /superpowers:brainstorming      2%
+   /superpowers:subagent-drive…    2%
+                                                                                                                      ↓
