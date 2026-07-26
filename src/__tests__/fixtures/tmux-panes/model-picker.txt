@@ -1,0 +1,50 @@
+
+╭─── Claude Code v2.1.206 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│                 Welcome back Abid!                 │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Added directory path suggestions to `/cd`, matching `/add-dir`… │
+│                        ▘▘ ▝▝                       │ Added a `/doctor` check that proposes trimming checked-in `CLA… │
+│ Opus 4.8 (1M context) with me… · Claude Max · Abid │ `/commit-push-pr` now auto-allows `git push` to the repo's con… │
+│ Zaidi                                              │ /release-notes for more                                         │
+│               /private/tmp/tui-fixt                │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ run the shell command: ls -la
+
+  Listed 1 directory
+
+⏺ The directory has a .git repo and a single untracked README.md (6 bytes).
+
+✻ Cooked for 4s
+
+❯ Use the Bash tool to run exactly: touch fixture-probe.txt
+
+  Ran 1 shell command
+
+✻ Worked for 44s
+
+❯ Use the Bash tool to run exactly: touch fixture-probe2.txt
+
+⏺ Running 1 shell command…
+  ⎿  $ touch fixture-probe2.txt
+
+✻ Brewed for 28s
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
+   specify with --model.
+
+     1. Default (recommended)  Opus 4.8 with 1M context · Best for everyday, complex tasks
+   ❯ 2. Opus ✔                 Opus 4.8 with 1M context · Best for everyday, complex tasks
+     3. Fable                  Fable 5 · Most capable for your hardest and longest-running tasks
+     4. Sonnet                 Sonnet 5 · Efficient for routine tasks
+     5. Haiku                  Haiku 4.5 · Fastest for quick answers
+
+   ◐ Medium effort ←/→ to adjust
+
+   Enter to set as default · s to use this session only · Esc to cancel

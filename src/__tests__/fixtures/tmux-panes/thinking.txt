@@ -1,0 +1,50 @@
+
+╭─── Claude Code v2.1.206 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│                 Welcome back Abid!                 │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Added directory path suggestions to `/cd`, matching `/add-dir`… │
+│                        ▘▘ ▝▝                       │ Added a `/doctor` check that proposes trimming checked-in `CLA… │
+│ Opus 4.8 (1M context) with me… · Claude Max · Abid │ `/commit-push-pr` now auto-allows `git push` to the repo's con… │
+│ Zaidi                                              │ /release-notes for more                                         │
+│               /private/tmp/tui-fixt                │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ run the shell command: ls -la
+
+  Listed 1 directory
+
+⏺
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✳ Composing… (3s · ↓ 76 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents

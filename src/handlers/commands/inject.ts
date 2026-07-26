@@ -11,6 +11,7 @@ import { isAuthorized } from "../../security";
 import type { SessionContext } from "../../sessions/context";
 import { busReply, resolveTopicSession } from "./helpers";
 import { sendKeysToSession } from "./terminal-inject";
+import { replyBlockedPanel } from "./tmux";
 
 async function injectSlashCommand(
   ctx: Context,
@@ -46,9 +47,21 @@ async function injectSlashCommand(
       ctx,
       result.note ? `${doneLabel} (${result.note})` : doneLabel,
     );
-  } else {
-    await busReply(ctx, `❌ Couldn't send ${slash}: ${result.reason}`);
+    return;
   }
+  // The text never reached the input bar. Show the pane and the key panel so it
+  // can be answered from here, rather than a dead-end error. The headline comes
+  // from the guard, which knows whether a modal was actually detected.
+  if (result.blocked && result.launchUuid && result.pane) {
+    await replyBlockedPanel(
+      ctx,
+      result.launchUuid,
+      result.pane,
+      result.blockedHeadline,
+    );
+    return;
+  }
+  await busReply(ctx, `❌ Couldn't send ${slash}: ${result.reason}`);
 }
 
 /** /clear — clear the desktop session's conversation. */

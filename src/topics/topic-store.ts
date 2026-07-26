@@ -44,6 +44,11 @@ export function setChatId(chatId: number): void {
   scheduleSave();
 }
 
+/** The forum chat every topic lives in. `0` until `setChatId` has run. */
+export function getChatId(): number {
+  return store.chatId;
+}
+
 export async function loadTopicStore(): Promise<void> {
   const primary = storePath();
   let primaryExists = false;

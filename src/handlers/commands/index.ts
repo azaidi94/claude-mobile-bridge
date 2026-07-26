@@ -65,7 +65,13 @@ export { handleApp } from "./app";
 
 export { handleGroupMode, handleGroupModeCallback } from "./group-mode";
 export { handleVerbose } from "./verbose";
-export { handleTmux, handlePeek, handleTmuxCallback } from "./tmux";
+export {
+  handleTmux,
+  handlePeek,
+  handleTmuxCallback,
+  handleTuiCallback,
+  replyBlockedPanel,
+} from "./tmux";
 
 export {
   handleCursorBridge,

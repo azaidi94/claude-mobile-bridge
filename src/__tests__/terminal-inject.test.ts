@@ -17,7 +17,6 @@ import {
   buildCursorInjectScript,
   parseChord,
   resolveTmuxTarget,
-  buildTmuxSendArgs,
   countSessionsInDir,
   ttyChainForPid,
   resolveCmuxWorkspace,
@@ -352,23 +351,9 @@ describe("resolveTmuxTarget", () => {
   });
 });
 
-describe("buildTmuxSendArgs", () => {
-  test("sends literal text then a separate Enter, targeting the pane on its socket", () => {
-    expect(
-      buildTmuxSendArgs({ pane: "%3", socket: "/tmp/s" }, "/clear"),
-    ).toEqual([
-      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "-l", "/clear"],
-      ["tmux", "-S", "/tmp/s", "send-keys", "-t", "%3", "Enter"],
-    ]);
-  });
-
-  test("omits -S when no socket is known (default server)", () => {
-    expect(buildTmuxSendArgs({ pane: "%9" }, "/compact")).toEqual([
-      ["tmux", "send-keys", "-t", "%9", "-l", "/compact"],
-      ["tmux", "send-keys", "-t", "%9", "Enter"],
-    ]);
-  });
-});
+// buildTmuxSendArgs is gone: it emitted a blind Enter after the literal text,
+// which CONFIRMS a modal's highlighted item. The guarded replacement and its
+// property tests live in tmux-send-guard.test.ts.
 
 describe("countSessionsInDir", () => {
   test("counts only port files whose cwd matches", async () => {

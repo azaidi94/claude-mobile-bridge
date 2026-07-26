@@ -42,6 +42,13 @@ import {
   selectRelayTarget,
   type PortFileData,
 } from "../../relay";
+import {
+  capturePane,
+  runTmux,
+  tmuxBase,
+  type TmuxTarget,
+} from "../../tmux/exec";
+import { isModalPresent, promptVisibleInPane } from "../../tmux/modal-detect";
 import { escapeAppleScriptDoubleQuoted } from "./helpers";
 import { resolveCmuxBin } from "./terminal-launchers";
 
@@ -400,7 +407,24 @@ export function detectTerminalApp(
 
 export type InjectResult =
   | { ok: true; app: TerminalApp; note?: string }
-  | { ok: false; app: TerminalApp; reason: string };
+  | {
+      ok: false;
+      app: TerminalApp;
+      reason: string;
+      /** The text never reached the input bar; nothing was sent. Render the pane + key panel. */
+      blocked?: true;
+      /** The pane as captured at refusal time — only set when `blocked`. */
+      pane?: string;
+      /** For building the key panel — only set when `blocked` and resolvable. */
+      launchUuid?: string;
+      /**
+       * Headline for the blocked panel. Distinguishes a detected modal from
+       * "not accepting input, no modal footer found" (`/usage` is the latter on
+       * Claude Code 2.1.206). The renderer must not assert a dialog exists when
+       * none was detected.
+       */
+      blockedHeadline?: string;
+    };
 
 function runOsascript(script: string): {
   ok: boolean;
@@ -544,10 +568,7 @@ export async function resolveCmuxWorkspace(
 }
 
 /** A tmux injection target: the pane id, and the socket path if non-default. */
-export interface TmuxTarget {
-  pane: string;
-  socket?: string;
-}
+export type { TmuxTarget };
 
 /**
  * Resolve the tmux pane (+ socket) for `sctx` from the relay port files, or null
@@ -618,20 +639,126 @@ export async function resolveTmuxTarget(
   return null;
 }
 
+/** See tmux.ts — same measured value, same reason. */
+const SEND_KEYS_SETTLE_MS = 500;
+
 /**
- * Two argv batches to type `text` then submit it in a tmux pane. `-l` sends the
- * text literally so a leading `/` and special chars aren't parsed as key names;
- * `Enter` is a separate send-keys so it's interpreted as the Return key.
+ * Decide whether Enter is safe. Pure.
+ *
+ * `send-keys -l` into a modal is a NO-OP, so probing costs nothing in the bad
+ * case. If our text is not visible in the input bar afterwards, a modal ate it —
+ * and a bare Enter would CONFIRM that modal's highlighted item.
  */
-export function buildTmuxSendArgs(
+export function planGuardedSend(
+  before: string,
+  after: string,
+  text: string,
+): { sendEnter: boolean } {
+  return { sendEnter: promptVisibleInPane(before, after, text) };
+}
+
+/** The IO `sendKeysToTmux` performs. Injected so the guard is testable. */
+export interface TmuxSendIO {
+  capture: (target: TmuxTarget) => string;
+  /** `keys` are the send-keys args after `-t <pane>` — e.g. `["-l", "/clear"]`. */
+  send: (target: TmuxTarget, keys: string[]) => { ok: boolean; stderr: string };
+  /** Render settle between typing and re-capture. 0 in tests. */
+  settleMs?: number;
+}
+
+const liveTmuxIO: TmuxSendIO = {
+  capture: capturePane,
+  send: (target, keys) =>
+    runTmux([...tmuxBase(target), "send-keys", "-t", target.pane, ...keys]),
+};
+
+/**
+ * Type `text` into a tmux pane and submit it — but only once the pane proves it
+ * accepted the text. `-l` sends the text literally so a leading `/` and special
+ * chars aren't parsed as key names; `Enter` is a separate send-keys so it's
+ * interpreted as the Return key.
+ *
+ * The Enter is the dangerous half: with a dialog up, the literal text is a no-op
+ * and a bare Enter confirms the dialog's highlighted item (`1. Yes` on the Bash
+ * permission prompt). So we capture, type, settle, re-capture, and press Enter
+ * only when the text is demonstrably in the input bar. An empty capture — wedged
+ * tmux, dead pane, missing binary — reads as UNKNOWN and fails closed.
+ */
+export async function sendKeysToTmux(
   target: TmuxTarget,
   text: string,
-): string[][] {
-  const base = target.socket ? ["tmux", "-S", target.socket] : ["tmux"];
-  return [
-    [...base, "send-keys", "-t", target.pane, "-l", text],
-    [...base, "send-keys", "-t", target.pane, "Enter"],
-  ];
+  launchUuid: string | undefined,
+  io: TmuxSendIO = liveTmuxIO,
+): Promise<InjectResult> {
+  const before = io.capture(target);
+
+  // Harmless if a modal is up: it is a no-op.
+  const typed = io.send(target, ["-l", text]);
+  if (!typed.ok) {
+    return {
+      ok: false,
+      app: "tmux",
+      reason: `tmux send-keys failed (${typed.stderr || "pane gone?"}).`,
+    };
+  }
+
+  await Bun.sleep(io.settleMs ?? SEND_KEYS_SETTLE_MS);
+  const after = io.capture(target);
+
+  // TOCTOU note: a modal that pops DURING this settle is caught — the re-capture
+  // below sees no framed input bar, `promptVisibleInPane` returns false, and we
+  // refuse. A modal that pops AFTER the re-capture but BEFORE the `Enter`
+  // send-keys below reaches tmux is NOT detectable by any capture-based design:
+  // that window is one send-keys round-trip (single-digit ms) versus this
+  // `SEND_KEYS_SETTLE_MS` (500ms) settle. That is an accepted, inherent
+  // limitation of the guard, not a bug to fix here.
+  if (!planGuardedSend(before, after, text).sendEnter) {
+    if (!after) {
+      // Capture itself failed (wedged tmux, missing binary, 5s timeout) — we
+      // cannot tell whether a modal is up at all. Don't claim "blocked on a
+      // dialog"; that sends the user hunting for a dialog that may not exist.
+      return {
+        ok: false,
+        app: "tmux",
+        reason:
+          "couldn't read the session's screen (tmux not responding), so nothing was sent",
+      };
+    }
+    if (isModalPresent(after)) {
+      return {
+        ok: false,
+        app: "tmux",
+        blocked: true,
+        pane: after,
+        launchUuid,
+        blockedHeadline: "Session is blocked on a dialog.",
+        reason: "the session is blocked on a dialog, so nothing was sent",
+      };
+    }
+    // Text didn't land but no modal footer is detectable (e.g. `/usage`, which
+    // blocks input yet has no capital-E footer token). Still refuse, but say
+    // so honestly — the pane + key panel are still a useful fallback.
+    return {
+      ok: false,
+      app: "tmux",
+      blocked: true,
+      pane: after,
+      launchUuid,
+      blockedHeadline: "Session isn't accepting input (no dialog detected).",
+      reason:
+        "the session isn't accepting input (nothing was sent) — here's its screen",
+    };
+  }
+
+  const submitted = io.send(target, ["Enter"]);
+  if (!submitted.ok) {
+    return {
+      ok: false,
+      app: "tmux",
+      reason: `tmux send-keys failed (${submitted.stderr || "pane gone?"}).`,
+    };
+  }
+  return { ok: true, app: "tmux", note: `sent to tmux pane ${target.pane}` };
 }
 
 /**
@@ -763,18 +890,11 @@ export async function sendKeysToSession(
   // iTerm, Ghostty…), so it wins over every host-specific fallback below.
   const tmux = await resolveTmuxTarget(sctx);
   if (tmux) {
-    for (const argv of buildTmuxSendArgs(tmux, text)) {
-      const r = Bun.spawnSync(argv);
-      if (r.exitCode !== 0) {
-        const err = (r.stderr ?? Buffer.alloc(0)).toString().trim();
-        return {
-          ok: false,
-          app: "tmux",
-          reason: `tmux send-keys failed (${err || "pane gone?"}).`,
-        };
-      }
-    }
-    return { ok: true, app: "tmux", note: `sent to tmux pane ${tmux.pane}` };
+    return await sendKeysToTmux(
+      tmux,
+      text,
+      launchUuidForSessionId(sctx.sessionId),
+    );
   }
 
   // Route per-session: the terminal app is a global *default*, but each session

@@ -58,6 +58,37 @@ come from the vendored script's echo markers; a custom `RALPH_SCRIPT` only gets
 them by emitting the same lines, but missing markers degrade gracefully (start /
 finish / stop beats still work, and verbose streaming is marker-independent).
 
+## Running without GitHub
+
+The default loop reads GitHub issues. To run on a repo with no GitHub, drive the
+loop from a local `plans/tasks.md` instead:
+
+1. Set `RALPH_SCRIPT=/abs/path/to/scripts/ralph/afk_tasks_md.sh` in `.env`.
+2. Create `plans/tasks.md` — either by hand or with the `plan-tasks` skill
+   (`/plan-tasks [<repo-path>] <goal>`), which decomposes a goal into a
+   well-shaped queue for you to review.
+3. Run `/ralph <repo> [N]` as usual. Each iteration drains the next eligible
+   `[ ]` item; the loop finishes when all items are `[x]`.
+
+Format (`plans/tasks.md`):
+
+```markdown
+# Plan: <goal>
+
+## [ ] 1. <title>
+
+**Acceptance:** <done condition>
+**Depends on:** none
+**Context:** <pointers>
+```
+
+The outer script owns the checkboxes (it flips `[ ]`→`[x]` when a session signals
+`DONE`); you own the file between runs (reorder, edit acceptance, re-open a task
+by flipping `[x]`→`[ ]`).
+
+Limitations in this mode: `-pr` needs `gh`, so it's **direct-merge only** (the
+script warns and proceeds); `-l <label>` is ignored.
+
 ## Limitations
 
 - **Output-only topic** — you can't chat into the loop topic.
