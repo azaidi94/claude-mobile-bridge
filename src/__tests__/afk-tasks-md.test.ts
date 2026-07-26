@@ -17,37 +17,52 @@ function git(cwd: string, args: string[]) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
+/**
+ * A throwaway git repo holding `tasksMd`, with a stub `claude` on PATH that
+ * only signals DONE — the loop machinery owns everything else.
+ */
+function setupRepo(prefix: string, tasksMd: string): string {
+  const repo = mkdtempSync(join(tmpdir(), prefix));
+  git(repo, ["init", "-b", "main"]);
+  git(repo, ["config", "user.email", "t@t"]);
+  git(repo, ["config", "user.name", "t"]);
+  mkdirSync(join(repo, "plans"));
+  writeFileSync(join(repo, "plans/tasks.md"), tasksMd);
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-m", "init"]);
+
+  const bin = join(repo, ".bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "claude"),
+    `#!/bin/bash\necho DONE > "$RALPH_SIGNAL"\n`,
+  );
+  chmodSync(join(bin, "claude"), 0o755);
+  return repo;
+}
+
+/** Run the loop, returning its combined output whether it exits 0 or not. */
+function runLoop(repo: string, iterations: string): string {
+  const opts = {
+    cwd: repo,
+    env: { ...process.env, PATH: `${join(repo, ".bin")}:${process.env.PATH}` },
+    encoding: "utf8" as const,
+  };
+  try {
+    return execFileSync("bash", [SCRIPT, iterations], opts);
+  } catch (err: any) {
+    return (err.stdout ?? "") + (err.stderr ?? "");
+  }
+}
+
 describe("afk_tasks_md.sh", () => {
   it("drains a 2-item tasks.md and reports completion", () => {
-    const repo = mkdtempSync(join(tmpdir(), "ralph-md-"));
+    const repo = setupRepo(
+      "ralph-md-",
+      `# Plan: demo\n\n## [ ] 1. One\n**Depends on:** none\n\n## [ ] 2. Two\n**Depends on:** 1\n`,
+    );
     try {
-      // A throwaway git repo with a plans/tasks.md queue.
-      git(repo, ["init", "-b", "main"]);
-      git(repo, ["config", "user.email", "t@t"]);
-      git(repo, ["config", "user.name", "t"]);
-      mkdirSync(join(repo, "plans"));
-      writeFileSync(
-        join(repo, "plans/tasks.md"),
-        `# Plan: demo\n\n## [ ] 1. One\n**Depends on:** none\n\n## [ ] 2. Two\n**Depends on:** 1\n`,
-      );
-      git(repo, ["add", "-A"]);
-      git(repo, ["commit", "-m", "init"]);
-
-      // Stub `claude`: just signal DONE (the loop machinery owns the rest).
-      const bin = join(repo, ".bin");
-      mkdirSync(bin);
-      writeFileSync(
-        join(bin, "claude"),
-        `#!/bin/bash\necho DONE > "$RALPH_SIGNAL"\n`,
-      );
-      chmodSync(join(bin, "claude"), 0o755);
-
-      const out = execFileSync("bash", [SCRIPT, "5"], {
-        cwd: repo,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-        encoding: "utf8",
-      });
-
+      const out = runLoop(repo, "5");
       const md = readFileSync(join(repo, "plans/tasks.md"), "utf8");
       expect(md).toContain("## [x] 1. One");
       expect(md).toContain("## [x] 2. Two");
@@ -58,43 +73,45 @@ describe("afk_tasks_md.sh", () => {
   });
 
   it("fails fast on a structurally-blocked queue instead of spinning", () => {
-    const repo = mkdtempSync(join(tmpdir(), "ralph-md-blocked-"));
+    // Depends on a nonexistent id → never eligible; `claude` must never run.
+    const repo = setupRepo(
+      "ralph-md-blocked-",
+      `# Plan: demo\n\n## [ ] 1. Blocked\n**Depends on:** 9\n`,
+    );
     try {
-      // A throwaway git repo with a plans/tasks.md queue that can never
-      // become eligible: it depends on a nonexistent id.
-      git(repo, ["init", "-b", "main"]);
-      git(repo, ["config", "user.email", "t@t"]);
-      git(repo, ["config", "user.name", "t"]);
-      mkdirSync(join(repo, "plans"));
-      writeFileSync(
-        join(repo, "plans/tasks.md"),
-        `# Plan: demo\n\n## [ ] 1. Blocked\n**Depends on:** 9\n`,
-      );
-      git(repo, ["add", "-A"]);
-      git(repo, ["commit", "-m", "init"]);
-
-      // Stub `claude`: should never be invoked for a queue-level block.
-      const bin = join(repo, ".bin");
-      mkdirSync(bin);
-      writeFileSync(
-        join(bin, "claude"),
-        `#!/bin/bash\necho DONE > "$RALPH_SIGNAL"\n`,
-      );
-      chmodSync(join(bin, "claude"), 0o755);
-
-      let out = "";
-      try {
-        out = execFileSync("bash", [SCRIPT, "20"], {
-          cwd: repo,
-          env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-          encoding: "utf8",
-        });
-      } catch (err: any) {
-        out = (err.stdout ?? "") + (err.stderr ?? "");
-      }
-
+      const out = runLoop(repo, "20");
       expect(out).toContain("Queue blocked");
       expect(out).not.toContain("Reached max iterations");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a malformed queue rather than reporting success", () => {
+    // `1:` instead of `1.` parses to zero items — which must NOT read as done.
+    const repo = setupRepo(
+      "ralph-md-malformed-",
+      `# Plan: demo\n\n## [ ] 1: One\n**Depends on:** none\n`,
+    );
+    try {
+      const out = runLoop(repo, "5");
+      expect(out).toContain("Malformed");
+      expect(out).not.toContain("All issues resolved");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to run on a detached HEAD", () => {
+    const repo = setupRepo(
+      "ralph-md-detached-",
+      `# Plan: demo\n\n## [ ] 1. One\n**Depends on:** none\n`,
+    );
+    try {
+      git(repo, ["checkout", "--detach"]);
+      const out = runLoop(repo, "5");
+      expect(out).toContain("Detached HEAD");
+      expect(out).not.toContain("=== Iteration");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

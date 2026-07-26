@@ -3,6 +3,7 @@ import {
   parseTasks,
   nextEligible,
   queueStatus,
+  queueProblem,
   markDone,
 } from "../ralph/tasks-queue";
 
@@ -81,6 +82,71 @@ describe("tasks-queue: queueStatus", () => {
   });
 });
 
+describe("tasks-queue: queueProblem", () => {
+  const check = (md: string) => queueProblem(md, parseTasks(md));
+
+  it("passes a well-formed queue", () => {
+    expect(check(SAMPLE)).toBeNull();
+  });
+
+  it("passes an empty/whitespace file (genuinely nothing to do)", () => {
+    expect(check("")).toBeNull();
+    expect(check("\n  \n")).toBeNull();
+  });
+
+  it.each([
+    ["colon instead of period", "## [ ] 1: First"],
+    ["indented header", "  ## [ ] 1. First"],
+    ["uppercase X", "## [X] 1. First"],
+    ["no space in the box", "## [] 1. First"],
+    ["wrong heading level", "### [ ] 1. First"],
+  ])("flags a near-miss header: %s", (_name, header) => {
+    const problem = check(`# Plan: x\n\n${header}\n**Depends on:** none\n`);
+    expect(problem).toContain("don't match");
+    expect(problem).toContain(header.trim());
+  });
+
+  it("flags a non-empty file that yields no items", () => {
+    expect(check("# Plan: x\n\njust prose\n")).toContain(
+      "no `## [ ] N. Title`",
+    );
+  });
+
+  it("does not flag ordinary prose headings", () => {
+    expect(check(`${SAMPLE}\n## Notes\n\nsome context\n`)).toBeNull();
+  });
+
+  // False positives are worse than the hole they close: they abort a queue that
+  // would have run fine.
+  it("does not flag a sub-checklist inside a task body", () => {
+    expect(check(`${SAMPLE}\n### [ ] unit tests green\n`)).toBeNull();
+  });
+
+  it("does not flag headers inside a fenced block", () => {
+    // A task's Context quoting the tasks.md format, indented inside the fence.
+    const md = `${SAMPLE}
+**Context:** the format is
+
+\`\`\`markdown
+  ## [ ] 1. <title>
+\`\`\`
+`;
+    expect(check(md)).toBeNull();
+  });
+
+  it("resumes checking after a fence closes", () => {
+    const md = `${SAMPLE}
+\`\`\`
+## [ ] 3. inside a fence
+\`\`\`
+
+## [ ] 4: after the fence
+`;
+    expect(check(md)).toContain("4: after the fence");
+    expect(check(md)).not.toContain("3.");
+  });
+});
+
 describe("tasks-queue: markDone", () => {
   it("flips only the targeted item's checkbox", () => {
     const out = markDone(SAMPLE, 1);
@@ -91,5 +157,16 @@ describe("tasks-queue: markDone", () => {
   it("is idempotent on an already-done item", () => {
     const once = markDone(SAMPLE, 1);
     expect(markDone(once, 1)).toBe(once);
+  });
+
+  // parseTasks normalises `01` → 1; without the `0*` the flip silently no-ops
+  // AFTER the session has already merged its work.
+  it("flips a zero-padded header", () => {
+    expect(markDone("## [ ] 01. One\n", 1)).toContain("## [x] 01. One");
+  });
+
+  it("does not confuse id 1 with item 11", () => {
+    const out = markDone("## [ ] 11. Eleven\n", 1);
+    expect(out).toBe("## [ ] 11. Eleven\n");
   });
 });

@@ -86,8 +86,19 @@ The outer script owns the checkboxes (it flips `[ ]`→`[x]` when a session sign
 `DONE`); you own the file between runs (reorder, edit acceptance, re-open a task
 by flipping `[x]`→`[ ]`).
 
-Limitations in this mode: `-pr` needs `gh`, so it's **direct-merge only** (the
-script warns and proceeds); `-l <label>` is ignored.
+The header line is parsed strictly — exactly `## [ ] N. Title`. The loop aborts
+on a header that's close but wrong (`1:` for `1.`, `[X]`, indentation) rather
+than run: a file that parses to zero items would otherwise look like a finished
+queue and exit "all resolved" having done nothing.
+
+Limitations in this mode:
+
+- `-pr` needs `gh`, so it's **direct-merge only** (the script warns and
+  proceeds); `-l <label>` is ignored.
+- **Named branch required** — each task merges into the branch the loop started
+  on, so a detached HEAD aborts before iteration 1.
+- **Malformed queue aborts** — a broken header or an unflippable checkbox exits
+  non-zero instead of spinning on the same task.
 
 ## Limitations
 

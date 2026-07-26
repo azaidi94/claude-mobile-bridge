@@ -49,8 +49,13 @@ ralph, never run the loop.
    **Depends on:** 1
    ```
 
-Number items from 1, sequentially. `Depends on:` is `none` or a comma-list of
-earlier item numbers. 6. **Self-check the draft** before finishing: no dependency cycles, no vague
-acceptance criteria, no oversized items, no duplicates. Fix inline. 7. **Hand off.** Tell the user the draft is written for review and that they can
-edit it, then run `/ralph <repo>` (with the tasks.md `RALPH_SCRIPT`
-configured). Do not run anything yourself.
+   Number items from 1, sequentially. The header line must match exactly
+   `## [ ] N. Title` — the loop's parser is strict, and a slip (`1:` for `1.`,
+   indentation, a missing space in `[ ]`) aborts the run. `Depends on:` is
+   `none` or a comma-list of earlier item numbers.
+
+6. **Self-check the draft** before finishing: no dependency cycles, no vague
+   acceptance criteria, no oversized items, no duplicates. Fix inline.
+7. **Hand off.** Tell the user the draft is written for review and that they can
+   edit it, then run `/ralph <repo>` (with the tasks.md `RALPH_SCRIPT`
+   configured). Do not run anything yourself.

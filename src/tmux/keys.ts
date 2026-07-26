@@ -65,6 +65,19 @@ const KEY_ARGV: Record<TuiAction, string[]> = {
   close: [],
 };
 
+/**
+ * Actions that need a second tap to fire. Only ⌃C: every other key on the
+ * panel is navigational or edits the input line, while ⌃C interrupts the
+ * running turn — and a phone tap has none of a keyboard's muscle memory, with
+ * six harmless neighbours one thumb-width away.
+ */
+const CONFIRM_ACTIONS: readonly TuiAction[] = ["cC"];
+
+/** True when this action must be tapped twice before it fires. */
+export function needsConfirm(action: TuiAction): boolean {
+  return CONFIRM_ACTIONS.includes(action);
+}
+
 function isTuiAction(s: string): s is TuiAction {
   return (TUI_ACTIONS as readonly string[]).includes(s);
 }

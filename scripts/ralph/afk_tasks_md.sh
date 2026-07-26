@@ -38,8 +38,14 @@ if [ -f "plans/prompt_tasks.md" ]; then
   PROMPT_FILE="plans/prompt_tasks.md"
 fi
 
+# Empty = detached HEAD. Don't fall back to `rev-parse --abbrev-ref`, which
+# yields the literal "HEAD": each session is told to merge into BASE BRANCH, and
+# "merge into HEAD" is not a thing. Fail before burning an iteration.
 BASE_BRANCH="$(git branch --show-current)"
-[ -z "$BASE_BRANCH" ] && BASE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [ -z "$BASE_BRANCH" ]; then
+  echo "Detached HEAD in $(pwd) — each task merges into the branch the loop started on. Check out a named branch first."
+  exit 1
+fi
 
 # --- session-control helpers (parent owns termination) — mirror afk_tasks.sh ---
 pids_of_tree() { local p=$1 c; [ -z "$p" ] && return; echo "$p"; for c in $(pgrep -P "$p" 2>/dev/null); do pids_of_tree "$c"; done; }
@@ -56,6 +62,10 @@ for ((i=1; i<=$ITERATIONS; i++)); do
   if [ "$status" = "complete" ]; then
     echo "All issues resolved after $i iterations."
     exit 0
+  fi
+  if [ "$status" = "malformed" ]; then
+    echo "Malformed $TASKS_FILE: $(echo "$q" | jq -r .error). Fix the file and re-run. Exiting."
+    exit 1
   fi
   if [ "$status" = "waiting" ]; then
     echo "Queue blocked: items remain in $TASKS_FILE but none are eligible (check 'Depends on:' for a cycle or an unknown id). Exiting."
@@ -107,7 +117,11 @@ BASE BRANCH: $BASE_BRANCH
     continue
   fi
   if [ "$signal" = "DONE" ]; then
-    bun "$CLI" done "$TASKS_FILE" "$id"
+    # A failed flip means the next iteration re-serves this same task forever.
+    if ! bun "$CLI" done "$TASKS_FILE" "$id"; then
+      echo "Could not mark task $id done in $TASKS_FILE — exiting rather than re-running it."
+      exit 1
+    fi
     git add "$TASKS_FILE" 2>/dev/null
     git commit -m "chore(ralph): mark task $id done" 2>/dev/null || true
   fi

@@ -34,6 +34,25 @@ describe("tasks-queue-cli: next", () => {
     const out = JSON.parse(runCli(["next", join(dir, "nope.md")]));
     expect(out.status).toBe("complete");
   });
+
+  // The silent-success trap: a hand-edit that parses to zero items used to
+  // report "complete", and the loop exited 0 having run nothing.
+  it("reports malformed — not complete — for a near-miss header", () => {
+    writeFileSync(file, "# Plan: demo\n\n## [ ] 1: First\n");
+    const out = JSON.parse(runCli(["next", file]));
+    expect(out.status).toBe("malformed");
+    expect(out.error).toContain("1: First");
+  });
+
+  it("reports malformed for a non-empty file with no items at all", () => {
+    writeFileSync(file, "# Plan: demo\n\nsome prose, no items\n");
+    expect(JSON.parse(runCli(["next", file])).status).toBe("malformed");
+  });
+
+  it("still reports complete for an all-done queue", () => {
+    writeFileSync(file, "# Plan: demo\n\n## [x] 1. First\n");
+    expect(JSON.parse(runCli(["next", file])).status).toBe("complete");
+  });
 });
 
 describe("tasks-queue-cli: done", () => {
@@ -42,5 +61,16 @@ describe("tasks-queue-cli: done", () => {
     expect(readFileSync(file, "utf8")).toContain("## [x] 1. First");
     const out = JSON.parse(runCli(["next", file]));
     expect(out.id).toBe(2);
+  });
+
+  it("is idempotent on an already-done item", () => {
+    runCli(["done", file, "1"]);
+    expect(() => runCli(["done", file, "1"])).not.toThrow();
+    expect(readFileSync(file, "utf8")).toContain("## [x] 1. First");
+  });
+
+  // A no-op flip would leave the loop re-serving the same task every iteration.
+  it("throws when there is no such item to flip", () => {
+    expect(() => runCli(["done", file, "9"])).toThrow(/no item 9/);
   });
 });

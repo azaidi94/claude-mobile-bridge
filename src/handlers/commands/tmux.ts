@@ -23,6 +23,7 @@ import { info, warn } from "../../logger";
 import { runTmux, isNoServer } from "../../tmux/exec";
 import {
   buildTuiKeyboard,
+  needsConfirm,
   parseTuiCallback,
   tuiKeyArgv,
   type TuiAction,
@@ -192,6 +193,30 @@ export function planTuiTap(action: TuiAction): {
     sendArgv: keys.length ? [keys] : [],
     recapture: true,
     closeMsg: false,
+  };
+}
+
+/** How long an armed ⌃C stays armed. */
+export const CONFIRM_WINDOW_MS = 5_000;
+
+/**
+ * Two-tap gate for the panel's one destructive key. Pure — the arm state lives
+ * in the caller.
+ *
+ * `armedAt` is when this session last armed. Expiry is deliberate: an arm left
+ * over from minutes ago is not consent, it's a forgotten tap.
+ */
+export function planConfirmTap(
+  action: TuiAction,
+  armedAt: number | undefined,
+  now: number,
+): { send: boolean; notice?: string } {
+  if (!needsConfirm(action)) return { send: true };
+  if (armedAt !== undefined && now - armedAt <= CONFIRM_WINDOW_MS)
+    return { send: true };
+  return {
+    send: false,
+    notice: `Tap ⌃C again within ${Math.round(CONFIRM_WINDOW_MS / 1000)}s to interrupt`,
   };
 }
 
@@ -517,6 +542,9 @@ export async function handleTmuxCallback(
  */
 const inFlight = new Set<string>();
 
+/** launchUuid → when ⌃C was armed. Cleared by any tap that actually sends. */
+const armedAtByLaunchUuid = new Map<string, number>();
+
 /** Handle a `tui:*` callback. `data` is the full callback string. */
 export async function handleTuiCallback(
   ctx: Context,
@@ -552,6 +580,22 @@ export async function handleTuiCallback(
       await ctx.answerCallbackQuery({ text: "Session gone." });
       return;
     }
+
+    const confirm = planConfirmTap(
+      action,
+      armedAtByLaunchUuid.get(launchUuid),
+      Date.now(),
+    );
+    if (!confirm.send) {
+      armedAtByLaunchUuid.set(launchUuid, Date.now());
+      await ctx
+        .answerCallbackQuery({ text: confirm.notice, show_alert: true })
+        .catch(() => {});
+      return;
+    }
+    // Any tap that sends disarms — a ⌃C armed before an unrelated key is no
+    // longer two deliberate taps in a row.
+    armedAtByLaunchUuid.delete(launchUuid);
 
     const plan = planTuiTap(action);
     await ctx.answerCallbackQuery().catch(() => {});

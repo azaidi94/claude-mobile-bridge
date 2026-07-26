@@ -323,7 +323,9 @@ const notifyHandler = createNotificationHandler(
 // refresh cycle (see doRefresh), so it covers both startup and any session
 // that appears later — no separate startup sweep needed here.
 await startWatcher(notifyHandler);
-startModalWatchdog();
+// Stopped in stopRunner: an orphaned tick would keep polling tmux and posting
+// into a torn-down topic store.
+const stopModalWatchdog = startModalWatchdog();
 
 // Cursor integration is opt-out. Disabled if CURSOR_BRIDGE_ENABLED env var
 // is false/0/no/off, OR if the user has toggled it off via /cursor off.
@@ -497,6 +499,7 @@ const stopRunner = () => {
     info("stopping bot");
     stopCronSchedulerFn?.();
     stopWatchdog();
+    stopModalWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
     stopCursorBridge();
