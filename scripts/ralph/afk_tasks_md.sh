@@ -47,6 +47,19 @@ if [ -z "$BASE_BRANCH" ]; then
   exit 1
 fi
 
+# `script` argv is not portable: BSD/macOS is `script -q FILE CMD...`, while
+# util-linux wants `script -q -c "CMD" FILE` and errors out on the BSD form.
+# Production is macOS (the bot drives Terminal.app), but CI is Linux — without
+# this branch the session simply never runs there. `%q` quotes each argument for
+# the re-parse `-c` performs; $CONTEXT is multi-line and unsanitised.
+run_claude_session() {
+  if script --version 2>/dev/null | grep -qi util-linux; then
+    script -q -c "$(printf '%q ' claude --dangerously-skip-permissions "$CONTEXT")" "$tmpfile"
+  else
+    script -q "$tmpfile" claude --dangerously-skip-permissions "$CONTEXT"
+  fi
+}
+
 # --- session-control helpers (parent owns termination) — mirror afk_tasks.sh ---
 pids_of_tree() { local p=$1 c; [ -z "$p" ] && return; echo "$p"; for c in $(pgrep -P "$p" 2>/dev/null); do pids_of_tree "$c"; done; }
 kill_session() { local tree; tree=$(pids_of_tree "$(pgrep -f "$1" 2>/dev/null | head -1)"); [ -n "$tree" ] && { kill -TERM $tree 2>/dev/null; sleep 2; kill -KILL $tree 2>/dev/null; }; }
@@ -100,7 +113,7 @@ BASE BRANCH: $BASE_BRANCH
   ) &
   watchdog=$!
 
-  script -q "$tmpfile" claude --dangerously-skip-permissions "$CONTEXT" || true
+  run_claude_session || true
 
   kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
 
