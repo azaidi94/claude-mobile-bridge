@@ -97,7 +97,9 @@ BASE BRANCH: $BASE_BRANCH
   tmpfile=$(mktemp)
   signalfile=$(mktemp); rm -f "$signalfile"
   export RALPH_SIGNAL="$signalfile"
-  TIMEOUT=${RALPH_TIMEOUT:-1800}
+  # Wedge backstop, not a task budget — see afk_tasks.sh. A timeout kill leaves
+  # the task unflipped, so the next iteration re-serves it from scratch.
+  TIMEOUT=${RALPH_TIMEOUT:-7200}
 
   # Background watchdog: the PARENT owns termination (identical to afk_tasks.sh).
   (

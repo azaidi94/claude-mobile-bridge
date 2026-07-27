@@ -20,6 +20,7 @@ import {
   ALLOWED_USERS,
   RALPH_SCRIPT,
   RALPH_PROMPT,
+  RALPH_TIMEOUT,
   isDesktopClaudeSpawnSupported,
 } from "../../config";
 import { STATE_DIR } from "../../paths";
@@ -333,7 +334,13 @@ async function startCmd(ctx: Context, args: string): Promise<void> {
     (RALPH_SCRIPT
       ? `RALPH_SCRIPT=${bashSingleQuotedPath(RALPH_SCRIPT)} `
       : "") +
-    (RALPH_PROMPT ? `RALPH_PROMPT=${bashSingleQuotedPath(RALPH_PROMPT)} ` : "");
+    (RALPH_PROMPT
+      ? `RALPH_PROMPT=${bashSingleQuotedPath(RALPH_PROMPT)} `
+      : "") +
+    // Digits only — anything else is a typo, and passing it through would both
+    // inject into the shell line and make the script's `-lt` comparison fail
+    // closed (killing every iteration at once). Fall back to the script default.
+    (/^\d+$/.test(RALPH_TIMEOUT) ? `RALPH_TIMEOUT=${RALPH_TIMEOUT} ` : "");
   const cmdParts = [
     bashSingleQuotedPath(RUNNER_PATH),
     bashSingleQuotedPath(runDir),

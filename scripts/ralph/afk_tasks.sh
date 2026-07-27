@@ -117,7 +117,11 @@ MODE: $MODE
   tmpfile=$(mktemp)
   signalfile=$(mktemp); rm -f "$signalfile"
   export RALPH_SIGNAL="$signalfile"
-  TIMEOUT=${RALPH_TIMEOUT:-1800}
+  # Wedge backstop, not a task budget: the watchdog below normally ends the
+  # iteration the moment the model writes $RALPH_SIGNAL, so this only fires when
+  # no signal ever arrives. Keep it generous — a large task legitimately running
+  # long must not be killed mid-flight (its uncommitted work is lost).
+  TIMEOUT=${RALPH_TIMEOUT:-7200}
 
   # Background watchdog: the PARENT owns termination, not the model.
   # macOS `script` must run in the foreground on a real tty, so we can't capture its

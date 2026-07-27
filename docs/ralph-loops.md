@@ -51,6 +51,22 @@ and can be toggled at any time during a run.
 | Custom prompt for one repo  | Add `plans/prompt_tasks.md` to that repo (wins over everything). |
 | Custom prompt everywhere    | Set `RALPH_PROMPT=/path/to/prompt.md` in `.env`.                 |
 | Entirely custom loop script | Set `RALPH_SCRIPT=/path/to/script.sh` in `.env`.                 |
+| Longer per-iteration limit  | Set `RALPH_TIMEOUT=<seconds>` in `.env` (default 7200).          |
+
+### The per-iteration watchdog
+
+`claude` runs interactively here, so it doesn't exit when a turn ends — it sits
+at the prompt. A background watchdog is what ends each iteration: it polls for
+the model's `$RALPH_SIGNAL` file and kills the session (and its whole process
+tree) the moment one appears. `RALPH_TIMEOUT` is only its **fallback** for a
+session that never signals — hung on a prompt, crashed TUI, or a model that
+finished the work but never echoed. It is not a per-task budget.
+
+A timeout kill is visible as a `⏱ iteration timed out after Ns` beat, and it
+costs you that iteration's uncommitted work (in the `tasks.md` loop the task
+stays unflipped and is re-served from scratch). So if large tasks are getting
+killed mid-flight, raise it. Lowering it below what your tasks genuinely need
+just burns iterations.
 
 The loop logic is **vendored** at `scripts/ralph/afk_tasks.sh` +
 `scripts/ralph/prompt_tasks.md`, so every clone has a working default. Rich beats

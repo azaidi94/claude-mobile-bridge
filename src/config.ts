@@ -170,6 +170,15 @@ export const RALPH_SCRIPT = process.env.RALPH_SCRIPT?.trim() || "";
  */
 export const RALPH_PROMPT = process.env.RALPH_PROMPT?.trim() || "";
 
+/**
+ * Per-iteration watchdog timeout (seconds) for the vendored loop. Empty = the
+ * script's own default. This is a wedge backstop, not a budget: the watchdog
+ * normally ends an iteration the moment the model writes `$RALPH_SIGNAL`, and
+ * only falls back to the timeout when no signal ever arrives (session hung on a
+ * prompt, crashed TUI, model that finished but never echoed).
+ */
+export const RALPH_TIMEOUT = process.env.RALPH_TIMEOUT?.trim() || "";
+
 // ============== MCP Configuration ==============
 
 // MCP servers loaded from mcp-config.ts
