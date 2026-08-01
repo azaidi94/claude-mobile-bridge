@@ -35,7 +35,7 @@ import {
 } from "./jsonl-tailer";
 import { ralphBlocksTopicWatch } from "../../ralph/store";
 import { watchKey, watches } from "./registry";
-import { bindRelayReplyHandler } from "./relay-replies";
+import { bindRelayReplyHandler, armRelayRebind } from "./relay-replies";
 import { buildWatchState, type WatchState } from "./state";
 
 /**
@@ -210,6 +210,7 @@ export async function startAutoWatch(
       "auto-watch",
     );
   } else {
+    armRelayRebind(botApi, watchState, chatId, "auto-watch");
     getMessageBus()
       .send({
         chatId,
@@ -396,6 +397,10 @@ export async function startWatchingSession(
   });
   if (relayClient) {
     bindRelayReplyHandler(botApi, relayClient, watchState, chatId, "watch");
+  } else {
+    // Relay down right now — arm rebinding so the first successful send
+    // binds the reply handler once the relay is back.
+    armRelayRebind(botApi, watchState, chatId, "watch");
   }
 
   const branch = await getGitBranch(sessionInfo.dir);

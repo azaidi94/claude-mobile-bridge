@@ -5,7 +5,7 @@
 
 import { Socket } from "net";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
-import { debug, warn } from "../logger";
+import { debug, warn, error } from "../logger";
 import { writeJsonLine } from "../utils/socket-writer";
 
 export interface RelayReply {
@@ -276,8 +276,43 @@ export class RelayClient {
           send_as_pdf: Boolean(msg.send_as_pdf),
           pdf_filename: msg.pdf_filename ? String(msg.pdf_filename) : undefined,
         };
+        let matched = 0;
         for (const { cb, chatId } of this.replyCallbacks) {
-          if (!chatId || chatId === msgChatId) cb(reply);
+          if (!chatId || chatId === msgChatId) {
+            matched++;
+            cb(reply);
+          }
+        }
+        if (matched === 0) {
+          // A reply-tool payload arrived but nothing is bound to deliver it —
+          // the sender's MCP tool already reported success, so this drop is
+          // invisible to the session. Make it visible to the operator.
+          // Files/PDF are LOST (error); plain text usually still reaches
+          // Telegram via the JSONL tailer, so it's degraded-but-recovered
+          // (warn) — except a chat with no tailer behind it (chat_id "web",
+          // whose onReply is bound only for the life of one request), where
+          // even the warn case is a real loss.
+          // Expect error lines from getRelayClient callers that never bind a
+          // durable handler (cron scheduler, startup ping, and web once its
+          // request-scoped binding is torn down): a file reply arriving there
+          // really is lost, so error is correct — not noise to downgrade.
+          // Auto-heal for those callers is the documented follow-up.
+          const lost = files.length > 0 || Boolean(msg.send_as_pdf);
+          // Fields go in the `detail` slot; normalizeFields spreads a plain
+          // object into the field set, so this renders as key=value pairs.
+          // Do NOT "fix" it to `{ detail: fields }` — that nests them.
+          const fields = {
+            chatId: msgChatId,
+            session: this.sessionName,
+            fileCount: files.length,
+            sendAsPdf: Boolean(msg.send_as_pdf),
+            textLen: text.length,
+          };
+          if (lost) {
+            error("relay: reply had no bound handler — dropped", fields);
+          } else {
+            warn("relay: reply had no bound handler — dropped", fields);
+          }
         }
         break;
       }
