@@ -53,7 +53,15 @@ export async function sendWatchRelay(
   // Never rebind onto a DIFFERENT session's client (topic-mode sctx override):
   // that would steal the watch's binding from its own session and double-fire
   // on the sibling's (reply scoping is chat-level, not thread-level).
-  const ownSession = !sctx || sctx.sessionId === state.sessionId;
+  // Identity matches on the STABLE sessionName, not only sessionId: after
+  // /clear, sctx re-anchors to the new id immediately (port-file hook) while
+  // state.sessionId lags until the drift tick sees the new JSONL — an
+  // id-only comparison would skip the rebind exactly on the first
+  // post-/clear turn and lose its attachments.
+  const ownSession =
+    !sctx ||
+    sctx.sessionName === state.sessionName ||
+    sctx.sessionId === state.sessionId;
   if (ownSession && client !== state.relayClient && state.rebindRelay) {
     state.relayCleanup?.();
     state.rebindRelay(client);
@@ -155,8 +163,7 @@ export function bindRelayReplyHandler(
   relayClient.onReply(onReply, scopeChatId);
   watchState.relayClient = relayClient;
   watchState.relayCleanup = () => relayClient.offReply(onReply);
-  watchState.rebindRelay = (next) =>
-    bindRelayReplyHandler(botApi, next, watchState, chatId, fileErrLabel);
+  armRelayRebind(botApi, watchState, chatId, fileErrLabel);
 }
 
 /**

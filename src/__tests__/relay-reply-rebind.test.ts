@@ -165,8 +165,9 @@ describe("relay reply rebinding after client replacement", () => {
     const clientY = new FakeRelayClient();
     currentClient = clientY;
     const sctx = {
+      sessionName: "kx_repo-2",
       sessionId: "sibling-session-y",
-      sessionDir: "/tmp/other",
+      sessionDir: "/tmp/kx_repo",
       sessionPid: 222,
     } as SessionContext;
 
@@ -184,6 +185,47 @@ describe("relay reply rebinding after client replacement", () => {
     expect(clientA.scoped.length).toBe(1);
     // …and is NOT cross-wired onto the sibling's client.
     expect(clientY.scoped.length).toBe(0);
+  });
+
+  test("sctx for the SAME session with a post-/clear NEW id still rebinds", async () => {
+    // /clear regression: the topic store re-anchors sctx.sessionId to the NEW
+    // id immediately (port-file hook), but state.sessionId lags until the
+    // drift tick sees the new JSONL. Identity must match on the stable
+    // sessionName, or the first post-/clear turn's attachments are lost.
+    const state = makeWatch(); // sessionName "kx_repo", sessionId "old-session-id"
+    const clientA = new FakeRelayClient();
+    bindRelayReplyHandler(botApi, clientA as never, state, CHAT_ID, "watch");
+
+    const clientB = new FakeRelayClient();
+    currentClient = clientB;
+    const sctx = {
+      sessionName: "kx_repo",
+      sessionId: "new-id-after-clear",
+      sessionDir: "/tmp/kx_repo",
+      sessionPid: 111,
+    } as SessionContext;
+
+    await sendWatchRelay(
+      CHAT_ID,
+      THREAD_ID,
+      "user",
+      "first message after /clear",
+      undefined,
+      undefined,
+      sctx,
+    );
+
+    expect(clientB.scoped.length).toBe(1);
+    expect(clientA.scoped.length).toBe(0);
+
+    clientB.emitReply({
+      chat_id: String(CHAT_ID),
+      text: "",
+      files: ["/tmp/post-clear.pdf"],
+    });
+    expect(sendFileCalls).toEqual([
+      { file: "/tmp/post-clear.pdf", threadId: THREAD_ID },
+    ]);
   });
 
   test("a watch that started with no relay client heals on first successful send", async () => {
