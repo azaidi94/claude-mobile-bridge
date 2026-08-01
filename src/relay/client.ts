@@ -5,7 +5,7 @@
 
 import { Socket } from "net";
 import { RELAY_CONNECT_TIMEOUT_MS } from "../config";
-import { debug, warn } from "../logger";
+import { debug, warn, error } from "../logger";
 import { writeJsonLine } from "../utils/socket-writer";
 
 export interface RelayReply {
@@ -276,8 +276,23 @@ export class RelayClient {
           send_as_pdf: Boolean(msg.send_as_pdf),
           pdf_filename: msg.pdf_filename ? String(msg.pdf_filename) : undefined,
         };
+        let matched = 0;
         for (const { cb, chatId } of this.replyCallbacks) {
-          if (!chatId || chatId === msgChatId) cb(reply);
+          if (!chatId || chatId === msgChatId) {
+            matched++;
+            cb(reply);
+          }
+        }
+        if (matched === 0) {
+          // A reply-tool payload arrived but nothing is bound to deliver it —
+          // the sender's MCP tool already reported success, so this drop is
+          // invisible to the session. Make it visible to the operator.
+          error("relay: reply had no bound handler — dropped", {
+            chatId: msgChatId,
+            fileCount: files.length,
+            sendAsPdf: Boolean(msg.send_as_pdf),
+            textLen: text.length,
+          });
         }
         break;
       }

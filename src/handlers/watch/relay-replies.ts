@@ -7,7 +7,7 @@
  */
 
 import type { Api } from "grammy";
-import { debug, info, elapsedMs } from "../../logger";
+import { debug, info, warn, elapsedMs } from "../../logger";
 import { getRelayClient } from "../../relay";
 import type { RelayReply, RelayClient } from "../../relay/client";
 import { sendFile, sendPdfReply } from "../../relay/display";
@@ -45,6 +45,21 @@ export async function sendWatchRelay(
     claudePid: target.sessionPid,
   });
   if (!client) return false;
+
+  // After /clear the sessionId changes, the client cache misses, and this
+  // lookup returns a FRESH connection (the relay server kicks the old one —
+  // along with the reply handler bound to it). Rebind onto the new instance,
+  // or reply-tool payloads (files, send_as_pdf) are dropped silently.
+  if (client !== state.relayClient && state.rebindRelay) {
+    state.relayCleanup?.();
+    state.rebindRelay(client);
+    warn("watch: relay client changed — rebound reply handler", {
+      opId,
+      chatId,
+      topic: threadId,
+      session: state.sessionName,
+    });
+  }
 
   const sent = client.sendMessage({
     chat_id: String(chatId),
@@ -134,5 +149,8 @@ export function bindRelayReplyHandler(
     }
   };
   relayClient.onReply(onReply, scopeChatId);
+  watchState.relayClient = relayClient;
   watchState.relayCleanup = () => relayClient.offReply(onReply);
+  watchState.rebindRelay = (next) =>
+    bindRelayReplyHandler(botApi, next, watchState, chatId, fileErrLabel);
 }

@@ -79,6 +79,15 @@ export interface WatchState extends TailDisplayState {
   threadId: number;
   /** Cleanup function to remove relay callbacks when watch stops. */
   relayCleanup?: () => void;
+  /**
+   * The RelayClient instance the reply handler is currently bound to. When a
+   * send resolves a DIFFERENT instance (after /clear the sessionId changes,
+   * the cache misses, and a fresh connection kicks the old one), the handler
+   * must be rebound or reply-tool payloads are dropped silently.
+   */
+  relayClient?: import("../../relay/client").RelayClient;
+  /** Rebinds the reply handler onto a new client (set by bindRelayReplyHandler). */
+  rebindRelay?: (client: import("../../relay/client").RelayClient) => void;
   /** Interval that detects when the desktop session starts a new conversation. */
   idCheckInterval?: Timer;
   /**

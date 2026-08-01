@@ -38,6 +38,32 @@ describe("relay client: scoped callbacks", () => {
   });
 });
 
+describe("relay client: unhandled reply visibility", () => {
+  test("a reply matching no callbacks logs an error instead of dropping silently", async () => {
+    const { RelayClient } = await loadRelayClient();
+    const client = new RelayClient();
+
+    const writes: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      (client as any).handleMessage({
+        type: "reply",
+        chat_id: "1",
+        text: "",
+        files: ["/tmp/report.pdf"],
+      });
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+
+    expect(writes.join("")).toContain("no bound handler");
+  });
+});
+
 describe("relay client: disconnect cleanup", () => {
   test("offDisconnect removes a registered disconnect callback", async () => {
     const { RelayClient } = await loadRelayClient();
