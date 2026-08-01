@@ -61,6 +61,34 @@ describe("relay client: unhandled reply visibility", () => {
     }
 
     expect(writes.join("")).toContain("no bound handler");
+    // A dropped FILE payload is a lost user-visible action → error level.
+    expect(writes.join("")).toContain("[ERROR]");
+  });
+
+  test("an unhandled text-only reply logs a warn, not an error (tailer still delivers text)", async () => {
+    const { RelayClient } = await loadRelayClient();
+    const client = new RelayClient();
+
+    const writes: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      (client as any).handleMessage({
+        type: "reply",
+        chat_id: "1",
+        text: "plain text the JSONL tailer will deliver anyway",
+      });
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+
+    const out = writes.join("");
+    expect(out).toContain("no bound handler");
+    expect(out).toContain("[WARN]");
+    expect(out).not.toContain("[ERROR]");
   });
 });
 

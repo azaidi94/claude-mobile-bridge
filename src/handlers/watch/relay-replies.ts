@@ -50,7 +50,11 @@ export async function sendWatchRelay(
   // lookup returns a FRESH connection (the relay server kicks the old one —
   // along with the reply handler bound to it). Rebind onto the new instance,
   // or reply-tool payloads (files, send_as_pdf) are dropped silently.
-  if (client !== state.relayClient && state.rebindRelay) {
+  // Never rebind onto a DIFFERENT session's client (topic-mode sctx override):
+  // that would steal the watch's binding from its own session and double-fire
+  // on the sibling's (reply scoping is chat-level, not thread-level).
+  const ownSession = !sctx || sctx.sessionId === state.sessionId;
+  if (ownSession && client !== state.relayClient && state.rebindRelay) {
     state.relayCleanup?.();
     state.rebindRelay(client);
     warn("watch: relay client changed — rebound reply handler", {
@@ -151,6 +155,23 @@ export function bindRelayReplyHandler(
   relayClient.onReply(onReply, scopeChatId);
   watchState.relayClient = relayClient;
   watchState.relayCleanup = () => relayClient.offReply(onReply);
+  watchState.rebindRelay = (next) =>
+    bindRelayReplyHandler(botApi, next, watchState, chatId, fileErrLabel);
+}
+
+/**
+ * Arm rebinding for a watch that started with NO relay client (relay down at
+ * watch start). Without this, the `rebindRelay` guard in `sendWatchRelay`
+ * skips binding forever and the watch can never deliver reply-tool payloads,
+ * even after the relay comes back. Call from session-builder's no-client
+ * branch; the first successful send then binds the handler.
+ */
+export function armRelayRebind(
+  botApi: Api,
+  watchState: WatchState,
+  chatId: number,
+  fileErrLabel: "watch" | "auto-watch",
+): void {
   watchState.rebindRelay = (next) =>
     bindRelayReplyHandler(botApi, next, watchState, chatId, fileErrLabel);
 }

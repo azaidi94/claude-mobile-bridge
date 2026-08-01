@@ -287,12 +287,21 @@ export class RelayClient {
           // A reply-tool payload arrived but nothing is bound to deliver it —
           // the sender's MCP tool already reported success, so this drop is
           // invisible to the session. Make it visible to the operator.
-          error("relay: reply had no bound handler — dropped", {
+          // Files/PDF are LOST (error); plain text still reaches Telegram via
+          // the JSONL tailer, so it's degraded-but-recovered (warn).
+          const lost = files.length > 0 || Boolean(msg.send_as_pdf);
+          const fields = {
             chatId: msgChatId,
+            session: this.sessionName,
             fileCount: files.length,
             sendAsPdf: Boolean(msg.send_as_pdf),
             textLen: text.length,
-          });
+          };
+          if (lost) {
+            error("relay: reply had no bound handler — dropped", fields);
+          } else {
+            warn("relay: reply had no bound handler — dropped", fields);
+          }
         }
         break;
       }

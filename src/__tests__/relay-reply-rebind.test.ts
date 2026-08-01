@@ -56,9 +56,11 @@ mock.module("../relay", () => ({
 }));
 
 import type { RelayReply } from "../relay/client";
+import type { SessionContext } from "../sessions/context";
 import {
   sendWatchRelay,
   bindRelayReplyHandler,
+  armRelayRebind,
 } from "../handlers/watch/relay-replies";
 import { watches, watchKey } from "../handlers/watch/registry";
 import { buildWatchState } from "../handlers/watch/state";
@@ -152,6 +154,70 @@ describe("relay reply rebinding after client replacement", () => {
 
     // Still exactly one handler — no duplicate bindings stacking up.
     expect(clientA.scoped.length).toBe(1);
+  });
+
+  test("sctx pointing at a DIFFERENT session must not steal the watch's binding", async () => {
+    const state = makeWatch(); // sessionId "old-session-id"
+    const clientA = new FakeRelayClient();
+    bindRelayReplyHandler(botApi, clientA as never, state, CHAT_ID, "watch");
+
+    // Topic mode resolves a sibling session Y with its own relay client.
+    const clientY = new FakeRelayClient();
+    currentClient = clientY;
+    const sctx = {
+      sessionId: "sibling-session-y",
+      sessionDir: "/tmp/other",
+      sessionPid: 222,
+    } as SessionContext;
+
+    await sendWatchRelay(
+      CHAT_ID,
+      THREAD_ID,
+      "user",
+      "hi Y",
+      undefined,
+      undefined,
+      sctx,
+    );
+
+    // The watch's persistent handler stays on ITS OWN session's client…
+    expect(clientA.scoped.length).toBe(1);
+    // …and is NOT cross-wired onto the sibling's client.
+    expect(clientY.scoped.length).toBe(0);
+  });
+
+  test("a watch that started with no relay client heals on first successful send", async () => {
+    const state = makeWatch();
+    // session-builder couldn't bind at watch start (relay down) but arms rebind.
+    armRelayRebind(botApi, state, CHAT_ID, "auto-watch");
+
+    const client = new FakeRelayClient();
+    currentClient = client;
+    await sendWatchRelay(CHAT_ID, THREAD_ID, "user", "are you back?");
+
+    expect(client.scoped.length).toBe(1);
+    client.emitReply({
+      chat_id: String(CHAT_ID),
+      text: "",
+      files: ["/tmp/healed.pdf"],
+    });
+    expect(sendFileCalls).toEqual([
+      { file: "/tmp/healed.pdf", threadId: THREAD_ID },
+    ]);
+  });
+
+  test("relayCleanup after a rebind releases the NEW client's binding", async () => {
+    const state = makeWatch();
+    const clientA = new FakeRelayClient();
+    bindRelayReplyHandler(botApi, clientA as never, state, CHAT_ID, "watch");
+
+    const clientB = new FakeRelayClient();
+    currentClient = clientB;
+    await sendWatchRelay(CHAT_ID, THREAD_ID, "user", "resend");
+    expect(clientB.scoped.length).toBe(1);
+
+    state.relayCleanup?.(); // what stopWatching invokes
+    expect(clientB.scoped.length).toBe(0);
   });
 
   test("send_as_pdf reply on the rebound client is delivered as a PDF", async () => {
