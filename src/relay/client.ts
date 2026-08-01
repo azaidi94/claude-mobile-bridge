@@ -287,9 +287,20 @@ export class RelayClient {
           // A reply-tool payload arrived but nothing is bound to deliver it —
           // the sender's MCP tool already reported success, so this drop is
           // invisible to the session. Make it visible to the operator.
-          // Files/PDF are LOST (error); plain text still reaches Telegram via
-          // the JSONL tailer, so it's degraded-but-recovered (warn).
+          // Files/PDF are LOST (error); plain text usually still reaches
+          // Telegram via the JSONL tailer, so it's degraded-but-recovered
+          // (warn) — except a chat with no tailer behind it (chat_id "web",
+          // whose onReply is bound only for the life of one request), where
+          // even the warn case is a real loss.
+          // Expect error lines from getRelayClient callers that never bind a
+          // durable handler (cron scheduler, startup ping, and web once its
+          // request-scoped binding is torn down): a file reply arriving there
+          // really is lost, so error is correct — not noise to downgrade.
+          // Auto-heal for those callers is the documented follow-up.
           const lost = files.length > 0 || Boolean(msg.send_as_pdf);
+          // Fields go in the `detail` slot; normalizeFields spreads a plain
+          // object into the field set, so this renders as key=value pairs.
+          // Do NOT "fix" it to `{ detail: fields }` — that nests them.
           const fields = {
             chatId: msgChatId,
             session: this.sessionName,

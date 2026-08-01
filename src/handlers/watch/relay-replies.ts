@@ -51,13 +51,20 @@ export async function sendWatchRelay(
   // along with the reply handler bound to it). Rebind onto the new instance,
   // or reply-tool payloads (files, send_as_pdf) are dropped silently.
   // Never rebind onto a DIFFERENT session's client (topic-mode sctx override):
-  // that would steal the watch's binding from its own session and double-fire
-  // on the sibling's (reply scoping is chat-level, not thread-level).
+  // the watch would stop receiving its own session's replies, and — since
+  // reply scoping is chat-level, not thread-level — it would fire on the
+  // sibling's replies instead, double-posting them if that sibling is watched.
   // Identity matches on the STABLE sessionName, not only sessionId: after
   // /clear, sctx re-anchors to the new id immediately (port-file hook) while
   // state.sessionId lags until the drift tick sees the new JSONL — an
   // id-only comparison would skip the rebind exactly on the first
   // post-/clear turn and lose its attachments.
+  // INVARIANT: no `await` between the identity check and the mutation below.
+  // Concurrent sendWatchRelay calls that both resolved the same fresh client
+  // are serialized by that synchronicity — the first to resume completes the
+  // cleanup+rebind before yielding, so the second sees client ===
+  // state.relayClient and no-ops. Introducing an await here (e.g. for a log
+  // flush) reopens a double-bind race that duplicates every reply.
   const ownSession =
     !sctx ||
     sctx.sessionName === state.sessionName ||
@@ -163,6 +170,8 @@ export function bindRelayReplyHandler(
   relayClient.onReply(onReply, scopeChatId);
   watchState.relayClient = relayClient;
   watchState.relayCleanup = () => relayClient.offReply(onReply);
+  // Unconditional (re-arms with an equivalent closure on every rebind) so the
+  // post-condition "bound ⇒ armed" holds no matter which path got us here.
   armRelayRebind(botApi, watchState, chatId, fileErrLabel);
 }
 
