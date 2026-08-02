@@ -140,7 +140,9 @@ pushd "$HERE" >/dev/null
 cc_tmux_launch 0
 popd >/dev/null
 assert_match "$CAPTURED" "tmux -L claude -f $CC_TMUX_CONF new-session -s cc-*-$$ exec claude" "all-attached -> new-session sibling"
-assert_eq "$KILLED" "$exp_name" "create path kills any stale same-named (reused-pid) session first"
+# `=` sigil: tmux prefix-matches bare targets, so killing without it can hit a
+# live sibling whose name merely extends ours (…-123 matches …-1234).
+assert_eq "$KILLED" "=$exp_name" "create path kills stale same-named session by EXACT name"
 unset -f tmux
 
 unset -f _cc_do_exec _cc_sessions_for_cwd

@@ -38,15 +38,27 @@ _crl_do_exec() { exec "$@"; }
 # returns in prod. Creates no temp files (the EXIT-trap hygiene below belongs
 # entirely to the inner phase).
 _crl_exec_outer() {
-  local dir="$1" name
+  local dir="$1" name envs="" v
   # shellcheck disable=SC1091
   source "$HERE/tmux/launch.sh" # _cc_launch_name, CC_TMUX_SOCKET, CC_TMUX_CONF
   name=$(_cc_launch_name "$dir" "$$")
-  # Our pid is unique among live processes, so an existing session with this
-  # exact name is a stale orphan — kill it or new-session fails "duplicate".
-  tmux -L "$CC_TMUX_SOCKET" kill-session -t "$name" 2> /dev/null || true
+  # A session already holding this exact name is presumed a stale orphan from
+  # a past process that had our pid (sessions outlive their launcher pid by
+  # design — the launcher execs into the tmux CLIENT). Kill it or new-session
+  # fails "duplicate". The `=` sigil forces EXACT-name matching: tmux
+  # prefix-matches bare targets, so without it `…-123` would kill a live
+  # sibling named `…-1234`.
+  tmux -L "$CC_TMUX_SOCKET" kill-session -t "=$name" 2> /dev/null || true
+  # Forward per-spawn env INSIDE the command string: with a pre-existing tmux
+  # server (the common case — the ccd alias keeps one alive), new-session
+  # commands run in the SERVER's env, which silently drops these.
+  for v in CLAUDE CLAUDE_CLI_PATH CLAUDE_RELAY_ARGS CRL_EXPECT_TIMEOUT; do
+    if [ -n "${!v:-}" ]; then
+      envs+="$v=$(printf %q "${!v}") "
+    fi
+  done
   _crl_do_exec tmux -L "$CC_TMUX_SOCKET" -f "$CC_TMUX_CONF" new-session -s "$name" \
-    "CC_RELAY_INNER=1 $(printf %q "$SELF") $(printf %q "$dir")"
+    "CC_RELAY_INNER=1 ${envs}$(printf %q "$SELF") $(printf %q "$dir")"
 }
 
 # Test mode: definitions only, no main (see claude-relay-launch.test.sh).
@@ -140,27 +152,35 @@ cat > "$EXPECT_SCRIPT" <<'EXPECT'
 #
 # NB: Ink renders with cursor-column escapes BETWEEN WORDS
 # ("Quick\e[8Gsafety\e[15Gcheck:"), so multi-word phrases never appear
-# contiguously in the raw byte stream expect matches against. Every
-# multi-word pattern must tolerate a short escape run between words:
-# `.{0,24}?` (CHA sequences are ~4-6 bytes; same-line, so `.` covers them).
-if {[info exists env(CRL_EXPECT_TIMEOUT)]} {
+# contiguously in the raw byte stream expect matches against. Multi-word
+# patterns join words with $SEP (defined below) — escape-sequence-aware,
+# but immune to prose/cross-line false matches.
+if {[info exists env(CRL_EXPECT_TIMEOUT)]
+    && [string is integer -strict $env(CRL_EXPECT_TIMEOUT)]} {
   set timeout $env(CRL_EXPECT_TIMEOUT)
 } else {
   set timeout 180
 }
 log_user 1
+
+# Word separator for prompt matching: Ink emits cursor-column escapes between
+# words, so "safety check" arrives as "safety\x1b\[15Gcheck". SEP admits full
+# CSI sequences and non-letter runs (spaces, punctuation) but NOT bare letters
+# or newlines — so prose like "safety first, always check" or a phrase split
+# across lines can never false-match and answer a menu early.
+set SEP {(?:\x1b\[[0-9;]*[A-Za-z]|[^A-Za-z\r\n]){0,24}?}
 spawn bash -lc $env(SPAWNCMD)
 # Set pty dimensions so Claude Code's Ink TUI renders properly.
 # Without this, spawn inherits a 0x0 pty and the UI may not draw at all.
 stty rows 50 cols 200
 expect {
-  -re {(?i)trust.{0,24}?this.{0,24}?folder|safety.{0,24}?check|project.{0,24}?you.{0,24}?created} {
+  -re "(?i)trust${SEP}this${SEP}folder|safety${SEP}check|project${SEP}you${SEP}created" {
     sleep 0.5
     send "\r"
     sleep 1
     exp_continue
   }
-  -re {(?i)local.{0,24}?development|loading.{0,24}?development.{0,24}?channels|dangerously-load-development-channels} {
+  -re "(?i)local${SEP}development|loading${SEP}development${SEP}channels|dangerously-load-development-channels" {
     sleep 0.5
     send "\r"
     # Hand control back to the terminal so the user can interact with Claude.
