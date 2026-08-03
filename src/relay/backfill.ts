@@ -19,7 +19,12 @@
 import { readdir, readFile, stat } from "fs/promises";
 import { join } from "path";
 import { STATE_DIR, claudeProjectDir } from "../paths";
-import { updatePortFile, isProcessAlive, type PortFileData } from "./discovery";
+import {
+  updatePortFile,
+  isProcessAlive,
+  isOrphanedRelay,
+  type PortFileData,
+} from "./discovery";
 import { info, warn, debug } from "../logger";
 
 const SESSION_ID_RE =
@@ -106,15 +111,19 @@ export async function backfillPortFileSessionIds(): Promise<void> {
     // get their real id from the SessionStart hook / relay self-discovery, and
     // exact pid routing handles them meanwhile. (Mirrors resolveIdentities'
     // `ambiguous` rule — the single never-guess-across-siblings principle.)
+    // An orphan (relay alive, its claude dead) is not a sibling — counting one
+    // would suppress backfill for the legitimate relay that replaced it, which
+    // is exactly the shape a restarted session leaves behind.
     const liveRelaysPerCwd = new Map<string, number>();
     for (const pf of ports) {
-      if (isProcessAlive(pf.pid)) {
+      if (isProcessAlive(pf.pid) && !isOrphanedRelay(pf)) {
         liveRelaysPerCwd.set(pf.cwd, (liveRelaysPerCwd.get(pf.cwd) ?? 0) + 1);
       }
     }
     for (const pf of ports) {
       if (pf.sessionId) continue;
       if (!isProcessAlive(pf.pid)) continue;
+      if (isOrphanedRelay(pf)) continue;
       if ((liveRelaysPerCwd.get(pf.cwd) ?? 0) > 1) continue; // ambiguous sibling
       const startedAtMs = Date.parse(pf.startedAt);
       if (Number.isNaN(startedAtMs)) continue;

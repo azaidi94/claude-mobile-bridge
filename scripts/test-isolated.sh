@@ -16,7 +16,10 @@ cd "$REPO_ROOT"
 failed=()
 total=0
 
-for f in $(find src/__tests__ -name '*.test.ts' | sort); do
+# Scan all of src/, not just src/__tests__ — tests co-located with their module
+# (src/relay/discovery.test.ts, src/sessions/resolve-session.test.ts, …) are a
+# real pattern here and were silently never running.
+for f in $(find src -name '*.test.ts' | sort); do
   total=$((total + 1))
   if ! bun test "$f"; then
     failed+=("$f")

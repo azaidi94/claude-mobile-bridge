@@ -48,6 +48,8 @@ alias cc='claude --dangerously-skip-permissions --dangerously-load-development-c
 
 `/new` runs `claude` with those flags in a new Terminal (or iTerm) window. Use `DESKTOP_CLAUDE_COMMAND` in `.env` if you prefer a custom shell line (see `.env.example`).
 
-**How it works:** Each relay instance writes a port file to `/tmp/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. If no relay-enabled desktop session is found, use `/new` to spawn one or `/list` to pick an existing session.
+**How it works:** Each relay instance writes a port file to `~/.claude-mobile-bridge/channel-relay-*.json`. The bot scans these to discover relay-enabled sessions and connects over TCP. When a relay is available, the bot routes messages through it. If no relay-enabled desktop session is found, use `/new` to spawn one or `/list` to pick an existing session.
+
+**Orphaned relays:** the relay is a child of `claude`, but its TCP server would otherwise keep it alive after `claude` exits. An orphan is a black hole — its port file still looks routable, so the bot can connect to it and every message disappears into a session that no longer exists. Two guards: the relay polls for its parent every 5s and exits when it's gone, and the bot skips any port file whose recorded `ppid` is dead (logged once as `relay: skipping orphaned relay`). Relays started before this shipped don't self-exit — the relay MCP server doesn't hot-reload, so restart the session (or kill the stray `bun run …/channel-relay/server.ts` whose parent is `1`) to clear one.
 
 `/status` shows relay connection state. `/list` shows a 📡 indicator on relay-enabled sessions.

@@ -42,6 +42,7 @@ import {
   type JsonlCandidate,
 } from "./session-discovery";
 import { readRegistry } from "../../sessions/registry";
+import { parentIsGone } from "./parent-watchdog";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
@@ -1033,10 +1034,35 @@ function cleanup(): void {
     clearTimeout(discoveryTimer);
     discoveryTimer = null;
   }
+  if (parentWatchdog) {
+    clearInterval(parentWatchdog);
+    parentWatchdog = null;
+  }
   removePortFile();
   tcpServer.close();
   if (connectedClient) connectedClient.destroy();
 }
+
+// ── Parent watchdog ────────────────────────────────────────────────────
+
+/**
+ * Exit once the parent Claude is gone, dropping the port file on the way out.
+ * See `parent-watchdog.ts` for why an orphaned relay is worth killing and how
+ * the detection works.
+ */
+const PARENT_WATCHDOG_MS = 5_000;
+const originalPpid = process.ppid;
+
+let parentWatchdog: ReturnType<typeof setInterval> | null = setInterval(() => {
+  if (!parentIsGone(originalPpid)) return;
+  process.stderr.write(
+    `channel-relay: parent claude (pid ${originalPpid}) is gone — exiting\n`,
+  );
+  cleanup();
+  process.exit(0);
+}, PARENT_WATCHDOG_MS);
+// Never let the watchdog itself be the reason this process stays alive.
+parentWatchdog.unref?.();
 
 process.on("SIGINT", () => {
   cleanup();

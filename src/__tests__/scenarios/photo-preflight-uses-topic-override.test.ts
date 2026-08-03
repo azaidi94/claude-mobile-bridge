@@ -25,10 +25,17 @@ const STATE_DIR = setupIsolatedStateDir();
 
 import { describe, expect, test, beforeEach, afterAll } from "bun:test";
 const { invalidateScanCache } = await import("../../relay");
-const { setIsRelayProcessProbe, scanPortFiles, selectRelayTarget } =
-  await import("../../relay/discovery");
+const {
+  setIsRelayProcessProbe,
+  setParentAliveProbe,
+  scanPortFiles,
+  selectRelayTarget,
+} = await import("../../relay/discovery");
 
 setIsRelayProcessProbe(() => true);
+// The fixtures' port files name invented parent pids (CC_PID_A/B); without
+// this they'd be culled as orphans before selection is ever exercised.
+setParentAliveProbe(() => true);
 
 const CC_CWD_A = "/tmp/__phase0_s2_cc_a__";
 const CC_ID_A = "aaaaaaaa-1111-2222-3333-444444444444";
@@ -58,6 +65,7 @@ beforeEach(() => {
 
 afterAll(() => {
   setIsRelayProcessProbe(null);
+  setParentAliveProbe(null);
   teardownStateDir(STATE_DIR);
   cleanupProjectDir(CC_CWD_A);
   cleanupProjectDir(CC_CWD_B);

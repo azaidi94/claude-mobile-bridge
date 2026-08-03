@@ -1,6 +1,10 @@
 import { test, expect } from "bun:test";
 import { setCurrentSnapshot } from "../sessions/resolve-session";
-import { selectRelayTarget, type PortFileData } from "./discovery";
+import {
+  isOrphanedRelay,
+  selectRelayTarget,
+  type PortFileData,
+} from "./discovery";
 
 function pf(overrides: Partial<PortFileData>): PortFileData {
   return {
@@ -106,4 +110,27 @@ test("selectRelayTarget resolves over the caller's alive array, not the global s
   const chosen = selectRelayTarget([live], { claudePid: 100 });
 
   expect(chosen).toBe(live);
+});
+
+// ── isOrphanedRelay ────────────────────────────────────────────────────
+
+test("isOrphanedRelay: live parent claude is not an orphan", () => {
+  expect(isOrphanedRelay(pf({ ppid: process.pid }))).toBe(false);
+});
+
+test("isOrphanedRelay: dead parent claude is an orphan", () => {
+  // Pid 0x7FFFFFFF is above every platform's pid_max — guaranteed not running.
+  expect(isOrphanedRelay(pf({ ppid: 0x7fffffff }))).toBe(true);
+});
+
+test("isOrphanedRelay: ppid 1 is a container init parent, not an orphan", () => {
+  // `ppid` is recorded once at write time and never rewritten on reparenting,
+  // so 1 means claude genuinely was pid 1. Note kill(1, 0) raises EPERM for a
+  // non-root user — reading that as "dead" would make a live session
+  // unroutable, the one outcome worse than tolerating an orphan.
+  expect(isOrphanedRelay(pf({ ppid: 1 }))).toBe(false);
+});
+
+test("isOrphanedRelay: missing ppid is not evidence of an orphan", () => {
+  expect(isOrphanedRelay(pf({ ppid: undefined }))).toBe(false);
 });

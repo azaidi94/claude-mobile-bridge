@@ -63,10 +63,17 @@ export interface RelaySelector {
 }
 
 // Cached clients keyed by the strongest known identity for a relay.
+// `claudePid` is the relay's parent at connect time — the fast path re-checks
+// it so a session whose claude dies can't keep serving a cached client.
 const clientCache = new Map<
   string,
-  { client: RelayClient; port: number; dir: string }
+  { client: RelayClient; port: number; dir: string; claudePid?: number }
 >();
+
+// Relay pids already warned about as orphans. Keeps a long-lived orphan from
+// re-warning on every scan (up to ~12×/min under traffic) without demoting the
+// first, actionable line to debug.
+const warnedOrphanPids = new Set<number>();
 
 // In-flight connects keyed by the same cache keys. Concurrent callers for the
 // same target join the existing promise instead of creating duplicate
@@ -128,6 +135,57 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Liveness of a *parent* claude pid. Unlike `isProcessAlive`, EPERM counts as
+ * alive: it means the process exists but belongs to another user (claude
+ * running as pid 1 in a container is the realistic case). Reading that as dead
+ * would make a healthy session unroutable — the one failure mode worse than
+ * the orphan this all guards against.
+ */
+function defaultIsParentAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+// Test seam, same rationale as `setIsRelayProcessProbe`: fixtures whose port
+// files name invented parent pids would otherwise all read as orphans.
+// Production never calls the setter.
+let _isParentAliveProbe: (pid: number) => boolean = defaultIsParentAlive;
+
+/** Test-only override for the parent-liveness probe. Pass `null` to restore. */
+export function setParentAliveProbe(
+  probe: ((pid: number) => boolean) | null,
+): void {
+  _isParentAliveProbe = probe ?? defaultIsParentAlive;
+}
+
+/**
+ * True when a port file's relay process outlived the Claude that spawned it.
+ *
+ * `isRelayProcess` only proves the *relay* is alive — an orphan (parent claude
+ * died, relay reparented to launchd/init) passes it while forwarding messages
+ * into a session that no longer exists. Two port files for the same dir then
+ * carry the same sessionId and the bot can pick the dead one, at which point
+ * every message vanishes. Relays self-exit on parent death (see
+ * `mcp/channel-relay/parent-watchdog.ts`), but that only helps relays started
+ * after it shipped — the relay MCP server does not hot-reload, so this
+ * bot-side guard is what covers every already-running session.
+ *
+ * Port files with no `ppid` are exempt: absence of the parent pid is not
+ * evidence of an orphan. Note `ppid` is recorded once, at write time, and is
+ * never rewritten to 1 on reparenting — so a recorded `ppid` of 1 means claude
+ * genuinely was pid 1 (a container running claude as init), which is a live
+ * parent, not an orphan.
+ */
+export function isOrphanedRelay(data: PortFileData): boolean {
+  if (data.ppid === undefined) return false;
+  return !_isParentAliveProbe(data.ppid);
+}
+
 export function dirHash(dir: string): string {
   return createHash("sha256").update(dir).digest("hex").slice(0, 12);
 }
@@ -150,9 +208,36 @@ export async function scanPortFiles(force = false): Promise<PortFileData[]> {
         const content = await readFile(filePath, "utf-8");
         const data = JSON.parse(content) as PortFileData;
         if (data.port && data.pid && data.cwd && isRelayProcess(data.pid)) {
+          // The relay is alive, but if its claude died it's an orphan: routable
+          // on paper, a black hole in practice. Skip rather than unlink — the
+          // relay process still owns the file and would just rewrite it, and
+          // `claimedSessionIds` in the relay server reads STATE_DIR directly,
+          // so deleting it would free the orphan's sessionId for a new relay to
+          // claim. A relay carrying the parent watchdog exits on its own and
+          // the dead-pid branch below then unlinks; a pre-watchdog one lingers
+          // until the machine restarts, which is why this warns only once.
+          if (isOrphanedRelay(data)) {
+            const fields = {
+              relayPid: data.pid,
+              claudePid: data.ppid,
+              cwd: data.cwd,
+              sessionId: data.sessionId,
+            };
+            if (warnedOrphanPids.has(data.pid)) {
+              debug("relay: skipping orphaned relay", fields);
+            } else {
+              warnedOrphanPids.add(data.pid);
+              warn("relay: skipping orphaned relay (parent claude is gone)", {
+                ...fields,
+                note: "messages to this session would be swallowed",
+              });
+            }
+            continue;
+          }
           results.push(data);
         } else if (data.pid && !isProcessAlive(data.pid)) {
           // PID confirmed dead — safe to clean up stale port file.
+          warnedOrphanPids.delete(data.pid);
           unlink(filePath).catch(() => {});
         } else if (data.pid) {
           // PID is alive but not recognized as a channel-relay process.
@@ -259,6 +344,21 @@ export async function isRelayAvailable(
   return client !== null;
 }
 
+/**
+ * True when a cached client points at a relay whose claude has since died.
+ *
+ * `isConnected` is not enough on its own: an orphaned relay keeps its TCP
+ * server listening, so the socket stays up and the cached client looks healthy
+ * forever while every message it carries is swallowed. Nothing else evicts on
+ * this path — `disconnectRelay` is only called from an explicit `/kill` — so
+ * without this check the scan-level orphan filter never gets consulted for a
+ * session the bot already talked to, which is precisely the case that broke.
+ */
+function isCachedClientOrphaned(entry: { claudePid?: number }): boolean {
+  if (entry.claudePid === undefined) return false;
+  return !_isParentAliveProbe(entry.claudePid);
+}
+
 export async function getRelayClient(
   selector?: RelaySelector | string,
   claudePid?: number,
@@ -269,7 +369,8 @@ export async function getRelayClient(
   const key = cacheKey(relaySelector);
   if (key) {
     const cached = clientCache.get(key);
-    if (cached?.client.isConnected) return cached.client;
+    if (cached?.client.isConnected && !isCachedClientOrphaned(cached))
+      return cached.client;
     if (cached) {
       cached.client.disconnect();
       clientCache.delete(key);
@@ -339,6 +440,7 @@ export async function getRelayClient(
           client,
           port: target.port,
           dir: target.cwd,
+          claudePid: target.ppid,
         });
       }
       // Subscribe the global ask_remote handler if the bot has registered
