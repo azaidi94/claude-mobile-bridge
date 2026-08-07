@@ -50,7 +50,11 @@ function write(name: string, data: Record<string, unknown>): void {
 
 beforeEach(() => {
   for (const f of readdirSync(STATE_DIR)) {
-    rmSync(join(STATE_DIR, f), { force: true });
+    // recursive: LOG_DIR ("logs/") lives under STATE_DIR and gets created the
+    // moment the logger writes — non-recursive rmSync on a directory throws
+    // (EFAULT on Linux CI), which failed the whole file there while passing
+    // on macOS runs that never wrote a log line.
+    rmSync(join(STATE_DIR, f), { force: true, recursive: true });
   }
 });
 
