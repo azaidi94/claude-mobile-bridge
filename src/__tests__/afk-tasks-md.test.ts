@@ -13,8 +13,27 @@ import { execFileSync } from "child_process";
 
 const SCRIPT = resolve(import.meta.dir, "../../scripts/ralph/afk_tasks_md.sh");
 
+/**
+ * A parent process (e.g. a husky pre-commit hook) may have `GIT_DIR`,
+ * `GIT_INDEX_FILE`, etc. set to point at the REAL repo. Spawned `git`
+ * processes inherit env by default, so those vars override cwd-based repo
+ * discovery and cause this test's `git` calls (and the loop script's own
+ * `git` calls) to operate on the real repo instead of the tmp one. Scrub
+ * them so every spawn in this file is anchored to `cwd`.
+ */
+function scrubbedGitEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_PREFIX;
+  delete env.GIT_OBJECT_DIRECTORY;
+  return env;
+}
+
 function git(cwd: string, args: string[]) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
+  execFileSync("git", args, { cwd, stdio: "ignore", env: scrubbedGitEnv() });
 }
 
 /**
@@ -45,7 +64,10 @@ function setupRepo(prefix: string, tasksMd: string): string {
 function runLoop(repo: string, iterations: string): string {
   const opts = {
     cwd: repo,
-    env: { ...process.env, PATH: `${join(repo, ".bin")}:${process.env.PATH}` },
+    env: {
+      ...scrubbedGitEnv(),
+      PATH: `${join(repo, ".bin")}:${process.env.PATH}`,
+    },
     encoding: "utf8" as const,
   };
   try {
