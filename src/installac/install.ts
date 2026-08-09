@@ -1,11 +1,12 @@
 /**
  * Pure installer logic for the /installAC command (Task 6 consumes this).
  *
- * Vendors templates/ac-pipeline/ (4 skills + 4 commands + bindings/ralph
- * templates) into a target repo's .claude/. No Telegram/grammY, no network —
- * every path is passed in except templatesRoot(), which is derived from this
- * source file's own location the same way src/handlers/execute.ts locates
- * execute-commands.json.
+ * Installs the AC pipeline skill set (4 skills + 4 commands + bindings/ralph
+ * templates) into a target repo's .claude/. The skill set lives in the
+ * standalone peer repo `ac-skills` (a sibling of this checkout, overridable
+ * via AC_SKILLS_DIR) — see docs/decisions/2026-08-09-ac-skills-placement.md.
+ * No Telegram/grammY, no network — every path is passed in except
+ * templatesRoot().
  */
 
 import {
@@ -40,9 +41,14 @@ function parseVersion(content: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** <repo>/templates/ac-pipeline, resolved relative to this source file. */
+/**
+ * Root of the ac-skills peer repo: AC_SKILLS_DIR env override, else the
+ * sibling checkout `../ac-skills` relative to this repo.
+ */
 export function templatesRoot(): string {
-  return resolve(import.meta.dir, "../../templates/ac-pipeline");
+  return (
+    process.env.AC_SKILLS_DIR ?? resolve(import.meta.dir, "../../../ac-skills")
+  );
 }
 
 function readVersionStamp(path: string): number | null {
@@ -50,18 +56,31 @@ function readVersionStamp(path: string): number | null {
   return parseVersion(readFileSync(path, "utf8"));
 }
 
-// Parsed once at import from the vendored templates themselves.
-const TEMPLATE_SKILL_PATH = join(
-  templatesRoot(),
-  "skills/ac-pipeline/SKILL.md",
-);
-const templateVersion = readVersionStamp(TEMPLATE_SKILL_PATH);
-if (templateVersion === null) {
-  throw new Error(
-    `installac: could not parse ac-pipeline-version from ${TEMPLATE_SKILL_PATH}`,
-  );
+function templateSkillPath(): string {
+  return join(templatesRoot(), "skills/ac-pipeline/SKILL.md");
 }
-export const TEMPLATE_VERSION: number = templateVersion;
+
+/** Whether the ac-skills repo is present and parseable at templatesRoot(). */
+export function acSkillsAvailable(): boolean {
+  return readVersionStamp(templateSkillPath()) !== null;
+}
+
+/**
+ * Version of the ac-skills templates. Lazy (read per call) so this module
+ * can load in environments without the peer repo (e.g. CI); callers guard
+ * with acSkillsAvailable() first.
+ */
+export function templateVersion(): number {
+  const v = readVersionStamp(templateSkillPath());
+  if (v === null) {
+    throw new Error(
+      `installac: ac-skills repo not found or unparseable at ${templatesRoot()} — ` +
+        `clone https://github.com/azaidi94/ac-skills as a sibling of this repo, ` +
+        `or set AC_SKILLS_DIR`,
+    );
+  }
+  return v;
+}
 
 /** Reads the version stamp from <repo>/.claude/skills/ac-pipeline/SKILL.md; null if absent. */
 export function installedVersion(repo: string): number | null {
@@ -119,7 +138,7 @@ function doneTransition(tracker: AcAnswers["tracker"]): string {
 /** Renders bindings.template.md with `answers` substituted. */
 export function generateBindings(answers: AcAnswers): string {
   const template = readFileSync(
-    join(templatesRoot(), "bindings.template.md"),
+    join(templatesRoot(), "templates/bindings.template.md"),
     "utf8",
   );
   return template
@@ -143,7 +162,7 @@ export function writeRalphPrompt(repo: string): void {
   const dir = join(repo, "plans");
   mkdirSync(dir, { recursive: true });
   copyFileSync(
-    join(templatesRoot(), "ralph-prompt.template.md"),
+    join(templatesRoot(), "templates/ralph-prompt.template.md"),
     join(dir, "prompt_tasks.md"),
   );
 }

@@ -22,7 +22,9 @@ import { pendingKey } from "../streaming";
 import { busReply, tryRealpathSync } from "./helpers";
 import { expandHome } from "./ralph";
 import {
-  TEMPLATE_VERSION,
+  acSkillsAvailable,
+  templateVersion,
+  templatesRoot,
   installedVersion,
   copyTemplates,
   ensureGitignore,
@@ -306,6 +308,16 @@ export async function handleInstallAc(ctx: Context): Promise<void> {
     return;
   }
 
+  if (!acSkillsAvailable()) {
+    await busReply(
+      ctx,
+      `❌ ac-skills repo not found at <code>${escapeHtml(templatesRoot())}</code> — ` +
+        `clone it as a sibling of this checkout (or set <code>AC_SKILLS_DIR</code>) and retry.`,
+      "html",
+    );
+    return;
+  }
+
   // Resolve relative paths against the configured working dir (~/Dev), matching
   // /ralph and /new — a bare `foo` means <workingDir>/foo, not cwd/foo.
   const repo = tryRealpathSync(resolve(getWorkingDir(), expandHome(argPath)));
@@ -393,7 +405,7 @@ async function finalizeInstall(
       "commit",
       "--no-verify",
       "-m",
-      `Install AC pipeline skills (ac-pipeline v${TEMPLATE_VERSION}) via /installAC`,
+      `Install AC pipeline skills (ac-pipeline v${templateVersion()}) via /installAC`,
     ],
     { env, stdout: "ignore", stderr: "ignore" },
   );
@@ -401,7 +413,7 @@ async function finalizeInstall(
   return formatInstallSummary({
     repoLabel: repo,
     oldVersion,
-    newVersion: TEMPLATE_VERSION,
+    newVersion: templateVersion(),
     fileCount,
     bindingsWritten,
     ralphInstalled: answers.installRalphPrompt,

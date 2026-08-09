@@ -9,7 +9,8 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import {
-  TEMPLATE_VERSION,
+  acSkillsAvailable,
+  templateVersion,
   templatesRoot,
   installedVersion,
   copyTemplates,
@@ -32,10 +33,19 @@ function tmpRepo(): string {
   return mkdtempSync(join(tmpdir(), "installac-"));
 }
 
-describe("installac/install", () => {
-  it("templatesRoot points at an existing templates/ac-pipeline dir", () => {
+// These tests exercise the real ac-skills peer repo (sibling checkout or
+// AC_SKILLS_DIR). In environments without it (e.g. CI), skip rather than fail.
+const available = acSkillsAvailable();
+if (!available) {
+  console.warn(
+    `installac tests skipped: ac-skills repo not found at ${templatesRoot()}`,
+  );
+}
+
+(available ? describe : describe.skip)("installac/install", () => {
+  it("templatesRoot points at a checkout containing the bindings template", () => {
     const root = templatesRoot();
-    expect(existsSync(join(root, "bindings.template.md"))).toBe(true);
+    expect(existsSync(join(root, "templates/bindings.template.md"))).toBe(true);
   });
 
   it("copyTemplates creates all 4 skills + 4 commands in .claude/", () => {
@@ -118,7 +128,7 @@ describe("installac/install", () => {
     try {
       expect(installedVersion(repo)).toBeNull();
       copyTemplates(repo);
-      expect(installedVersion(repo)).toBe(TEMPLATE_VERSION);
+      expect(installedVersion(repo)).toBe(templateVersion());
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

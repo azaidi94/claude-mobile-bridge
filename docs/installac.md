@@ -1,8 +1,16 @@
 # AC pipeline install — `/installAC`
 
-Vendor the AC pipeline skills (Auto Claude-style plan/code/QA rigor, generic
+Install the AC pipeline skills (Auto Claude-style plan/code/QA rigor, generic
 enough for any project) into a target repo, with a short Q&A that captures
 the project's tracker, branching, and ship policy in a small bindings file.
+
+The skills themselves live in the standalone **ac-skills** repo, expected as
+a sibling checkout of this one (`../ac-skills`; override with `AC_SKILLS_DIR`
+in the bridge's environment). That repo is also installable directly as a
+Claude Code plugin without this bot — `/installAC` is the per-repo,
+bindings-generating path. If the peer repo is missing, the command says so
+instead of installing, and the installac test suite skips rather than fails
+(relevant for CI). Background: `docs/decisions/2026-08-09-ac-skills-placement.md`.
 
 ## Commands
 
