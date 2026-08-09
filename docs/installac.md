@@ -123,15 +123,24 @@ one untouched.
 
 ## Ralph integration
 
-If you installed the ralph prompt (question 4 = Yes), `/ralph <repo>` needs
-no extra configuration: it already prefers a repo's `plans/prompt_tasks.md`
-over the bundled default, so the installed prompt is picked up automatically.
-Each ralph iteration reads `.claude/ac-bindings.md`, finds the next eligible
-task per the bindings' tracker (Jira query, `gh issue list --assignee @me`,
-or the next unchecked `## [ ] N. Title` in `plans/tasks.md` for `none`), runs
-the `ac-pipeline` skill on it in unattended mode, and signals `DONE`,
-`WAITING`, or `COMPLETE` for the outer loop. See
-[Ralph loops](ralph-loops.md) for `/ralph`'s own commands, beats, and
+If you installed the ralph prompt (question 4 = Yes), `/ralph <repo>` picks
+it up automatically: it already prefers a repo's `plans/prompt_tasks.md` over
+the bundled default. Each iteration reads `.claude/ac-bindings.md`, finds the
+next eligible task per the bindings' tracker, runs the `ac-pipeline` skill on
+it in unattended mode, and signals `DONE`, `WAITING`, or `COMPLETE` for the
+outer loop.
+
+What "unattended" needs beyond the installed prompt depends on the tracker,
+because `/ralph`'s default outer loop (`scripts/ralph/afk_tasks.sh`) drives
+iterations off `gh issue list` and exits as soon as that list is empty:
+
+| Tracker  | Task source                                          | Extra setup for unattended `/ralph`                                                                                                                                                            |
+| -------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github` | `gh issue list --assignee @me`                       | None — the default outer loop already gates on open GitHub issues.                                                                                                                             |
+| `none`   | next unchecked `## [ ] N. Title` in `plans/tasks.md` | Set `RALPH_SCRIPT=<abs path>/scripts/ralph/afk_tasks_md.sh` in the bridge's `.env` so the outer loop drains `plans/tasks.md` instead of calling `gh`.                                          |
+| `jira`   | Jira query                                           | Not yet supported unattended — no outer script drives a Jira-backed loop, so the default `gh`-gated loop exits before the prompt's Jira intake ever runs. Use attended `/ac` sessions instead. |
+
+See [Ralph loops](ralph-loops.md) for `/ralph`'s own commands, beats, and
 customization options — none of that changes here.
 
 ## Safety notes

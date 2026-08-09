@@ -55,9 +55,12 @@ starting:
 
 1. If the tracker is **none**, flip the task's header from
    `## [ ] N. Title` to `## [x] N. Title` in `plans/tasks.md` and commit
-   that change alongside (or right after) the task's own commits — the
-   outer loop doesn't own this file for the unattended ac-pipeline flow,
-   you do.
+   that change alongside (or right after) the task's own commits, on the
+   task's own feature branch. (The outer loop's `afk_tasks_md.sh` also
+   flips and commits the checkbox after it sees the `DONE` signal, but
+   that happens on the loop's branch — do the flip here too, since
+   `markDone` is idempotent and this is the only flip that lands with the
+   task's own work.)
 2. Echo one line summarizing the outcome, e.g.:
    - `shipped TASK-123: <one-line summary>`
    - `skipped TASK-123: ambiguous — <why>`
