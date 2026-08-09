@@ -62,6 +62,43 @@ generic skill:
 All four skills reference intake/ship/review mechanics only via the bindings
 file — no tracker names hardcoded.
 
+**Inherited guidance (lifted from superpowers, written into the templates as
+text — no plugin dependency):**
+
+- The Plan subagent's required output adopts writing-plans' quality bar:
+  exact file paths per subtask, the key code/content in the plan itself
+  where non-obvious, explicit interface notes between subtasks, and a
+  named list of plan failures — "TBD", "add appropriate error handling",
+  "similar to subtask N" are rejected at plan review.
+- The implementation and QA phases adopt verification-before-completion:
+  a subtask is only ticked, and a QA round only passes, after actually
+  running the verification command and reading its output — reported
+  claims without shown output don't count.
+- Attended mode, complex+ambiguous tickets: the mini-spec phase may run a
+  brainstorming-style clarification loop (one question at a time) before
+  writing spec.md. Unattended mode never does this — ambiguity = skip and
+  report.
+- The stateless superpowers process skills (test-driven-development,
+  systematic-debugging) are referenced as "apply if available" in the
+  implementation phase; they work identically attended or unattended.
+
+### Relationship to superpowers
+
+The ac skills overlap superpowers' workflow skills (brainstorming ≈
+mini-spec, writing-plans ≈ plan.md, executing-plans ≈ the subtask loop,
+requesting-code-review ≈ the QA loop). To prevent a session running both
+ceremonies, the ac-pipeline SKILL.md declares equivalences explicitly: an
+/ac run's ticket + mini-spec **satisfies** the brainstorming requirement,
+and its plan.md **satisfies** writing-plans — sessions with superpowers
+loaded follow the ac pipeline as the single workflow (project instructions
+take precedence in superpowers' own priority rules). The pipeline stays
+self-contained rather than delegating to superpowers skills because those
+are structurally interactive and unavailable on machines without the
+plugin; instead it inherits their best rules as text (above). Division of
+labor: superpowers = interactive development methodology; ac = delivery
+pipeline (tracker lifecycle, adaptive depth, unattended capability,
+resumability).
+
 ### Layer 2: the bindings file
 
 `bindings.template.md` → `.claude/ac-bindings.md`, generated from install
