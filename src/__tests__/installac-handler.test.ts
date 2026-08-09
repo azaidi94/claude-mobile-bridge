@@ -5,6 +5,7 @@ import {
   nextAcStep,
   buildStepPrompt,
   formatInstallSummary,
+  formatInstallError,
   scrubGitEnv,
 } from "../handlers/commands/installac";
 
@@ -133,6 +134,32 @@ describe("installac handler — formatInstallSummary", () => {
     });
     expect(text).toContain("already up to date");
     expect(text.toLowerCase()).toContain("commit failed");
+  });
+});
+
+describe("installac handler — formatInstallError", () => {
+  it("includes the repo, the Error's message, and a retry hint", () => {
+    const text = formatInstallError(
+      "/repo",
+      new Error("EACCES: permission denied"),
+    );
+    expect(text).toContain("Install failed");
+    expect(text).toContain("/repo");
+    expect(text).toContain("EACCES: permission denied");
+    expect(text).toContain("/installac /repo");
+  });
+
+  it("stringifies a non-Error throw", () => {
+    const text = formatInstallError("/repo", "disk full");
+    expect(text).toContain("disk full");
+  });
+
+  it("escapes HTML-significant characters in the repo path and message", () => {
+    const text = formatInstallError("/tmp/<repo>", new Error("<bad>"));
+    expect(text).not.toContain("<repo>");
+    expect(text).not.toContain("<bad>");
+    expect(text).toContain("&lt;repo&gt;");
+    expect(text).toContain("&lt;bad&gt;");
   });
 });
 

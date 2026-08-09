@@ -237,6 +237,22 @@ export interface SummaryOpts {
   committed: boolean;
 }
 
+/**
+ * Pure error formatter for when finalizeInstall throws mid-way (e.g. an FS
+ * error in copyTemplates/writeBindings). The flow is already deleted by the
+ * time this runs, so the reply has to point the user back at /installac
+ * rather than at a button — there's no live keyboard left to retry through.
+ */
+export function formatInstallError(repo: string, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return [
+    `❌ <b>Install failed</b> → <code>${escapeHtml(repo)}</code>`,
+    escapeHtml(message),
+    "",
+    `Run <code>/installac ${escapeHtml(repo)}</code> to retry.`,
+  ].join("\n");
+}
+
 /** Pure summary formatter for the final install/upgrade report. */
 export function formatInstallSummary(opts: SummaryOpts): string {
   const versionLine =
@@ -426,6 +442,11 @@ export async function handleAcInstallCallback(
 
   const next = nextAcStep(parsed.step);
   if (next === null) {
+    // Deleted up front: the message's keyboard is about to be replaced with
+    // a plain "Installing…" status, so there's no live button left for a
+    // retry to land on anyway — a failure below sends the user back through
+    // /installac from scratch, and leaving a stale entry here would only
+    // outlive that for no benefit.
     pendingFlows.delete(key);
     await ctx
       .editMessageText(
@@ -433,8 +454,17 @@ export async function handleAcInstallCallback(
         { parse_mode: "HTML" },
       )
       .catch(() => {});
-    const summary = await finalizeInstall(flow.repo, flow.answers as AcAnswers);
-    await busReply(ctx, summary, { format: "html" });
+    try {
+      const summary = await finalizeInstall(
+        flow.repo,
+        flow.answers as AcAnswers,
+      );
+      await busReply(ctx, summary, { format: "html" });
+    } catch (err) {
+      await busReply(ctx, formatInstallError(flow.repo, err), {
+        format: "html",
+      });
+    }
     return;
   }
 
