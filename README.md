@@ -128,7 +128,7 @@ If you don't use tmux, injection still works via fallbacks: a **Cursor** accessi
 | Control    | `/stop`, `/retry`, `/status`, `/restart`              |
 | Inject     | `/clear`, `/compact`, `/context`, `/skills`, `/model` |
 | tmux       | `/tmux` (panel), `/peek` (screen)                     |
-| Automation | `/ralph <path> [N]`, `/cron`                          |
+| Automation | `/ralph <path> [N]`, `/cron`, `/installAC <path>`     |
 | Files      | `/pwd`, `/cd`, `/ls`                                  |
 | Quota      | `/usage`                                              |
 | Scripts    | `/execute`                                            |
@@ -144,6 +144,7 @@ If you don't use tmux, injection still works via fallbacks: a **Cursor** accessi
 | [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth          |
 | [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)        |
 | [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization |
+| [AC pipeline install](docs/installac.md)     | `/installAC` — vendor plan/code/QA pipeline skills into a repo, bindings, upgrade path     |
 | [Skills browser](docs/skills-menu.md)        | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args   |
 | [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                    |
 | [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                  |
