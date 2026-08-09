@@ -141,7 +141,9 @@ customization options — none of that changes here.
 - The install/upgrade commit runs `git commit --no-verify`: foreign repos
   may have their own hooks that aren't ours to run on the user's behalf, so
   the installer skips them rather than risk a hook failure blocking the
-  install.
+  install. The exact commit message is `Install AC pipeline skills
+(ac-pipeline v<N>) via /installAC`, with `<N>` the current template
+  version (e.g. `ac-pipeline v1`).
 - `ac-bindings.md` never contains credentials — tracker access rides on
   whatever MCP servers or CLIs (`jira`, `gh`) the target project already has
   configured; the installer doesn't ask for or store any secrets.
