@@ -27,8 +27,8 @@ Find the next task per the bindings' **Tracker**:
   the current user and open; take the first result.
 - **github** — `gh issue list --assignee @me --state open --limit 1`; take
   that issue.
-- **none** — open `plans/tasks.md` and take the first unchecked (`- [ ]`)
-  entry.
+- **none** — open `plans/tasks.md` and take the first unchecked entry: a
+  heading line matching `## [ ] N. Title` (not a bullet checkbox).
 
 If none found in any case: `echo COMPLETE > "$RALPH_SIGNAL"` then **stop**.
 
@@ -53,10 +53,11 @@ starting:
 
 # STEP 3 — Report and signal
 
-1. If the tracker is **none**, tick the task's checkbox in `plans/tasks.md`
-   and commit that change alongside (or right after) the task's own
-   commits — the outer loop doesn't own this file for the unattended
-   ac-pipeline flow, you do.
+1. If the tracker is **none**, flip the task's header from
+   `## [ ] N. Title` to `## [x] N. Title` in `plans/tasks.md` and commit
+   that change alongside (or right after) the task's own commits — the
+   outer loop doesn't own this file for the unattended ac-pipeline flow,
+   you do.
 2. Echo one line summarizing the outcome, e.g.:
    - `shipped TASK-123: <one-line summary>`
    - `skipped TASK-123: ambiguous — <why>`
