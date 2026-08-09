@@ -49,7 +49,8 @@ ranked by impact. Each finding pre-shaped as a ticket:
 **Acceptance criteria:**
 
 - [ ] <testable outcome>
-      **Suggested priority:** <High/Medium/Low>
+
+**Suggested priority:** <High/Medium/Low>
 ```
 
 No time estimates anywhere. Present the top findings in-session.
