@@ -85,6 +85,8 @@ export { handleCron } from "./cron";
 
 export { handleRalph } from "./ralph";
 
+export { handleInstallAc, handleAcInstallCallback } from "./installac";
+
 export { handlePrompts } from "./prompts";
 export {
   handleSkills,

@@ -48,6 +48,7 @@ import {
   handleCleanZombie,
   handleCron,
   handleRalph,
+  handleInstallAc,
   handlePrompts,
   handleSkills,
   handleClear,
@@ -302,6 +303,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("cleanzombie", handleCleanZombie);
   bot.command("cron", withSctx(handleCron));
   bot.command("ralph", handleRalph);
+  bot.command("installac", handleInstallAc);
   bot.command("prompts", withSctx(handlePrompts));
   bot.command("skills", withSctx(handleSkills));
   bot.command("clear", withSctx(handleClear));

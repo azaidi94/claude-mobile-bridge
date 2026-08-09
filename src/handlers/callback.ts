@@ -54,6 +54,7 @@ import {
   handleCursorBridgeCallback,
   handleCursorSubscribe,
   respawnSession,
+  handleAcInstallCallback,
 } from "./commands";
 import {
   pendingSettingsInput,
@@ -946,6 +947,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
         text: "Couldn't delete — check bot admin rights",
       });
     }
+    return;
+  }
+
+  // /installac Q&A: acinstall:<step>:<value>
+  if (callbackData.startsWith("acinstall:")) {
+    await handleAcInstallCallback(ctx, callbackData);
     return;
   }
 

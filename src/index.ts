@@ -418,6 +418,10 @@ await bot.api.setMyCommands([
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
   { command: "ralph", description: "Run a ralph loop (afk_tasks.sh)" },
+  {
+    command: "installac",
+    description: "Install AC pipeline skills into a repo",
+  },
   { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "skills", description: "Browse & run Claude skills/commands" },
   { command: "clear", description: "Send /clear to the desktop session" },

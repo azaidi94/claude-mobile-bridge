@@ -27,6 +27,7 @@ export {
   handleCleanZombie,
   handleCron,
   handleRalph,
+  handleInstallAc,
   handlePrompts,
   handleSkills,
   handleClear,
