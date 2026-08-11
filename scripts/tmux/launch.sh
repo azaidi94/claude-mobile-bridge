@@ -123,11 +123,14 @@ cc_tmux_launch() {
     new)
       name=${rest%%$'\t'*}
       cmd=${rest#*$'\t'}
-      # The name embeds our $$ (unique among live processes), so any EXISTING
-      # session with this exact name is a stale orphan from a past process whose
-      # pid the OS later handed us. Kill it first, else `new-session` fails with
-      # "duplicate session" and Claude never launches.
-      tmux -L "$CC_TMUX_SOCKET" kill-session -t "$name" 2>/dev/null
+      # A session already holding this exact name is presumed a stale orphan
+      # from a past process whose pid the OS later handed us (sessions outlive
+      # their launcher pid — detaching frees the pid while the session lives).
+      # Kill it first, else `new-session` fails with "duplicate session" and
+      # Claude never launches. `=` forces EXACT-name matching: tmux
+      # prefix-matches bare targets, so `…-123` would otherwise kill a live
+      # sibling named `…-1234`.
+      tmux -L "$CC_TMUX_SOCKET" kill-session -t "=$name" 2>/dev/null
       _cc_do_exec tmux -L "$CC_TMUX_SOCKET" -f "$CC_TMUX_CONF" new-session -s "$name" "$cmd"
       ;;
   esac

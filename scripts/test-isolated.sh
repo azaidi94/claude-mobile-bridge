@@ -26,6 +26,15 @@ for f in $(find src -name '*.test.ts' | sort); do
   fi
 done
 
+# Shell harnesses (scripts under test have no bun runner; keep them in the
+# same gate so CI and pre-commit exercise them too).
+for sh_t in scripts/tmux/launch.test.sh scripts/claude-relay-launch.test.sh; do
+  total=$((total + 1))
+  if ! bash "$sh_t"; then
+    failed+=("$sh_t")
+  fi
+done
+
 echo ""
 echo "──────────────────────────────────────────"
 if [ ${#failed[@]} -ne 0 ]; then

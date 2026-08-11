@@ -9,6 +9,66 @@
 
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$HERE/claude-relay-launch.sh"
+
+# ── tmux outer phase ────────────────────────────────────────────────────
+# /new spawns must run Claude under `tmux -L claude` so the relay port file
+# records tmuxPane/tmuxSocket and the bot can inject /clear //compact via
+# `tmux send-keys` (spec: docs/superpowers/specs/2026-08-02-new-spawn-tmux-design.md).
+# Nesting is tmux OUTSIDE, expect INSIDE: the pane runs this script's inner
+# phase, so expect talks straight to Claude's pty exactly as before and
+# `interact` hands the pane to the user.
+
+# Wrap unless: opted out, already inside tmux, already the inner phase, or
+# tmux isn't installed (silent fallback — nothing regresses without tmux).
+_crl_should_wrap() {
+  [ "${CLAUDE_CODE_NO_TMUX:-}" != 1 ] \
+    && [ -z "${TMUX:-}" ] \
+    && [ "${CC_RELAY_INNER:-}" != 1 ] \
+    && command -v tmux > /dev/null 2>&1
+}
+
+# Exec seam — overridden in tests to capture argv (same pattern as launch.sh).
+_crl_do_exec() { exec "$@"; }
+
+# Re-exec this script inside a fresh tmux session on the dedicated socket.
+# /new means NEW: always create (never attach-or-reuse) — only the naming and
+# stale-orphan kill are reused from launch.sh, not its hybrid planner. Never
+# returns in prod. Creates no temp files (the EXIT-trap hygiene below belongs
+# entirely to the inner phase).
+_crl_exec_outer() {
+  local dir="$1" name envs="" v
+  # shellcheck disable=SC1091
+  source "$HERE/tmux/launch.sh" # _cc_launch_name, CC_TMUX_SOCKET, CC_TMUX_CONF
+  name=$(_cc_launch_name "$dir" "$$")
+  # A session already holding this exact name is presumed a stale orphan from
+  # a past process that had our pid (sessions outlive their launcher pid by
+  # design — the launcher execs into the tmux CLIENT). Kill it or new-session
+  # fails "duplicate". The `=` sigil forces EXACT-name matching: tmux
+  # prefix-matches bare targets, so without it `…-123` would kill a live
+  # sibling named `…-1234`.
+  tmux -L "$CC_TMUX_SOCKET" kill-session -t "=$name" 2> /dev/null || true
+  # Forward per-spawn env INSIDE the command string: with a pre-existing tmux
+  # server (the common case — the ccd alias keeps one alive), new-session
+  # commands run in the SERVER's env, which silently drops these.
+  # CMUX_WORKSPACE_ID matters most: the relay stamps it into the port file, and
+  # the server's copy belongs to whichever workspace first started the server —
+  # so without forwarding, a fresh /new session claims a SIBLING's workspace and
+  # the cmux injection fallback types into the wrong window.
+  for v in CLAUDE CLAUDE_CLI_PATH CLAUDE_RELAY_ARGS CRL_EXPECT_TIMEOUT \
+    CMUX_WORKSPACE_ID CMUX_SOCKET_PATH; do
+    if [ -n "${!v:-}" ]; then
+      envs+="$v=$(printf %q "${!v}") "
+    fi
+  done
+  _crl_do_exec tmux -L "$CC_TMUX_SOCKET" -f "$CC_TMUX_CONF" new-session -s "$name" \
+    "CC_RELAY_INNER=1 ${envs}$(printf %q "$SELF") $(printf %q "$dir")"
+}
+
+# Test mode: definitions only, no main (see claude-relay-launch.test.sh).
+if [ "${CRL_TEST:-}" = 1 ]; then return 0 2> /dev/null || exit 0; fi
+
 if [[ "${1:-}" == "" ]]; then
   echo "usage: claude-relay-launch.sh <project-directory>" >&2
   exit 1
@@ -18,6 +78,10 @@ DIR="$1"
 if [[ ! -d "$DIR" ]]; then
   echo "claude-relay-launch: not a directory: $DIR" >&2
   exit 1
+fi
+
+if _crl_should_wrap; then
+  _crl_exec_outer "$DIR"
 fi
 
 CLAUDE_BIN="${CLAUDE:-}"
@@ -90,20 +154,38 @@ EXPECT_SCRIPT=$(mktemp /tmp/claude-relay-XXXXXX)
 cat > "$EXPECT_SCRIPT" <<'EXPECT'
 # Claude prints ANSI; match stable substrings. Trust prompt appears first when the
 # workspace is new to this machine; dev-channels prompt follows when using --dangerously-load-development-channels.
-set timeout 180
+#
+# NB: Ink renders with cursor-column escapes BETWEEN WORDS
+# ("Quick\e[8Gsafety\e[15Gcheck:"), so multi-word phrases never appear
+# contiguously in the raw byte stream expect matches against. Multi-word
+# patterns join words with $SEP (defined below) — escape-sequence-aware,
+# but immune to prose/cross-line false matches.
+if {[info exists env(CRL_EXPECT_TIMEOUT)]
+    && [string is integer -strict $env(CRL_EXPECT_TIMEOUT)]} {
+  set timeout $env(CRL_EXPECT_TIMEOUT)
+} else {
+  set timeout 180
+}
 log_user 1
+
+# Word separator for prompt matching: Ink emits cursor-column escapes between
+# words, so "safety check" arrives as "safety\x1b\[15Gcheck". SEP admits full
+# CSI sequences and non-letter runs (spaces, punctuation) but NOT bare letters
+# or newlines — so prose like "safety first, always check" or a phrase split
+# across lines can never false-match and answer a menu early.
+set SEP {(?:\x1b\[[0-9;]*[A-Za-z]|[^A-Za-z\r\n]){0,24}?}
 spawn bash -lc $env(SPAWNCMD)
 # Set pty dimensions so Claude Code's Ink TUI renders properly.
 # Without this, spawn inherits a 0x0 pty and the UI may not draw at all.
 stty rows 50 cols 200
 expect {
-  -re {(?i)trust this folder|safety check|project you created} {
+  -re "(?i)trust${SEP}this${SEP}folder|safety${SEP}check|project${SEP}you${SEP}created" {
     sleep 0.5
     send "\r"
     sleep 1
     exp_continue
   }
-  -re {(?i)local development|loading development channels|dangerously-load-development-channels} {
+  -re "(?i)local${SEP}development|loading${SEP}development${SEP}channels|dangerously-load-development-channels" {
     sleep 0.5
     send "\r"
     # Hand control back to the terminal so the user can interact with Claude.

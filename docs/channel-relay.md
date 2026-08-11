@@ -38,6 +38,12 @@ export DESKTOP_CLAUDE_COMMAND='/Users/you/claude-mobile-bridge/scripts/claude-re
 
 The script answers **1** when it sees the “local development” line, then keeps Claude running. If Anthropic changes the prompt text, update the script or fall back to options 1–2.
 
+**Optional: `tmux` (recommended).** If `tmux` is on PATH, the wrapper first re-execs itself inside a fresh session on a dedicated socket (`tmux -L claude`). Claude then inherits `TMUX_PANE`, the relay records it in the port file, and the bot can inject `/clear`, `/compact` and `/context` with `tmux send-keys` — accessibility-free, focus-free, and identical in every host terminal. Without tmux the wrapper silently falls through to the plain path and injection uses the host-specific fallback, exactly as before; nothing regresses. To opt out when tmux _is_ installed, set `CLAUDE_CODE_NO_TMUX=1` (same variable as the `cc` alias path).
+
+```bash
+brew install tmux   # optional — unlocks send-keys injection for /new sessions
+```
+
 ### Shell alias
 
 Add a shell alias to avoid typing the launch flags each time:
