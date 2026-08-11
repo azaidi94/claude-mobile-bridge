@@ -104,9 +104,23 @@ CLAUDE="/opt/custom claude/bin/claude" CLAUDE_RELAY_ARGS="--flag one" \
 assert_match "$CAPTURED" "*CLAUDE=/opt/custom\\\\ claude/bin/claude*" "CLAUDE forwarded through server env boundary"
 assert_match "$CAPTURED" "*CLAUDE_RELAY_ARGS=--flag\\\\ one*" "CLAUDE_RELAY_ARGS forwarded"
 assert_match "$CAPTURED" "*CRL_EXPECT_TIMEOUT=9*" "CRL_EXPECT_TIMEOUT forwarded"
+# The cmux ids ride along for the same reason: the relay stamps CMUX_WORKSPACE_ID
+# into the port file, and a pre-existing server would hand us a SIBLING's id.
 CAPTURED=""
+: > "$KILL_LOG"
+CMUX_WORKSPACE_ID="workspace:80" CMUX_SOCKET_PATH="/Users/x/Application Support/cmux.sock" \
+  _crl_exec_outer "/tmp"
+assert_match "$CAPTURED" "*CMUX_WORKSPACE_ID=workspace:80*" "CMUX_WORKSPACE_ID forwarded"
+assert_match "$CAPTURED" "*CMUX_SOCKET_PATH=/Users/x/Application\\\\ Support/cmux.sock*" "CMUX_SOCKET_PATH forwarded (quoted)"
+# Scrub the forwarded set from the harness's OWN env first — this suite is
+# routinely run from inside cmux (CMUX_* set) or with CLAUDE exported, which
+# would otherwise leak in and mask the "no empties" contract.
+CAPTURED=""
+unset CLAUDE CLAUDE_CLI_PATH CLAUDE_RELAY_ARGS CRL_EXPECT_TIMEOUT \
+  CMUX_WORKSPACE_ID CMUX_SOCKET_PATH
 _crl_exec_outer "/tmp"
 assert_no_match "$CAPTURED" "*CLAUDE=*" "unset per-spawn vars are not forwarded as empties"
+assert_no_match "$CAPTURED" "*CMUX_WORKSPACE_ID=*" "unset cmux ids are not forwarded as empties"
 
 rm -rf "$DIR"
 

@@ -52,7 +52,12 @@ _crl_exec_outer() {
   # Forward per-spawn env INSIDE the command string: with a pre-existing tmux
   # server (the common case — the ccd alias keeps one alive), new-session
   # commands run in the SERVER's env, which silently drops these.
-  for v in CLAUDE CLAUDE_CLI_PATH CLAUDE_RELAY_ARGS CRL_EXPECT_TIMEOUT; do
+  # CMUX_WORKSPACE_ID matters most: the relay stamps it into the port file, and
+  # the server's copy belongs to whichever workspace first started the server —
+  # so without forwarding, a fresh /new session claims a SIBLING's workspace and
+  # the cmux injection fallback types into the wrong window.
+  for v in CLAUDE CLAUDE_CLI_PATH CLAUDE_RELAY_ARGS CRL_EXPECT_TIMEOUT \
+    CMUX_WORKSPACE_ID CMUX_SOCKET_PATH; do
     if [ -n "${!v:-}" ]; then
       envs+="$v=$(printf %q "${!v}") "
     fi

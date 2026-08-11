@@ -40,6 +40,8 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 
 **Prerequisites:** [Bun 1.0.23+](https://bun.sh/), [Claude Code CLI](https://claude.com/code), [Telegram Bot Token](https://t.me/botfather)
 
+**Optional:** `tmux` (`brew install tmux`) — `/new` sessions then run under it, which lets the bot inject `/clear`, `/compact` and `/context` via `tmux send-keys` instead of terminal-specific keystrokes. Everything works without it. See [docs/channel-relay.md](docs/channel-relay.md#remote-use-you-are-not-at-the-mac).
+
 ```bash
 git clone https://github.com/azaidi94/claude-mobile-bridge.git
 cd claude-mobile-bridge
