@@ -8,7 +8,9 @@
  *   - user skills:      ~/.claude/skills/*\/SKILL.md
  *   - project skills:   <cwd>/.claude/skills/*\/SKILL.md
  *   - plugin skills/cmds: ~/.claude/plugins/installed_plugins.json -> each
- *                         installPath -> skills/*\/SKILL.md + commands/**\/*.md
+ *                         installPath -> paths declared in .claude-plugin
+ *                         /plugin.json, else skills/*\/SKILL.md +
+ *                         commands/**\/*.md
  *
  * Results are cached per cwd for a few seconds (see CACHE_TTL_MS).
  */
@@ -167,6 +169,67 @@ interface InstalledPluginsFile {
   plugins?: Record<string, InstalledPlugin[]>;
 }
 
+/** The `skills`/`commands` path lists a plugin may declare in its manifest. */
+function pluginManifestPaths(base: string): {
+  skills?: string[];
+  commands?: string[];
+} {
+  let parsed: { skills?: unknown; commands?: unknown };
+  try {
+    parsed = JSON.parse(
+      readFileSync(join(base, ".claude-plugin", "plugin.json"), "utf-8"),
+    );
+  } catch {
+    return {};
+  }
+  const list = (v: unknown): string[] | undefined =>
+    Array.isArray(v) && v.every((p) => typeof p === "string" && p)
+      ? (v as string[])
+      : undefined;
+  return { skills: list(parsed.skills), commands: list(parsed.commands) };
+}
+
+/**
+ * Resolve one declared skill path. A plugin may point either at a single skill
+ * dir (`./skills/engineering/tdd`, holding SKILL.md) or at a container of skill
+ * dirs — so probe for SKILL.md first, then fall back to a one-level walk.
+ */
+function declaredSkills(base: string, rel: string): Array<[string, string]> {
+  const abs = join(base, rel);
+  if (abs.endsWith(".md")) {
+    try {
+      if (statSync(abs).isFile())
+        return [[join(abs, "..").split(sep).pop() ?? rel, abs]];
+    } catch {
+      /* declared path missing */
+    }
+    return [];
+  }
+  const skillMd = join(abs, "SKILL.md");
+  try {
+    if (statSync(skillMd).isFile())
+      return [[abs.split(sep).filter(Boolean).pop() ?? rel, skillMd]];
+  } catch {
+    /* not a leaf skill dir — treat as a container below */
+  }
+  return walkSkills(abs);
+}
+
+/** Resolve one declared command path: a single .md file, or a dir to walk. */
+function declaredCommands(base: string, rel: string): Array<[string, string]> {
+  const abs = join(base, rel);
+  if (abs.endsWith(".md")) {
+    try {
+      if (statSync(abs).isFile())
+        return [[(abs.split(sep).pop() ?? rel).replace(/\.md$/, ""), abs]];
+    } catch {
+      /* declared path missing */
+    }
+    return [];
+  }
+  return walkCommands(abs);
+}
+
 function pluginEntries(): SkillEntry[] {
   const registry = join(userClaudeDir(), "plugins", "installed_plugins.json");
   let parsed: InstalledPluginsFile;
@@ -184,7 +247,18 @@ function pluginEntries(): SkillEntry[] {
     for (const inst of installs) {
       const base = inst?.installPath;
       if (!base) continue;
-      for (const [dirName, path] of walkSkills(join(base, "skills"))) {
+      // A manifest `skills`/`commands` list is authoritative — it's how a
+      // plugin nests skills under category dirs (skills/engineering/tdd) and
+      // how it ships work-in-progress dirs that Claude Code does NOT load.
+      // Only fall back to the conventional layout when nothing is declared.
+      const declared = pluginManifestPaths(base);
+      const skills = declared.skills
+        ? declared.skills.flatMap((p) => declaredSkills(base, p))
+        : walkSkills(join(base, "skills"));
+      const commands = declared.commands
+        ? declared.commands.flatMap((p) => declaredCommands(base, p))
+        : walkCommands(join(base, "commands"));
+      for (const [dirName, path] of skills) {
         const fm = parseFrontmatter(path);
         out.push({
           name: `${pluginName}:${fm.name || dirName}`,
@@ -193,7 +267,7 @@ function pluginEntries(): SkillEntry[] {
           kind: "skill",
         });
       }
-      for (const [name, path] of walkCommands(join(base, "commands"))) {
+      for (const [name, path] of commands) {
         out.push({
           name: `${pluginName}:${name}`,
           description: parseFrontmatter(path).description ?? "",

@@ -125,6 +125,98 @@ describe("discoverSkills", () => {
     });
   });
 
+  test("resolves nested plugin skills declared in plugin.json", () => {
+    const installPath = join(
+      base,
+      "plugin-cache",
+      "mattpocock-skills",
+      "1.2.3",
+    );
+    write(
+      join(installPath, "skills", "engineering", "tdd", "SKILL.md"),
+      skillFile("", "tdd", "Test-driven development"),
+    );
+    // Present on disk but NOT declared — Claude Code won't load it, nor should we.
+    write(
+      join(installPath, "skills", "in-progress", "loop-me", "SKILL.md"),
+      skillFile("", "loop-me", "Work in progress"),
+    );
+    write(
+      join(installPath, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ skills: ["./skills/engineering/tdd"] }),
+    );
+    write(
+      join(userDir, "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        plugins: { "mattpocock-skills@official": [{ installPath }] },
+      }),
+    );
+    const names = discoverSkills(cwd).map((e) => e.name);
+    expect(names).toContain("mattpocock-skills:tdd");
+    expect(names).not.toContain("mattpocock-skills:loop-me");
+  });
+
+  test("declared plugin path may be a container of skill dirs", () => {
+    const installPath = join(base, "plugin-cache", "p", "1.0.0");
+    write(
+      join(installPath, "skills", "engineering", "tdd", "SKILL.md"),
+      skillFile("", "tdd", "Test-driven development"),
+    );
+    write(
+      join(installPath, "skills", "engineering", "review", "SKILL.md"),
+      skillFile("", "review", "Review changes"),
+    );
+    write(
+      join(installPath, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ skills: ["./skills/engineering"] }),
+    );
+    write(
+      join(userDir, "plugins", "installed_plugins.json"),
+      JSON.stringify({ plugins: { "p@mkt": [{ installPath }] } }),
+    );
+    const names = discoverSkills(cwd).map((e) => e.name);
+    expect(names).toContain("p:tdd");
+    expect(names).toContain("p:review");
+  });
+
+  test("declared commands resolve as files and dirs; missing paths skipped", () => {
+    const installPath = join(base, "plugin-cache", "p", "1.0.0");
+    write(
+      join(installPath, "cmds", "ship.md"),
+      `---\ndescription: Ship it\n---\ngo`,
+    );
+    write(
+      join(installPath, "more", "deploy", "prod.md"),
+      `---\ndescription: Ship to prod\n---\ngo`,
+    );
+    write(
+      join(installPath, ".claude-plugin", "plugin.json"),
+      JSON.stringify({
+        commands: ["./cmds/ship.md", "./more", "./gone.md", "./nowhere"],
+      }),
+    );
+    write(
+      join(userDir, "plugins", "installed_plugins.json"),
+      JSON.stringify({ plugins: { "p@mkt": [{ installPath }] } }),
+    );
+    const cmds = discoverSkills(cwd).filter((e) => e.kind === "command");
+    expect(cmds.map((e) => e.name).sort()).toEqual(["p:deploy:prod", "p:ship"]);
+  });
+
+  test("malformed plugin.json falls back to the conventional layout", () => {
+    const installPath = join(base, "plugin-cache", "p", "1.0.0");
+    write(
+      join(installPath, "skills", "solo", "SKILL.md"),
+      skillFile("", "solo", "Conventional layout"),
+    );
+    write(join(installPath, ".claude-plugin", "plugin.json"), "{ not json");
+    write(
+      join(userDir, "plugins", "installed_plugins.json"),
+      JSON.stringify({ plugins: { "p@mkt": [{ installPath }] } }),
+    );
+    expect(discoverSkills(cwd).map((e) => e.name)).toContain("p:solo");
+  });
+
   test("dedup precedence user > plugin by name", () => {
     const installPath = join(base, "plugin-cache", "p", "1.0.0");
     write(
