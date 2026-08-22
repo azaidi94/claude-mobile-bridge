@@ -848,6 +848,17 @@ function projectDir(cwd: string): string {
 
 /**
  * Find the JSONL file path for a session ID.
+ *
+ * A session ID can have more than one on-disk file: Claude Code encodes the
+ * project dir into the path, so a mid-session `cd` (e.g. into a git worktree
+ * via the using-git-worktrees skill) makes it start writing to a *new*
+ * project-dir-encoded path while the abandoned original file is left on
+ * disk (often truncated, but still a file — see tailer's "file shrank"
+ * resync). Both match `<sessionId>.jsonl`, so picking the first one found
+ * by `readdir` order is effectively arbitrary and tends to favor the
+ * original (shorter, alphabetically-earlier) path over the live one. Scan
+ * every match and return the most recently modified — that's always the
+ * file actually being appended to.
  */
 export async function findSessionJsonlPath(
   sessionId: string,
@@ -856,12 +867,26 @@ export async function findSessionJsonlPath(
 
   try {
     const projects = await readdir(PROJECTS_DIR);
-    for (const project of projects) {
-      if (project.startsWith(".")) continue;
-      const filePath = join(PROJECTS_DIR, project, filename);
-      const s = await stat(filePath).catch(() => null);
-      if (s?.isFile()) return filePath;
+    // One stat() per project dir — parallelize rather than awaiting them
+    // one at a time. This runs on every non-speculative drift-detection
+    // tick (5s, per active watch) even when nothing changed, so a
+    // sequential scan's cost grows linearly with project-dir count
+    // (~/.claude/projects accumulates one per distinct cwd ever used,
+    // never pruned) multiplied by every watch's tick.
+    const stats = await Promise.all(
+      projects
+        .filter((project) => !project.startsWith("."))
+        .map(async (project) => {
+          const filePath = join(PROJECTS_DIR, project, filename);
+          const s = await stat(filePath).catch(() => null);
+          return s?.isFile() ? { path: filePath, mtimeMs: s.mtimeMs } : null;
+        }),
+    );
+    let newest: { path: string; mtimeMs: number } | null = null;
+    for (const s of stats) {
+      if (s && (!newest || s.mtimeMs > newest.mtimeMs)) newest = s;
     }
+    if (newest) return newest.path;
   } catch {
     // PROJECTS_DIR doesn't exist
   }

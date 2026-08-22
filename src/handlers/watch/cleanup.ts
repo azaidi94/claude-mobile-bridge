@@ -13,7 +13,12 @@ import { debug, info, warn } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import { getSession, setActiveSession, getSessionState } from "../../sessions";
 import { forgetUsage } from "../../sessions/context-usage";
-import { blacklistKilledSessionId, watchKey, watches } from "./registry";
+import {
+  autoWatchInFlight,
+  blacklistKilledSessionId,
+  watchKey,
+  watches,
+} from "./registry";
 import type { WatchState } from "./state";
 import { finalizeTextMessage } from "./text-renderer";
 import { _clearTypingForTests, stopWatchTyping } from "./typing";
@@ -183,5 +188,6 @@ export function _resetWatchesForTests(): void {
     forgetUsage(state.sessionId);
   }
   watches.clear();
+  autoWatchInFlight.clear();
   _clearTypingForTests();
 }
