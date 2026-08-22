@@ -74,6 +74,15 @@ export interface WatchState extends TailDisplayState {
   sessionPid?: number;
   /** Assigned in a second step so the tailer can close over `watchState`. Reads must use `?.`. */
   tailer?: SessionTailer;
+  /**
+   * On-disk path of the JSONL the current tailer instance is bound to. Kept
+   * in sync with `tailer` (set alongside every `new SessionTailer(...)`) so
+   * drift detection can tell a same-sessionId file move (Claude Code writes
+   * to a different project-dir-encoded path after the session `cd`s, e.g.
+   * into a git worktree) from "nothing changed" — `sessionId` alone can't
+   * distinguish those, since it doesn't change on a `cd`.
+   */
+  tailerPath?: string;
   lastEventTime: number;
   /** Topic thread ID — all messages go to this thread. */
   threadId: number;

@@ -34,7 +34,7 @@ import {
   setupIdDriftDetection,
 } from "./jsonl-tailer";
 import { ralphBlocksTopicWatch } from "../../ralph/store";
-import { watchKey, watches } from "./registry";
+import { autoWatchInFlight, watchKey, watches } from "./registry";
 import { bindRelayReplyHandler, armRelayRebind } from "./relay-replies";
 import { buildWatchState, type WatchState } from "./state";
 
@@ -70,7 +70,52 @@ function resolveAutoWatchConflict(
  * Start auto-watching a session in a topic.
  * Called by topic manager when a topic is created and session is online.
  */
-export async function startAutoWatch(
+/**
+ * Serializes concurrent startAutoWatch() calls for the same topic. Without
+ * this, two callers (e.g. the spawn-completion notify handler and the
+ * periodic auto-watch retry sweep) can both pass the "is anyone watching
+ * this topic?" check before either has registered a WatchState, each build
+ * their own SessionTailer, and the loser's tailer is silently overwritten
+ * in the registry while still running — an orphan that double-posts every
+ * subsequent event into the topic indefinitely.
+ */
+export function startAutoWatch(
+  botApi: Api,
+  chatId: number,
+  threadId: number,
+  sessionName: string,
+): Promise<boolean> {
+  const key = watchKey(chatId, threadId);
+  const inFlight = autoWatchInFlight.get(key);
+  // Only coalesce onto an in-flight call for the SAME session — two callers
+  // racing to watch the same topic for *different* sessions (e.g. a
+  // just-killed session's retry sweep landing alongside a fresh spawn's
+  // notify callback) must not have the second one silently resolve to the
+  // first's result. Chain onto it instead, so the second still runs (and
+  // still can't race the first's watches.set()) once it settles.
+  if (inFlight) {
+    if (inFlight.sessionName === sessionName) return inFlight.promise;
+    return inFlight.promise.then(
+      () => startAutoWatch(botApi, chatId, threadId, sessionName),
+      () => startAutoWatch(botApi, chatId, threadId, sessionName),
+    );
+  }
+
+  const promise = startAutoWatchImpl(
+    botApi,
+    chatId,
+    threadId,
+    sessionName,
+  ).finally(() => {
+    if (autoWatchInFlight.get(key)?.promise === promise) {
+      autoWatchInFlight.delete(key);
+    }
+  });
+  autoWatchInFlight.set(key, { sessionName, promise });
+  return promise;
+}
+
+async function startAutoWatchImpl(
   botApi: Api,
   chatId: number,
   threadId: number,
@@ -189,6 +234,7 @@ export async function startAutoWatch(
     makeWatchTailHandler(botApi, watchState),
   );
   watchState.tailer = tailer;
+  watchState.tailerPath = jsonlPath;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 
@@ -272,6 +318,7 @@ export async function startPinnedWatch(
     makeWatchTailHandler(botApi, watchState),
   );
   watchState.tailer = tailer;
+  watchState.tailerPath = resolved.path;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
   setupIdDriftDetection(botApi, watchState);
@@ -380,6 +427,7 @@ export async function startWatchingSession(
     makeWatchTailHandler(botApi, watchState),
   );
   watchState.tailer = tailer;
+  watchState.tailerPath = jsonlPath;
   watches.set(watchKey(chatId, threadId), watchState);
   await tailer.start();
 

@@ -13,6 +13,21 @@ import type { WatchState } from "./state";
 export type WatchKey = `${number}:${number}`;
 export const watches = new Map<WatchKey, WatchState>();
 
+// In-flight startAutoWatch() calls, keyed the same way. startAutoWatch does
+// substantial async work (session-id polling, JSONL resolution) between its
+// "is anyone else watching this topic?" check and the `watches.set()` that
+// answers that question for the next caller — two callers landing in that
+// window (spawn-completion callback + the periodic retry sweep is the
+// observed case) both see "no watch yet" and both build a SessionTailer,
+// leaking one as an orphan that keeps double-posting into the topic forever.
+// `sessionName` lets startAutoWatch (session-builder.ts, the sole reader/
+// writer of this map) tell "same request, coalesce" from "different session
+// racing for this topic, don't silently resolve to the other one's result".
+export const autoWatchInFlight = new Map<
+  WatchKey,
+  { sessionName: string; promise: Promise<boolean> }
+>();
+
 export function watchKey(chatId: number, threadId: number): WatchKey {
   return `${chatId}:${threadId}`;
 }

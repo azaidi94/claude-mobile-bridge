@@ -299,20 +299,92 @@ export function setupIdDriftDetection(
     // case, if `findNewestSessionInDir` returns *anything* and the
     // speculative path isn't on disk, re-resolve via the newest id.
     if (newId === watchState.sessionId) {
-      if (!watchState.speculativeTailerPath) return;
-      const currentPathExists = await findSessionJsonlPath(
-        watchState.sessionId,
-      ).then((p) => p !== null);
-      if (currentPathExists) {
-        // Real JSONL appeared under the original id — bind to it and clear
-        // the speculative flag so the loop reverts to the slow interval.
-        const realPath = await findSessionJsonlPath(watchState.sessionId);
-        if (realPath) {
-          await rebindTailerPath(botApi, watchState, realPath, newId);
+      if (watchState.speculativeTailerPath) {
+        const currentPathExists = await findSessionJsonlPath(
+          watchState.sessionId,
+        ).then((p) => p !== null);
+        if (currentPathExists) {
+          // Real JSONL appeared under the original id — bind to it and clear
+          // the speculative flag so the loop reverts to the slow interval.
+          const realPath = await findSessionJsonlPath(watchState.sessionId);
+          if (realPath) {
+            await rebindTailerPath(botApi, watchState, realPath, newId);
+          }
+          return;
         }
+        // Same id still un-flushed; nothing else to do this tick.
         return;
       }
-      // Same id still un-flushed; nothing else to do this tick.
+
+      // Non-speculative, same session id — but did its live file move?
+      // Claude Code's JSONL path is derived from cwd, so a `cd` mid-session
+      // (e.g. into a git worktree) makes it start writing to a *different*
+      // project-dir-encoded path under the SAME session id — sessionId
+      // drift alone can't see that. findSessionJsonlPath resolves by newest
+      // mtime across all matches, so this reliably follows the session to
+      // wherever it's actually appending now. Uses the CURRENT sessionId on
+      // both sides (not `newId`, which is only meaningfully different in
+      // the branch below) so a successful rebind can't relabel this watch
+      // under a session id its file was never resolved against.
+      //
+      // Guarded like `_recoverMisboundTailer` (see `cwdMoveInFlight` above):
+      // setInterval doesn't wait for this callback, so an overlapping tick
+      // could otherwise call rebindTailerPath a second time before the first
+      // finishes, racing `tailer.stop()`/`tailer = newTailer` and leaking a
+      // duplicate tailer.
+      if (watchState.tailerPath && !cwdMoveInFlight.has(watchState)) {
+        cwdMoveInFlight.add(watchState);
+        try {
+          const livePath = await findSessionJsonlPath(watchState.sessionId);
+          // The watch may have been /unwatch'd or killed while the scan
+          // above was in flight — watches.get() no longer pointing back at
+          // this exact WatchState means it's orphaned. Rebinding it now
+          // would start a fresh SessionTailer nothing will ever stop.
+          if (watches.get(watchKey(chatId, threadId)) !== watchState) return;
+          if (livePath && livePath !== watchState.tailerPath) {
+            // Guard against flip-flopping back onto the abandoned pre-cd
+            // file if its mtime gets touched again after the cd (e.g. a
+            // delayed close/flush) — only rebind onto a file that's at
+            // least as fresh as what we're already tailing.
+            const [liveStat, currentStat] = await Promise.all([
+              stat(livePath).catch(() => null),
+              stat(watchState.tailerPath).catch(() => null),
+            ]);
+            const isBackward =
+              !!liveStat &&
+              !!currentStat &&
+              liveStat.mtimeMs < currentStat.mtimeMs;
+            if (!isBackward) {
+              // Rebinds via the same tail-from-EOF path as every other rebind
+              // here (see the "LIVE-only" comment below) — content the session
+              // wrote to the new path between the actual `cd` and this tick is
+              // not replayed. Reading from offset 0 instead isn't safe: unlike
+              // a fresh conversation, a worktree cd's target file routinely
+              // already holds the full prior transcript (observed: thousands
+              // of lines), so offset-0 would dump that history into the topic.
+              info(
+                "watch: session JSONL moved (cwd change), rebinding tailer",
+                {
+                  chatId: watchState.chatId,
+                  topic: watchState.threadId,
+                  session: watchState.sessionName,
+                  sessionId: watchState.sessionId,
+                  previousPath: watchState.tailerPath,
+                  newPath: livePath,
+                },
+              );
+              await rebindTailerPath(
+                botApi,
+                watchState,
+                livePath,
+                watchState.sessionId,
+              );
+            }
+          }
+        } finally {
+          cwdMoveInFlight.delete(watchState);
+        }
+      }
       return;
     }
     // Defense in depth: don't steal an id another live watcher already holds.
@@ -348,6 +420,7 @@ export function setupIdDriftDetection(
     // transcript into TG. LIVE-only: the cost is missing the first user
     // prompt on a fresh /clear (lands on disk before the 5s drift tick).
     watchState.tailer = newTailer;
+    watchState.tailerPath = newPath;
     // Clear the speculative flag and, if the interval was running at the
     // aggressive 1s cadence because of it, restart it at the normal 5s cadence.
     // Without this, the next speculative-branch tick (~284) sees the stale flag
@@ -450,6 +523,12 @@ async function _isBoundToSiblingJsonl(
 // guards with this flag instead.)
 const recoveryInFlight = new WeakSet<WatchState>();
 
+// Same hazard, same fix, for the cwd-move rebind branch below: setInterval
+// doesn't wait for its async callback, so if tick N is still awaiting
+// findSessionJsonlPath/rebindTailerPath when tick N+1 fires, both could call
+// rebindTailerPath concurrently and leak a duplicate tailer.
+const cwdMoveInFlight = new WeakSet<WatchState>();
+
 /**
  * Rebind a mis-seeded watch from a sibling's JSONL onto its OWN canonical id's
  * file once that file exists on disk. The registry/port-file id for our session
@@ -541,6 +620,7 @@ export async function rebindTailerPath(
     makeWatchTailHandler(botApi, watchState),
   );
   watchState.tailer = newTailer;
+  watchState.tailerPath = newPath;
   watchState.speculativeTailerPath = false;
   await newTailer.start();
   // If the loop interval was tuned to "speculative" (1s) but we've now bound
