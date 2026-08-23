@@ -7,6 +7,7 @@
  */
 
 import { stat } from "fs/promises";
+import { dirname } from "path";
 import type { Api } from "grammy";
 import { info } from "../../logger";
 import { safeSync } from "../../utils/safe-async";
@@ -18,6 +19,7 @@ import { forgetUsage } from "../../sessions/context-usage";
 import {
   SessionTailer,
   findNewestSessionInDir,
+  findNewestSessionInEncodedDir,
   findSessionJsonlPath,
   getExpectedJsonlPath,
 } from "../../sessions/tailer";
@@ -247,10 +249,20 @@ export async function _resolveDriftTargetId(
     killedSessionIds.size > 0
       ? new Set<string>(killedSessionIds.keys())
       : undefined;
-  const newestJsonl = await findNewestSessionInDir(
-    watchState.sessionDir,
-    excludeIds,
-  );
+  // Scope the scan to wherever the session is CURRENTLY tailing, not its
+  // original (possibly abandoned) cwd — a mid-session `cd` (e.g. into a git
+  // worktree) moves the live JSONL to a different project-dir-encoded path
+  // (see the cwd-move rebind below and findSessionJsonlPath's doc comment).
+  // Scanning the frozen original dir here would keep rediscovering whatever
+  // stale sibling transcript happens to be newest THERE and drag the watch
+  // back onto it every tick, fighting `_recoverMisboundTailer`'s correction
+  // in an endless "🔄 new conversation" flap (observed 2026-08-23, kx_repo-3).
+  const newestJsonl = watchState.tailerPath
+    ? await findNewestSessionInEncodedDir(
+        dirname(watchState.tailerPath),
+        excludeIds,
+      )
+    : await findNewestSessionInDir(watchState.sessionDir, excludeIds);
   return newestJsonl ?? getSession(watchState.sessionName)?.id ?? undefined;
 }
 
