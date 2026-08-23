@@ -93,4 +93,9 @@ export {
   pendingSkillArgs,
 } from "./skills";
 
-export { handleClear, handleCompact, handleContext } from "./inject";
+export {
+  handleClear,
+  handleCompact,
+  handleContext,
+  handleClaude,
+} from "./inject";

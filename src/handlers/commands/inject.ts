@@ -1,8 +1,8 @@
 /**
- * /clear and /compact — inject the matching Claude Code slash command into the
- * running desktop session's terminal TUI (see terminal-inject.ts for the
- * per-terminal-app mechanism). These are *client* commands the relay can't
- * trigger, so we type them in directly.
+ * /clear, /compact, /context, and the generic /claude passthrough — inject a
+ * Claude Code slash command into the running desktop session's terminal TUI
+ * (see terminal-inject.ts for the per-terminal-app mechanism). These are
+ * *client* commands the relay can't trigger, so we type them in directly.
  */
 
 import type { Context } from "grammy";
@@ -12,6 +12,14 @@ import type { SessionContext } from "../../sessions/context";
 import { busReply, resolveTopicSession } from "./helpers";
 import { sendKeysToSession } from "./terminal-inject";
 import { replyBlockedPanel } from "./tmux";
+import { CLAUDE_COMMAND_REFERENCE } from "./claude-command-reference";
+
+/**
+ * Slash commands that must never be typed into the session via /claude:
+ * exiting the CLI would kill the very process the bot is watching and orphan
+ * the topic. Use the bot's own /kill or /stop for that instead.
+ */
+const CLAUDE_COMMAND_BLOCKLIST = new Set(["exit", "quit"]);
 
 async function injectSlashCommand(
   ctx: Context,
@@ -86,4 +94,34 @@ export async function handleContext(
   sctx?: SessionContext,
 ): Promise<void> {
   await injectSlashCommand(ctx, sctx, "/context", "📊 Sent /context.");
+}
+
+/**
+ * /claude — generic passthrough to Claude Code's own slash commands, plus a
+ * built-in reference when called with no argument.
+ *
+ * `/claude <text>` types `/<text>` into the terminal exactly like
+ * /clear|/compact|/context above, for every other CC slash command (/model,
+ * /plan, /resume, ...) without needing a dedicated bot command per entry.
+ * `/claude` alone lists the built-in commands instead of injecting nothing.
+ */
+export async function handleClaude(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
+  const arg = ((ctx.match as string | undefined) ?? "").trim();
+  if (!arg) {
+    await busReply(ctx, CLAUDE_COMMAND_REFERENCE, "html");
+    return;
+  }
+  const name = arg.split(/\s+/)[0]!.replace(/^\//, "").toLowerCase();
+  if (CLAUDE_COMMAND_BLOCKLIST.has(name)) {
+    await busReply(
+      ctx,
+      `/claude ${name} is blocked — it would exit the CLI the bot is watching. Use /kill or /stop instead.`,
+    );
+    return;
+  }
+  const slash = `/${arg.replace(/^\/+/, "")}`;
+  await injectSlashCommand(ctx, sctx, slash, `➡️ Sent ${slash}.`);
 }
