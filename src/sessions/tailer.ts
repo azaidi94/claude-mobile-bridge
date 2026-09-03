@@ -797,13 +797,35 @@ export class SessionTailer {
           });
         }
 
-        // turn_end: assistant message with zero `tool` events marks end of
-        // turn. Channel-relay tool_use blocks emit `relay_reply` (or nothing
-        // for react) instead of `tool`, so they don't suppress turn_end —
-        // once the relay reply lands the user has the answer; if Claude
-        // continues internally, the next event will re-arm typing.
+        // turn_end. Claude Code writes ONE JSONL line per content block, so
+        // "no tool_use on this line" is not "end of turn": every interim
+        // narration and every thinking block is its own text-only line. The
+        // API's `stop_reason` is the real signal — `tool_use` on every block
+        // of a message that will call tools, `end_turn` on the final one.
+        //
+        // Two wrinkles. All blocks of one message share its stop_reason, so
+        // the final answer's thinking line also says end_turn — only a line
+        // with a visible block ends the turn. And channel-relay tool_use
+        // blocks emit `relay_reply` (or nothing for react) instead of `tool`:
+        // once that reply lands the user has the answer, so it ends the turn
+        // even though stop_reason is tool_use; if Claude continues internally,
+        // the next event re-arms typing.
+        const stopReason = entry.message?.stop_reason;
         const hasToolUse = events.some((e) => e.type === "tool");
-        if (!hasToolUse && events.length > 0) {
+        const hasRelayReply = events.some((e) => e.type === "relay_reply");
+        const hasVisibleBlock = content.some(
+          (b: { type?: string }) => b.type === "text" || b.type === "tool_use",
+        );
+        let endsTurn: boolean;
+        if (typeof stopReason !== "string") {
+          // No stop_reason on this line — legacy heuristic.
+          endsTurn = !hasToolUse;
+        } else if (stopReason === "tool_use") {
+          endsTurn = hasRelayReply && !hasToolUse;
+        } else {
+          endsTurn = hasVisibleBlock;
+        }
+        if (endsTurn && events.length > 0) {
           events.push({ type: "turn_end", content: "" });
         }
 

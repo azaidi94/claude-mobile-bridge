@@ -943,6 +943,108 @@ describe("tailer: parseLine", () => {
     expect(events.map((e) => e.type)).toEqual(["thinking", "text", "turn_end"]);
   });
 
+  // Claude Code writes one JSONL line per content block, and every block of a
+  // message shares that message's stop_reason. These pin the stop_reason-based
+  // turn detection against the shapes seen in real transcripts.
+  describe("turn_end via stop_reason", () => {
+    const assistantLine = (
+      block: Record<string, unknown>,
+      stop_reason: string | null,
+    ) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          id: "msg_1",
+          content: [block],
+          stop_reason,
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      });
+
+    test("interim narration (text-only line, stop_reason=tool_use) is NOT turn_end", () => {
+      // The bug: "Now the edits." between two tool batches used to stop the
+      // typing indicator and fire the done-reaction mid-turn.
+      const events = tailer.parseLine(
+        assistantLine({ type: "text", text: "Now the edits." }, "tool_use"),
+      );
+      expect(events.map((e) => e.type)).not.toContain("turn_end");
+    });
+
+    test("thinking line with stop_reason=tool_use is NOT turn_end", () => {
+      const events = tailer.parseLine(
+        assistantLine({ type: "thinking", thinking: "hmm" }, "tool_use"),
+      );
+      expect(events.map((e) => e.type)).not.toContain("turn_end");
+    });
+
+    test("final text line with stop_reason=end_turn IS turn_end", () => {
+      const events = tailer.parseLine(
+        assistantLine({ type: "text", text: "All done." }, "end_turn"),
+      );
+      const types = events.map((e) => e.type);
+      expect(types[types.length - 1]).toBe("turn_end");
+    });
+
+    test("the final answer's thinking line (also end_turn) is NOT turn_end", () => {
+      // Final response = [thinking, text] → two lines, both end_turn. Only the
+      // text line ends the turn; otherwise typing drops before the answer.
+      const events = tailer.parseLine(
+        assistantLine(
+          { type: "thinking", thinking: "final thoughts" },
+          "end_turn",
+        ),
+      );
+      expect(events.map((e) => e.type)).not.toContain("turn_end");
+    });
+
+    test("max_tokens ends the turn like end_turn", () => {
+      const events = tailer.parseLine(
+        assistantLine({ type: "text", text: "trunc" }, "max_tokens"),
+      );
+      expect(events.map((e) => e.type)).toContain("turn_end");
+    });
+
+    test("relay reply with stop_reason=tool_use still ends the turn", () => {
+      // The user has the answer once the relay reply lands.
+      const events = tailer.parseLine(
+        assistantLine(
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "mcp__channel-relay__reply",
+            input: { chat_id: "-100", request_id: "r1", text: "done" },
+          },
+          "tool_use",
+        ),
+      );
+      const types = events.map((e) => e.type);
+      expect(types[0]).toBe("relay_reply");
+      expect(types[types.length - 1]).toBe("turn_end");
+    });
+
+    test("native tool_use with stop_reason=tool_use is NOT turn_end", () => {
+      const events = tailer.parseLine(
+        assistantLine(
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "Read",
+            input: { file_path: "/x" },
+          },
+          "tool_use",
+        ),
+      );
+      expect(events.map((e) => e.type)).not.toContain("turn_end");
+    });
+
+    test("stop_reason=null falls back to the no-tool heuristic", () => {
+      const events = tailer.parseLine(
+        assistantLine({ type: "text", text: "legacy" }, null),
+      );
+      expect(events.map((e) => e.type)).toContain("turn_end");
+    });
+  });
+
   test("assistant with empty content does NOT emit turn_end", () => {
     const line = JSON.stringify({
       type: "assistant",
