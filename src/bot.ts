@@ -8,6 +8,7 @@
 import { Bot, type Context } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { installPacerTransformer } from "./messaging/pacer";
 import { installBridgeHealthTransformer } from "./bridge-health";
 import { createMessageBus, setMessageBus } from "./messaging";
 import { ALLOWED_USERS } from "./config";
@@ -98,6 +99,15 @@ export function createBot(options: BotOptions): Bot {
   // failures. Watch handlers consult isBridgeOnline() to drop tail-event
   // sends during outages instead of letting them pile up in grammy's queue.
   installBridgeHealthTransformer(bot.api);
+
+  // Pace outbound traffic to Telegram's per-chat flood limit. Installed LAST
+  // and therefore OUTERMOST — grammy's concatTransformer wraps the existing
+  // chain, so the last transformer added is the first one called. Both
+  // properties we need follow from that: every caller passes through it (the
+  // bus is not the only thing that talks to Telegram — see pacer.ts), and
+  // autoRetry's 429 backoff runs INSIDE the chat's slot instead of racing
+  // other calls into the same flood window.
+  installPacerTransformer(bot.api);
 
   // Sequentialize non-command messages per chat thread (prevents race conditions)
   bot.use(
