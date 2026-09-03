@@ -338,8 +338,8 @@ export function createPacer(opts: PacerOptions = {}) {
 export type Pacer = ReturnType<typeof createPacer>;
 
 /**
- * Install the pacer as a grammy transformer. Must be installed BEFORE
- * autoRetry so it wraps it — see the module header.
+ * Install the pacer as a grammy transformer. Must be installed LAST so it is
+ * outermost and wraps autoRetry — see the module header.
  */
 export function installPacerTransformer(
   api: Api,

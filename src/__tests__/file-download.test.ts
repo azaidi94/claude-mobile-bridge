@@ -117,7 +117,7 @@ let busSinks: {
 } = { replies: [], photos: [], documents: [] };
 type BusSendResult =
   | { messageId: number }
-  | { dropped: "dedup" | "ratelimit" | "error"; reason?: string };
+  | { dropped: "dedup" | "error"; reason?: string };
 const mockBusSend = mock(
   async (msg: {
     chatId: number;

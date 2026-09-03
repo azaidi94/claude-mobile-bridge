@@ -8,7 +8,7 @@
 import type { Api } from "grammy";
 import { STREAMING_THROTTLE_MS, TELEGRAM_SAFE_LIMIT } from "../../config";
 import { convertMarkdownToHtml } from "../../formatting";
-import { debug } from "../../logger";
+import { debug, error } from "../../logger";
 import { getMessageBus } from "../../messaging";
 import type { TailEvent } from "../../sessions/tailer";
 import { busStubMessage, type TailDisplayState } from "./state";
@@ -228,6 +228,73 @@ export function resetDisplaySegment(
   state.segmentDone = true;
 }
 
+/**
+ * Backoff between finalize attempts. Short: the lane that refused us is
+ * draining at the pacer's edit rate, and this write only competes with
+ * intermediate edits that the final one supersedes anyway.
+ */
+const FINALIZE_RETRY_DELAYS_MS = [2_000, 5_000];
+
+/** Edit outcomes after which the final text is on screen or unreachable. */
+function finalizeSettled(reason: string): boolean {
+  return /message is not modified|message to edit not found|message_id_invalid/i.test(
+    reason,
+  );
+}
+
+/**
+ * The finalize edit is the ONLY write of a segment's complete text — every
+ * other edit is a throttled intermediate snapshot, superseded by the next.
+ * Losing it leaves the bubble frozen mid-sentence at its last 500ms snapshot,
+ * and it fires at the end of a burst, exactly when the edit lane is deepest.
+ * So unlike the intermediates, it retries.
+ *
+ * Takes plain values, not `state`: the caller clears the segment synchronously
+ * and this outlives it.
+ */
+export async function finalizeWithRetry(
+  messageId: number,
+  chatId: number,
+  content: string,
+  sleep: (ms: number) => Promise<void> = (ms) => Bun.sleep(ms),
+): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    let reason: string;
+    try {
+      const r = await getMessageBus().edit(messageId, {
+        chatId,
+        content,
+        format: "auto",
+      });
+      if (r.ok) return true;
+      reason = r.reason;
+    } catch (err) {
+      reason = String(err);
+    }
+    if (finalizeSettled(reason)) return true;
+
+    const delay = FINALIZE_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      // User-visible: the paragraph stays truncated and nothing else rewrites it.
+      error("tail finalize edit failed", {
+        reason,
+        chatId,
+        messageId,
+        attempts: attempt + 1,
+      });
+      return false;
+    }
+    debug("tail finalize edit retry", {
+      reason,
+      chatId,
+      messageId,
+      attempt: attempt + 1,
+      delayMs: delay,
+    });
+    await sleep(delay);
+  }
+}
+
 export function finalizeTextMessage(
   _botApi: Api,
   state: TailDisplayState,
@@ -240,22 +307,11 @@ export function finalizeTextMessage(
   // skipped here — the prior segment edits already showed a truncated view.
   const formatted = convertMarkdownToHtml(state.currentTextContent);
   if (formatted.length <= TELEGRAM_SAFE_LIMIT) {
-    getMessageBus()
-      .edit(state.currentTextMsg.message_id, {
-        chatId: state.chatId,
-        content: state.currentTextContent,
-        format: "auto",
-      })
-      .then((r) => {
-        if (!r.ok)
-          debug("tail finalize edit not ok", {
-            reason: r.reason,
-            chatId: state.chatId,
-          });
-      })
-      .catch((err) =>
-        debug("tail finalize", { err: String(err), chatId: state.chatId }),
-      );
+    void finalizeWithRetry(
+      state.currentTextMsg.message_id,
+      state.chatId,
+      state.currentTextContent,
+    );
   }
 
   state.currentTextMsg = null;

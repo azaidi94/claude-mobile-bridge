@@ -1,18 +1,20 @@
 /**
  * MessageBus — single outbound path for Telegram messages.
  *
- * Phase 2 step 1: this module is purely additive. No handler / watch / cursor
- * code consumes it yet. Steps 3–5 migrate the existing sites onto the bus.
- *
  * The bus owns:
  *   - parse-mode resolution (via ./format)
  *   - chunking (via ./format)
  *   - plain fallback on TG parse errors
  *   - dedup TTL cache (60s, keyed on `dedupKey`)
- *   - per-(chatId,threadId) token-bucket rate limit (~30/min)
  *   - one log schema: `bus.send` (debug level; set DEBUG=1) with
  *     opId/chatId/threadId/kind/durationMs/result. Genuine failures
- *     (ratelimit, send/edit errors) also surface at warn.
+ *     (send/edit errors) also surface at warn.
+ *
+ * Rate limiting is deliberately NOT here. It lives in the pacer transformer
+ * (./pacer), below every caller — the bus is not the only thing that talks to
+ * Telegram, and a limiter at this layer throttled the disciplined callers
+ * while the raw-Api ones ran unmetered. It also dropped after a 5s wait what
+ * the pacer queues and delivers in order.
  */
 
 import { InputFile } from "grammy";
@@ -64,7 +66,7 @@ export interface OutboundMessage {
   opId?: string;
 }
 
-export type DropReason = "dedup" | "ratelimit" | "error";
+export type DropReason = "dedup" | "error";
 
 export type SendResult =
   | { messageId: number }
@@ -90,17 +92,8 @@ export interface MessageBus {
 // --- Tunables -------------------------------------------------------------
 
 const DEDUP_TTL_MS = 60_000;
-const RATE_LIMIT_TOKENS = 30;
-const RATE_LIMIT_REFILL_PER_SEC = 30 / 60; // 30 per minute → 0.5/s
-const RATE_LIMIT_WAIT_MS = 5_000;
-const RATE_LIMIT_POLL_MS = 100;
 
 // --- Helpers --------------------------------------------------------------
-
-interface Bucket {
-  tokens: number;
-  lastRefill: number; // ms epoch
-}
 
 function isParseEntityError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -150,47 +143,6 @@ export function getMessageBus(): MessageBus {
 export function createMessageBus(api: Api): MessageBus {
   // dedupKey → expiresAt (ms epoch). Cleanup is lazy.
   const dedupCache = new Map<string, number>();
-  // `${chatId}:${threadId ?? ""}` → bucket.
-  const buckets = new Map<string, Bucket>();
-
-  function rateKey(chatId: number, threadId?: number): string {
-    return `${chatId}:${threadId ?? ""}`;
-  }
-
-  function refillBucket(b: Bucket): void {
-    const now = Date.now();
-    const elapsed = (now - b.lastRefill) / 1000;
-    if (elapsed <= 0) return;
-    const tokens = Math.min(
-      RATE_LIMIT_TOKENS,
-      b.tokens + elapsed * RATE_LIMIT_REFILL_PER_SEC,
-    );
-    b.tokens = tokens;
-    b.lastRefill = now;
-  }
-
-  function tryConsumeToken(key: string): boolean {
-    let b = buckets.get(key);
-    if (!b) {
-      b = { tokens: RATE_LIMIT_TOKENS, lastRefill: Date.now() };
-      buckets.set(key, b);
-    }
-    refillBucket(b);
-    if (b.tokens >= 1) {
-      b.tokens -= 1;
-      return true;
-    }
-    return false;
-  }
-
-  async function waitForToken(key: string): Promise<boolean> {
-    const deadline = Date.now() + RATE_LIMIT_WAIT_MS;
-    while (Date.now() < deadline) {
-      if (tryConsumeToken(key)) return true;
-      await Bun.sleep(RATE_LIMIT_POLL_MS);
-    }
-    return tryConsumeToken(key);
-  }
 
   function cleanupDedup(): void {
     const now = Date.now();
@@ -457,9 +409,9 @@ export function createMessageBus(api: Api): MessageBus {
       // Dedup gate. Reserve the key SYNCHRONOUSLY here (before the first
       // await), not after the send — otherwise two sends fired in the same
       // tick (e.g. two leaked tailers polling together) both pass the check
-      // and both post. Released again on any path that doesn't deliver: the
-      // rate-limit drop below and the catch's deleteDedup (so a failed send
-      // never poisons the cache and a genuine retry still goes through).
+      // and both post. Released again by the catch's deleteDedup on failure,
+      // so a failed send never poisons the cache and a genuine retry still
+      // goes through.
       if (isDedup(dedupKey)) {
         debug("bus.send", {
           opId,
@@ -474,36 +426,6 @@ export function createMessageBus(api: Api): MessageBus {
         return { dropped: "dedup" };
       }
       recordDedup(dedupKey);
-
-      // Rate limit.
-      const rkey = rateKey(msg.chatId, msg.threadId);
-      const got = await waitForToken(rkey);
-      if (!got) {
-        // Release the dedup reservation — this send never delivered, so a
-        // later retry of the same content must not be falsely deduped.
-        deleteDedup(dedupKey);
-        // A rate-limited send is dropped outright — the message never reaches
-        // the user, so surface it at warn (the file's documented schema keeps
-        // ratelimit at warn). The bus.send telemetry line below mirrors it at
-        // debug for the uniform per-outcome schema.
-        warn("bus.send ratelimit drop", {
-          opId,
-          chatId: msg.chatId,
-          threadId: msg.threadId,
-          kind,
-        });
-        debug("bus.send", {
-          opId,
-          chatId: msg.chatId,
-          threadId: msg.threadId,
-          kind,
-          durationMs: elapsedMs(startedAt),
-          result: "drop:ratelimit",
-          dedupKey,
-          chunkCount: 0,
-        });
-        return { dropped: "ratelimit" };
-      }
 
       try {
         const formatHint: FormatHint = msg.format ?? "auto";
@@ -553,23 +475,6 @@ export function createMessageBus(api: Api): MessageBus {
 
         let firstMessageId: number | null = null;
         for (let i = 0; i < sendChunks.length; i++) {
-          // Consume a rate token per chunk (chunks after the first).
-          if (i > 0) {
-            const chunkToken = await waitForToken(rkey);
-            if (!chunkToken) {
-              // A skipped chunk truncates the delivered message — user-visible
-              // partial delivery, so keep it at warn rather than hiding it.
-              warn("bus.send chunk ratelimit skip", {
-                opId,
-                chatId: msg.chatId,
-                threadId: msg.threadId,
-                chunkIndex: i,
-                totalChunks: sendChunks.length,
-              });
-              continue; // skip this chunk; partial delivery better than silent drop
-            }
-          }
-
           const sc = sendChunks[i]!;
           // Reply-markup only on the first chunk (TG would otherwise repeat
           // the keyboard on every chunk).

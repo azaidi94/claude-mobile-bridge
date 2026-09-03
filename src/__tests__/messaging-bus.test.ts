@@ -379,36 +379,6 @@ describe("MessageBus.send — dedup", () => {
 });
 
 // ---------------------------------------------------------------------------
-// rate limit
-// ---------------------------------------------------------------------------
-
-describe("MessageBus.send — rate limit", () => {
-  test("31st rapid send is rate-limited (drop or wait)", async () => {
-    const api = makeApi();
-    const bus = createMessageBus(api as any);
-    // 30 should sail through; 31st must wait (or drop).
-    const first30: Promise<unknown>[] = [];
-    for (let i = 0; i < 30; i++) {
-      first30.push(bus.send({ chatId: 7, content: `m${i}` }));
-    }
-    await Promise.all(first30);
-    expect(api.sendMessage).toHaveBeenCalledTimes(30);
-
-    // 31st send: kick off and race against a short timer.
-    const start = Date.now();
-    const r = await bus.send({ chatId: 7, content: "m31" });
-    const elapsed = Date.now() - start;
-    // Either it waited measurably (>= a couple poll cycles) and succeeded,
-    // or it gave up and returned dropped:ratelimit.
-    if ("messageId" in r) {
-      expect(elapsed).toBeGreaterThanOrEqual(100);
-    } else {
-      expect((r as any).dropped).toBe("ratelimit");
-    }
-  }, 20_000);
-});
-
-// ---------------------------------------------------------------------------
 // attachments
 // ---------------------------------------------------------------------------
 
@@ -655,71 +625,6 @@ describe("MessageBus.send — dedup poisoning", () => {
     expect("messageId" in r2).toBe(true);
     if ("messageId" in r2) expect(r2.messageId).toBe(9999);
   });
-
-  test("rate-limited send does not poison dedup cache", async () => {
-    const api = makeApi();
-    const bus = createMessageBus(api as any);
-
-    // Exhaust all 30 tokens.
-    for (let i = 0; i < 30; i++) {
-      await bus.send({ chatId: 7, content: `m${i}` });
-    }
-
-    // 31st send with dedup key → should be rate-limited, not dedup-poisoned.
-    const r1 = await bus.send({
-      chatId: 7,
-      content: "after-burst",
-      dedupKey: "burst-key",
-    });
-    // Either dropped:ratelimit or succeeded after waiting.
-    if ("dropped" in r1 && (r1 as any).dropped === "ratelimit") {
-      // Rate-limited: verify retry is NOT dedup-dropped.
-      // Wait a bit for token refill.
-      await new Promise((r) => setTimeout(r, 200));
-      const r2 = await bus.send({
-        chatId: 7,
-        content: "after-burst",
-        dedupKey: "burst-key",
-      });
-      expect("messageId" in r2).toBe(true);
-    }
-    // If it succeeded (waited), that's also fine — dedup wasn't poisoned
-    // because it was never recorded before the send attempt.
-  }, 20_000);
-});
-
-// ---------------------------------------------------------------------------
-// rate tokens per chunk
-// ---------------------------------------------------------------------------
-
-describe("MessageBus.send — rate tokens per chunk", () => {
-  test("multi-chunk send consumes rate token for each chunk", async () => {
-    const api = makeApi();
-    const bus = createMessageBus(api as any);
-
-    // Consume 28 tokens first, leaving ~2 in the bucket.
-    for (let i = 0; i < 28; i++) {
-      await bus.send({ chatId: 9, content: `token-eater-${i}` });
-    }
-
-    // Now send a message that will produce 3+ chunks.
-    // With only ~2 tokens left + refill, the per-chunk token consumption
-    // ensures not all chunks blast through on the same token.
-    const para = "Z".repeat(3000);
-    const text = `${para}\n\n${para}\n\n${para}\n\n${para}`; // 4 chunks
-    const r = await bus.send({ chatId: 9, content: text, format: "plain" });
-
-    // The send should succeed (at least first chunk), and each chunk
-    // individually consumed a token. With plain format, no HTML expansion.
-    expect("messageId" in r).toBe(true);
-    // All chunks should have been sent (rate limiter had enough tokens
-    // with refill + waiting).
-    expect(api._sentTexts.length).toBe(28 + 4);
-    // Verify each send was for a distinct chunk.
-    for (const sent of api._sentTexts.slice(28)) {
-      expect(sent.text.length).toBeLessThanOrEqual(4096);
-    }
-  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
