@@ -21,6 +21,11 @@ let findNewestSessionInDirImpl: (
   dir: string,
   excludeIds?: ReadonlySet<string>,
 ) => Promise<string | null> = async () => null;
+let findNewestSessionInEncodedDirImpl: (
+  dir: string,
+  excludeIds?: ReadonlySet<string>,
+) => Promise<string | null> = async () => null;
+let lastEncodedDirArg: string | undefined;
 let lastExcludeIds: unknown;
 let scanPortFilesImpl: () => Promise<any[]> = async () => [];
 let ralphBlocksTopicWatchImpl: (
@@ -46,6 +51,14 @@ mock.module("../sessions/tailer", () => ({
   findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) => {
     lastExcludeIds = excludeIds;
     return findNewestSessionInDirImpl(dir, excludeIds);
+  },
+  findNewestSessionInEncodedDir: (
+    dir: string,
+    excludeIds?: ReadonlySet<string>,
+  ) => {
+    lastEncodedDirArg = dir;
+    lastExcludeIds = excludeIds;
+    return findNewestSessionInEncodedDirImpl(dir, excludeIds);
   },
   getExpectedJsonlPath: (cwd: string, id: string) =>
     `/expected/${cwd.replace(/[/.]/g, "-")}/${id}.jsonl`,
@@ -535,6 +548,8 @@ describe("_resolveDriftTargetId", () => {
   beforeEach(async () => {
     scanPortFilesImpl = async () => [];
     findNewestSessionInDirImpl = async () => null;
+    findNewestSessionInEncodedDirImpl = async () => null;
+    lastEncodedDirArg = undefined;
     getSessionImpl = () => null;
     const mod = await import("../handlers/watch");
     mod._resetWatchesForTests();
@@ -546,6 +561,28 @@ describe("_resolveDriftTargetId", () => {
     const ws = makeWatch({});
     mod._registerWatchForTests(ws);
     expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
+  });
+
+  test("sole owner, cwd-moved (tailerPath set): scans the CURRENT tailer dir, not the frozen sessionDir", async () => {
+    // Regression for 2026-08-23 kx_repo-3: after a mid-session `cd` into a
+    // git worktree, tailerPath points at the worktree's encoded project dir.
+    // A stale sibling transcript left behind in the ORIGINAL sessionDir must
+    // not be rediscovered as "newest" and drag the watch back onto it —
+    // that fought _recoverMisboundTailer's correction every other tick and
+    // spammed "🔄 started a new conversation" forever.
+    findNewestSessionInDirImpl = async () => "stale-original-dir-id";
+    findNewestSessionInEncodedDirImpl = async () => "live-worktree-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({
+      sessionId: "live-worktree-id",
+      tailerPath:
+        "/Users/x/.claude/projects/worktree-encoded/live-worktree-id.jsonl",
+    });
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("live-worktree-id");
+    expect(lastEncodedDirArg).toBe(
+      "/Users/x/.claude/projects/worktree-encoded",
+    );
   });
 
   test("pinnedPid: resolves by this pid's port file, ignoring newest-in-dir", async () => {

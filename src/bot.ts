@@ -54,6 +54,7 @@ import {
   handleClear,
   handleCompact,
   handleContext,
+  handleClaude,
   handleSessions,
   handleWatch,
   handleUnwatch,
@@ -317,6 +318,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("clear", withSctx(handleClear));
   bot.command("compact", withSctx(handleCompact));
   bot.command("context", withSctx(handleContext));
+  bot.command("claude", withSctx(handleClaude));
   bot.command("sessions", handleSessions);
   bot.command("pwd", withSctx(handlePwd));
   bot.command("cd", withSctx(handleCd));

@@ -32,6 +32,7 @@ export {
   handleClear,
   handleCompact,
   handleContext,
+  handleClaude,
   handleSessions,
   offlineSessionCache,
   handlePwd,

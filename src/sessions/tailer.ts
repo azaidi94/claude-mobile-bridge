@@ -979,8 +979,24 @@ export async function findNewestSessionInDir(
   cwd: string,
   excludeIds?: ReadonlySet<string> | Set<string>,
 ): Promise<string | null> {
-  const dir = projectDir(cwd);
+  return findNewestSessionInEncodedDir(projectDir(cwd), excludeIds);
+}
 
+/**
+ * Same as `findNewestSessionInDir`, but takes an already Claude-encoded
+ * project directory (e.g. `dirname()` of a live tailer path) instead of a raw
+ * cwd. Lets callers scope the "newest in dir" scan to wherever a session is
+ * *currently* writing after a mid-session `cd` (e.g. into a git worktree),
+ * rather than the directory its cwd started in — see
+ * `_resolveDriftTargetId`'s sole-owner path in jsonl-tailer.ts, which used to
+ * always re-derive `dir` from the session's original (frozen) cwd and so kept
+ * rediscovering a stale sibling transcript left behind in that directory
+ * after the session moved.
+ */
+export async function findNewestSessionInEncodedDir(
+  dir: string,
+  excludeIds?: ReadonlySet<string> | Set<string>,
+): Promise<string | null> {
   try {
     const files = await readdir(dir);
     const candidates: { id: string; mtime: number; path: string }[] = [];
