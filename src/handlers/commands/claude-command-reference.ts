@@ -7,6 +7,8 @@
  * (availability varies by platform, plan, and environment).
  */
 
+import { escapeHtml } from "../../formatting";
+
 interface CommandEntry {
   name: string;
   purpose: string;
@@ -178,10 +180,6 @@ const UNVERIFIED_TAIL = [
   "/team-onboarding",
   "/statusline",
 ];
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function render(): string {
   const sections = GROUPS.map((group) => {

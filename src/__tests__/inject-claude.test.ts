@@ -8,7 +8,9 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import type { SessionContext } from "../sessions/context";
 
 let isAuthorizedImpl: () => boolean = () => true;
-let resolveTopicSessionImpl: () => Promise<boolean> = async () => false;
+let resolveTopicSessionImpl: (action: string) => Promise<boolean> = async () =>
+  false;
+let resolveTopicSessionActions: string[] = [];
 let sendKeysCalls: { sctx: SessionContext; text: string }[] = [];
 let sendKeysImpl: (
   sctx: SessionContext,
@@ -35,7 +37,10 @@ mock.module("../handlers/commands/helpers", () => ({
     busReplyCalls.push({ content, opts });
     return Promise.resolve();
   },
-  resolveTopicSession: () => resolveTopicSessionImpl(),
+  resolveTopicSession: (_ctx: unknown, action: string) => {
+    resolveTopicSessionActions.push(action);
+    return resolveTopicSessionImpl(action);
+  },
 }));
 
 mock.module("../handlers/commands/terminal-inject", () => ({
@@ -73,6 +78,7 @@ describe("/claude", () => {
   beforeEach(() => {
     isAuthorizedImpl = () => true;
     resolveTopicSessionImpl = async () => false;
+    resolveTopicSessionActions = [];
     sendKeysCalls = [];
     sendKeysImpl = async () => ({ ok: true });
     busReplyCalls = [];
@@ -120,6 +126,56 @@ describe("/claude", () => {
     const { handleClaude } = await import("../handlers/commands/inject");
     await handleClaude(ctx("quit"), sctx());
     expect(sendKeysCalls.length).toBe(0);
+  });
+
+  test("blocks a double-slashed exit (name check and injection must agree)", async () => {
+    const { handleClaude } = await import("../handlers/commands/inject");
+    await handleClaude(ctx("//exit"), sctx());
+    expect(sendKeysCalls.length).toBe(0);
+    expect(busReplyCalls[0]!.content).toContain("blocked");
+  });
+
+  test("rejects a multi-line argument instead of injecting it verbatim", async () => {
+    const { handleClaude } = await import("../handlers/commands/inject");
+    await handleClaude(ctx("foo\nexit"), sctx());
+    expect(sendKeysCalls.length).toBe(0);
+    expect(busReplyCalls[0]!.content).toContain("single line");
+  });
+
+  test("outside a session topic: does not attempt the broken generic picker", async () => {
+    const { handleClaude } = await import("../handlers/commands/inject");
+    await handleClaude(ctx("resume"), undefined);
+    expect(resolveTopicSessionActions).toEqual([]);
+    expect(sendKeysCalls.length).toBe(0);
+  });
+});
+
+describe("/clear, /compact, /context pickers", () => {
+  beforeEach(() => {
+    isAuthorizedImpl = () => true;
+    resolveTopicSessionImpl = async () => false;
+    resolveTopicSessionActions = [];
+    sendKeysCalls = [];
+    sendKeysImpl = async () => ({ ok: true });
+    busReplyCalls = [];
+  });
+
+  test("/clear uses the clear_pick action callback.ts actually dispatches", async () => {
+    const { handleClear } = await import("../handlers/commands/inject");
+    await handleClear(ctx(""), undefined);
+    expect(resolveTopicSessionActions).toEqual(["clear_pick"]);
+  });
+
+  test("/compact uses the compact_pick action callback.ts actually dispatches", async () => {
+    const { handleCompact } = await import("../handlers/commands/inject");
+    await handleCompact(ctx(""), undefined);
+    expect(resolveTopicSessionActions).toEqual(["compact_pick"]);
+  });
+
+  test("/context uses the context_pick action callback.ts actually dispatches", async () => {
+    const { handleContext } = await import("../handlers/commands/inject");
+    await handleContext(ctx(""), undefined);
+    expect(resolveTopicSessionActions).toEqual(["context_pick"]);
   });
 
   test("unauthorized user is rejected before injection", async () => {

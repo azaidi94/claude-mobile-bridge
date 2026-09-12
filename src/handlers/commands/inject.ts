@@ -26,13 +26,21 @@ async function injectSlashCommand(
   sctx: SessionContext | undefined,
   slash: string,
   doneLabel: string,
+  pickerAction?: string,
 ): Promise<void> {
   if (!isAuthorized(ctx.from?.id, ALLOWED_USERS)) {
     await busReply(ctx, "Unauthorized.");
     return;
   }
 
-  if (!sctx && (await resolveTopicSession(ctx, `${slash.slice(1)}_pick`)))
+  // Only offer the General-topic session picker for the fixed set of
+  // commands callback.ts actually has a "<action>_pick:" dispatch entry
+  // for (clear/compact/context). The generic /claude passthrough has no
+  // such entry for arbitrary command names, so it skips straight to the
+  // "use it in a session topic" message below instead of showing a picker
+  // whose button would silently no-op (or collide with an unrelated
+  // command that happens to share a name, e.g. /claude model).
+  if (!sctx && pickerAction && (await resolveTopicSession(ctx, pickerAction)))
     return;
 
   if (!sctx) {
@@ -77,7 +85,13 @@ export async function handleClear(
   ctx: Context,
   sctx?: SessionContext,
 ): Promise<void> {
-  await injectSlashCommand(ctx, sctx, "/clear", "🧹 Sent /clear.");
+  await injectSlashCommand(
+    ctx,
+    sctx,
+    "/clear",
+    "🧹 Sent /clear.",
+    "clear_pick",
+  );
 }
 
 /** /compact — compact the desktop session's context. */
@@ -85,7 +99,13 @@ export async function handleCompact(
   ctx: Context,
   sctx?: SessionContext,
 ): Promise<void> {
-  await injectSlashCommand(ctx, sctx, "/compact", "🗜 Sent /compact.");
+  await injectSlashCommand(
+    ctx,
+    sctx,
+    "/compact",
+    "🗜 Sent /compact.",
+    "compact_pick",
+  );
 }
 
 /** /context — show the desktop session's context-window usage. */
@@ -93,7 +113,13 @@ export async function handleContext(
   ctx: Context,
   sctx?: SessionContext,
 ): Promise<void> {
-  await injectSlashCommand(ctx, sctx, "/context", "📊 Sent /context.");
+  await injectSlashCommand(
+    ctx,
+    sctx,
+    "/context",
+    "📊 Sent /context.",
+    "context_pick",
+  );
 }
 
 /**
@@ -114,7 +140,21 @@ export async function handleClaude(
     await busReply(ctx, CLAUDE_COMMAND_REFERENCE, "html");
     return;
   }
-  const name = arg.split(/\s+/)[0]!.replace(/^\//, "").toLowerCase();
+  // Reject embedded newlines outright: a literal tmux send-keys payload
+  // transmits them as raw LF bytes, which a line-oriented TUI reads as
+  // Enter — submitting the first line early and leaving the rest (e.g. a
+  // blocklisted "exit") in the input bar for this handler's own trailing
+  // Enter to submit, smuggling it past the blocklist check below.
+  if (/[\r\n]/.test(arg)) {
+    await busReply(ctx, "❌ /claude commands must be a single line.");
+    return;
+  }
+  // Strip ALL leading slashes before both the blocklist check and the
+  // injected command so the two can't disagree (e.g. "//exit" used to
+  // check "/exit" against the blocklist — a miss — while injecting the
+  // slash-normalized "exit").
+  const stripped = arg.replace(/^\/+/, "");
+  const name = stripped.split(/\s+/)[0]!.toLowerCase();
   if (CLAUDE_COMMAND_BLOCKLIST.has(name)) {
     await busReply(
       ctx,
@@ -122,6 +162,6 @@ export async function handleClaude(
     );
     return;
   }
-  const slash = `/${arg.replace(/^\/+/, "")}`;
+  const slash = `/${stripped}`;
   await injectSlashCommand(ctx, sctx, slash, `➡️ Sent ${slash}.`);
 }
