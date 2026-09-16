@@ -49,7 +49,10 @@ function write(name: string, data: Record<string, unknown>): void {
 }
 
 beforeEach(() => {
+  // Only the port files — paths.ts also creates a `logs/` subdir here, and a
+  // non-recursive rmSync on a directory fails (EFAULT on Linux bun).
   for (const f of readdirSync(STATE_DIR)) {
+    if (!f.endsWith(".json")) continue;
     rmSync(join(STATE_DIR, f), { force: true });
   }
 });
