@@ -7,6 +7,7 @@
  */
 
 import { resolve } from "path";
+import { homedir } from "os";
 import { stat } from "fs/promises";
 import type { Context } from "grammy";
 import { escapeHtml, formatTimeAgo } from "../../formatting";
@@ -38,6 +39,13 @@ import {
 } from "./helpers";
 import { spawnDesktopClaudeSession } from "./spawn";
 
+/** `~` / `~/x` → absolute. The bot prints paths with `~`, so accept them back. */
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return resolve(homedir(), p.slice(2));
+  return p;
+}
+
 /**
  * /new [path] - Open Terminal (or iTerm) with Claude in the project directory.
  */
@@ -58,7 +66,7 @@ export async function handleNew(ctx: Context): Promise<void> {
   const text = ctx.message?.text || "";
   const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
   const explicitPath = rawPath
-    ? resolve(getWorkingDir(), rawPath)
+    ? resolve(getWorkingDir(), expandHome(rawPath))
     : getWorkingDir();
 
   if (!isPathAllowed(explicitPath)) {

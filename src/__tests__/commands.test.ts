@@ -5,6 +5,8 @@
  * Each handler follows the pattern: auth check -> logic -> ctx.reply()
  */
 
+import { relative } from "path";
+import { homedir } from "os";
 import {
   describe,
   expect,
@@ -1654,6 +1656,32 @@ describe("commands: parsing", () => {
 
       await handleNew(ctx as any);
       expect(ctx._replies[0]?.text).toContain("Path does not exist");
+    } finally {
+      accessSpy.mockRestore();
+    }
+  });
+
+  test("new command expands ~ to the home directory", async () => {
+    const accessSpy = spyOn(fsPromises, "access").mockImplementation(
+      async (path, mode?) => {
+        if (String(path) === "/usr/local/bin/claude") return undefined;
+        return realFsAccess(path, mode);
+      },
+    );
+    try {
+      const { handleNew } = await import("../handlers/commands");
+      // ALLOWED_PATHS = ["/tmp"]; reach it via ~ so the only way past the
+      // allow-list check is genuine tilde expansion (a literal "~" under
+      // cwd would be rejected as outside allowed directories).
+      const viaHome = relative(homedir(), "/tmp/nonexistent-path-xyz-99999");
+      const ctx = createMockContext({
+        userId: 123456,
+        messageText: `/new ~/${viaHome}`,
+      });
+      await handleNew(ctx as any);
+      const text = ctx._replies[0]?.text ?? "";
+      expect(text).not.toContain("Path not in allowed directories");
+      expect(text).toContain("Path does not exist");
     } finally {
       accessSpy.mockRestore();
     }
