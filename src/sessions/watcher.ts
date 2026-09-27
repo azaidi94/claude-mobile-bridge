@@ -527,9 +527,63 @@ async function scanSessions(): Promise<{
     found.push(...dirFound);
   }
 
-  assignPidsToSessions(found, runningProcesses, portFiles);
+  const deduped = dedupeSessionsById(found, runningDirs);
+  assignPidsToSessions(deduped, runningProcesses, portFiles);
 
-  return { sessions: found, portFiles };
+  return { sessions: deduped, portFiles };
+}
+
+/**
+ * Collapse entries that share one sessionId but were discovered under
+ * different dirs. This happens when Claude resumes a transcript from another
+ * folder (or otherwise chdir's): the relay port file keeps the cwd it was
+ * written with at launch, while the JSONL — and the live process — report the
+ * new cwd. Left as two entries, only one can inherit the prior name each
+ * refresh, discovery order flips, and the loser's name alternates between
+ * `<dirA>` and `<dirB>-2`; `portFileNameUpdates` then writes the alternating
+ * name into the port file, which trips the STATE_DIR watch and schedules the
+ * next refresh — a ~1/s "offline/online" flap.
+ *
+ * Keeps the entry whose dir has a live Claude process (the authoritative
+ * cwd); with no such entry, keeps the first seen. Id-less entries are never
+ * merged.
+ */
+export function dedupeSessionsById(
+  sessions: SessionInfo[],
+  runningDirs: ReadonlyMap<string, number>,
+): SessionInfo[] {
+  const keptById = new Map<string, SessionInfo>();
+  const out: SessionInfo[] = [];
+  for (const s of sessions) {
+    if (!s.id) {
+      out.push(s);
+      continue;
+    }
+    const prev = keptById.get(s.id);
+    if (!prev) {
+      keptById.set(s.id, s);
+      out.push(s);
+      continue;
+    }
+    const prevLive = runningDirs.has(prev.dir);
+    const curLive = runningDirs.has(s.dir);
+    if (curLive && !prevLive) {
+      debug("watcher: dedupe by sessionId, preferring live-process dir", {
+        sessionId: s.id,
+        dropped: prev.dir,
+        kept: s.dir,
+      });
+      out[out.indexOf(prev)] = s;
+      keptById.set(s.id, s);
+    } else {
+      debug("watcher: dedupe by sessionId, dropping duplicate dir", {
+        sessionId: s.id,
+        dropped: s.dir,
+        kept: prev.dir,
+      });
+    }
+  }
+  return out;
 }
 
 /**
