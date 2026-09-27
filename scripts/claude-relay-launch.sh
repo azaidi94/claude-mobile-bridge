@@ -167,6 +167,9 @@ if {[info exists env(CRL_EXPECT_TIMEOUT)]
   set timeout 180
 }
 log_user 1
+# The cursor marker (U+276F) must decode as one char for the "on No" check;
+# launchd / cmux spawns may lack a UTF-8 LANG, so don't rely on the locale.
+encoding system utf-8
 
 # Word separator for prompt matching: Ink emits cursor-column escapes between
 # words, so "safety check" arrives as "safety\x1b\[15Gcheck". SEP admits full
@@ -198,7 +201,10 @@ expect {
     expect {
       -re "(?i)\u276f${SEP}no" { set on_no 1 }
       -re "(?i)yes${SEP}i${SEP}trust|yes${SEP}proceed" {}
-      timeout {}
+      eof { exit 0 }
+      timeout {
+        puts stderr "claude-relay-launch: trust option list not seen within 5s; answering Enter (may decline on Claude >= 2.1.283)"
+      }
     }
     set timeout $outer_timeout
     if {$on_no} {
