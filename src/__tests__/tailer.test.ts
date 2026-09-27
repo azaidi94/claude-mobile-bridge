@@ -625,8 +625,8 @@ describe("tailer: parseLine", () => {
           {
             type: "text",
             text:
-              '<channel source="channel-relay" chat_id="-1003968796171" ' +
-              'request_id="r2" user="azaidiuk" ts="2026-04-23T10:00:00.000Z">hello from tg</channel>',
+              '<channel source="channel-relay" chat_id="-1001111111111" ' +
+              'request_id="r2" user="testuser" ts="2026-04-23T10:00:00.000Z">hello from tg</channel>',
           },
         ],
       },
@@ -636,7 +636,7 @@ describe("tailer: parseLine", () => {
     expect(events[1]).toMatchObject({
       type: "user",
       content: "hello from tg",
-      originChat: "-1003968796171",
+      originChat: "-1001111111111",
     });
   });
 
@@ -684,7 +684,7 @@ describe("tailer: parseLine", () => {
             type: "tool_use",
             name: "mcp__channel-relay__edit_message",
             input: {
-              chat_id: "-1003968796171",
+              chat_id: "-1001111111111",
               message_id: 42,
               text: "edited",
             },
@@ -698,7 +698,7 @@ describe("tailer: parseLine", () => {
     expect(events[0]).toMatchObject({
       type: "relay_reply",
       content: "edited",
-      originChat: "-1003968796171",
+      originChat: "-1001111111111",
     });
     expect(events[1]!.type).toBe("turn_end");
   });
@@ -1460,7 +1460,7 @@ describe("tailer: findNewestSessionInDir", () => {
 
 describe("tailer: encodeProjectPath", () => {
   test("replaces slashes with dashes", () => {
-    expect(encodeProjectPath("/Users/ali/Dev/foo")).toBe("-Users-ali-Dev-foo");
+    expect(encodeProjectPath("/Users/me/Dev/foo")).toBe("-Users-me-Dev-foo");
   });
 
   test("replaces dots with dashes", () => {
@@ -1478,19 +1478,19 @@ describe("tailer: encodeProjectPath", () => {
 
 describe("tailer: getExpectedJsonlPath", () => {
   test("encodes a simple cwd by replacing slashes with dashes", () => {
-    const path = getExpectedJsonlPath("/Users/ali/Dev/athletiq", "abc-123");
+    const path = getExpectedJsonlPath("/Users/me/Dev/demo-app", "abc-123");
     expect(path).toEndWith(
-      "/.claude/projects/-Users-ali-Dev-athletiq/abc-123.jsonl",
+      "/.claude/projects/-Users-me-Dev-demo-app/abc-123.jsonl",
     );
   });
 
   test("encodes dots in the cwd as dashes (worktree paths)", () => {
     const path = getExpectedJsonlPath(
-      "/Users/ali/Dev/claude-mobile-bridge/.claude/worktrees/reverent-neumann",
+      "/Users/me/Dev/claude-mobile-bridge/.claude/worktrees/reverent-neumann",
       "f9523856",
     );
     expect(path).toEndWith(
-      "/.claude/projects/-Users-ali-Dev-claude-mobile-bridge--claude-worktrees-reverent-neumann/f9523856.jsonl",
+      "/.claude/projects/-Users-me-Dev-claude-mobile-bridge--claude-worktrees-reverent-neumann/f9523856.jsonl",
     );
   });
 });
@@ -1524,7 +1524,7 @@ describe("tailer: lifecycle", () => {
     // Simulates the watch.ts drift path: a fresh JSONL has the user's first
     // prompt already on disk before our tailer attaches. Without this opt-in,
     // EOF positioning would skip the message and TG would lose it (the bug
-    // that hit saas-builder on 2026-05-10).
+    // that hit shop-app on 2026-05-10).
     const userLine = JSON.stringify({
       type: "user",
       message: {

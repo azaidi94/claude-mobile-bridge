@@ -166,7 +166,7 @@ export interface TailEvent {
   /**
    * Surface-of-origin for channel-relay-routed events.
    * - "web" for web UI sends
-   * - A Telegram chat id as string (e.g. "-1003968796171") for Telegram sends
+   * - A Telegram chat id as string (e.g. "-1001111111111") for Telegram sends
    * - undefined for native-to-session events
    */
   originChat?: string;

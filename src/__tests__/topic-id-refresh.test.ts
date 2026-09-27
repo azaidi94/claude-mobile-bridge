@@ -5,12 +5,10 @@ describe("topicSessionIdRefreshPlan", () => {
   test("refreshes a topic whose stored sessionId is stale vs its live port file (R1, no launchUuid)", () => {
     const plan = topicSessionIdRefreshPlan(
       [],
-      [{ topicName: "kinetix-agents", sessionId: "new-id" }],
-      [{ sessionName: "kinetix-agents", sessionId: "stale-id" }],
+      [{ topicName: "acme-api", sessionId: "new-id" }],
+      [{ sessionName: "acme-api", sessionId: "stale-id" }],
     );
-    expect(plan).toEqual([
-      { sessionName: "kinetix-agents", sessionId: "new-id" },
-    ]);
+    expect(plan).toEqual([{ sessionName: "acme-api", sessionId: "new-id" }]);
   });
 
   test("populates a topic that has no sessionId yet (R1, no launchUuid)", () => {

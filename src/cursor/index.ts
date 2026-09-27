@@ -409,7 +409,7 @@ async function wireCrossPost(
 
 /**
  * Cursor's main page title is "<file-or-version> — <workspace-name>", e.g.
- * "2.1.132 — claude-mobile-bridge" or "compose.local.env — kinetix-cloud".
+ * "2.1.132 — claude-mobile-bridge" or "compose.local.env — acme-web".
  * Extract the workspace name (last segment); fall back to a slug of the
  * full title.
  */

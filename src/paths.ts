@@ -23,8 +23,8 @@ export const LOG_DIR =
  * Convert a working directory to its `~/.claude/projects/<encoded>` path.
  *
  * Claude Code encodes the cwd by replacing every non-alphanumeric character
- * with a dash — not just slashes. A project path like `…/kx_repo/kinetix-agents`
- * lands on disk as `…-kx-repo-kinetix-agents`, so a slash-only encoder points
+ * with a dash — not just slashes. A project path like `…/my_repo/acme-api`
+ * lands on disk as `…-my-repo-acme-api`, so a slash-only encoder points
  * at a directory that never exists for any path containing `_` or `.`, and
  * sessionId discovery/backfill silently find nothing.
  *

@@ -16,8 +16,6 @@
  *
  * Cards use their own `perm:*` callback namespace, the way `bridge:*` sits
  * beside `askremote:*`.
- *
- * See docs/superpowers/specs/2026-07-17-permission-relay-design.md.
  */
 
 import type { Api } from "grammy";

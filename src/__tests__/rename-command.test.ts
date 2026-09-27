@@ -11,7 +11,7 @@ import { isValidSessionName } from "../handlers/commands/rename";
 
 describe("isValidSessionName", () => {
   test("accepts watcher-style names", () => {
-    for (const n of ["kx_repo", "rem-engine", "a", "proj.v2", "X9-_."]) {
+    for (const n of ["my_repo", "rem-engine", "a", "proj.v2", "X9-_."]) {
       expect(isValidSessionName(n)).toBe(true);
     }
   });

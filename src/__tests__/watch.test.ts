@@ -380,7 +380,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   }
 
   test("user event with originChat === ownChat is skipped (TCP dedup) — and does NOT emit to bus (bug_010)", async () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const { globalEventBus } = await import("../web/sse");
@@ -391,7 +391,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
     handleTailEvent(
       api,
       state,
-      { type: "user", content: "hi", originChat: "-1003968796171" },
+      { type: "user", content: "hi", originChat: "-1001111111111" },
       6302,
     );
     expect(sent).toHaveLength(0);
@@ -402,7 +402,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with originChat === 'web' is skipped (already on bus)", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -415,7 +415,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with originChat undefined emits terminal user_message to bus", async () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const { globalEventBus } = await import("../web/sse");
@@ -440,7 +440,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with <task-notification> XML renders as a card, not raw XML", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const xml = [
@@ -464,7 +464,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with <task-notification> renders <event> detail under the summary", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const xml = [
@@ -483,7 +483,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event that is entirely <local-command-caveat> is dropped (no send, no bus emit)", async () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const { globalEventBus } = await import("../web/sse");
@@ -500,7 +500,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with caveat prefix + real text strips the caveat", async () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const { globalEventBus } = await import("../web/sse");
@@ -521,7 +521,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event with <task-notification> does NOT emit to the bus", async () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     const { globalEventBus } = await import("../web/sse");
@@ -541,7 +541,7 @@ describe("watch: handleTailEvent user-event origin filter", () => {
   });
 
   test("user event from a foreign Telegram chat renders 💬 Chat label", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -596,7 +596,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
   }
 
   test("relay_reply with originChat === ownChat sends nothing (TCP dedup preserved)", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     // Simulate TCP having claimed this turn before the tailer fired.
     const { turnClaimKey } = require("../handlers/watch/turn-claims");
     const claims = new Map<string, number>();
@@ -607,14 +607,14 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
     handleTailEvent(
       api,
       state,
-      { type: "relay_reply", content: "hello", originChat: "-1003968796171" },
+      { type: "relay_reply", content: "hello", originChat: "-1001111111111" },
       6302,
     );
     expect(sent).toHaveLength(0);
   });
 
   test("relay_reply with originChat === undefined sends nothing (dedup for own-path)", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     // Simulate TCP having claimed this turn before the tailer fired.
     const { turnClaimKey } = require("../handlers/watch/turn-claims");
     const claims = new Map<string, number>();
@@ -632,7 +632,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
   });
 
   test("relay_reply with foreign originChat ('web') sends the text to this Telegram chat", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -646,7 +646,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
   });
 
   test("relay_reply own-chat WITHOUT suppressRelayReplyText falls back to tailer send", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     // flag is NOT set → TCP hasn't delivered → tailer must send
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
@@ -656,7 +656,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
       {
         type: "relay_reply",
         content: "fallback",
-        originChat: "-1003968796171",
+        originChat: "-1001111111111",
       },
       6302,
     );
@@ -669,7 +669,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
       turnClaimKey,
       claimTurn,
     } = require("../handlers/watch/turn-claims");
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     // TCP path claimed this turn synchronously before its async send.
     const claims = new Map<string, number>();
     (state as any).relayReplyClaims = claims;
@@ -683,7 +683,7 @@ describe("watch: handleTailEvent relay_reply origin filter", () => {
       {
         type: "relay_reply",
         content: "tcp-already-sent",
-        originChat: "-1003968796171",
+        originChat: "-1001111111111",
       },
       6302,
     );
@@ -729,7 +729,7 @@ describe("watch: handleTailEvent tool_result", () => {
   });
 
   test("tool_result for Bash promotes (sends combined message)", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     state.toolUseRegistry = new Map([["tu_x", "Bash"]]);
     const { handleTailEvent } = require("../handlers/watch");
@@ -749,7 +749,7 @@ describe("watch: handleTailEvent tool_result", () => {
   });
 
   test("tool_result for Bash strips trailing newline before picking last line", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     state.toolUseRegistry = new Map([["tu_b", "Bash"]]);
     const { handleTailEvent } = require("../handlers/watch");
@@ -771,7 +771,7 @@ describe("watch: handleTailEvent tool_result", () => {
   });
 
   test("tool_result for Read does NOT send (ephemeral, suppressed)", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     state.toolUseRegistry = new Map([["tu_y", "Read"]]);
     const { handleTailEvent } = require("../handlers/watch");
@@ -790,7 +790,7 @@ describe("watch: handleTailEvent tool_result", () => {
   });
 
   test("tool_result with isError always promotes regardless of tool", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     state.toolUseRegistry = new Map([["tu_z", "Read"]]);
     const { handleTailEvent } = require("../handlers/watch");
@@ -845,7 +845,7 @@ describe("watch: handleTailEvent permission_mode", () => {
   });
 
   test("first permission_mode emits a message", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -859,7 +859,7 @@ describe("watch: handleTailEvent permission_mode", () => {
   });
 
   test("duplicate consecutive permission_mode is deduplicated", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -878,7 +878,7 @@ describe("watch: handleTailEvent permission_mode", () => {
   });
 
   test("permission_mode default is not emitted as a message", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -895,7 +895,7 @@ describe("watch: handleTailEvent permission_mode", () => {
   });
 
   test("plan → default → plan cycle re-emits the second plan", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(
@@ -961,7 +961,7 @@ describe("watch: handleTailEvent hook_summary", () => {
   });
 
   test("hook_summary with errors emits a message", () => {
-    const state = makeState(-1003968796171, 6302, "/repo/x");
+    const state = makeState(-1001111111111, 6302, "/repo/x");
     const { api, sent } = makeMockApi();
     const { handleTailEvent } = require("../handlers/watch");
     handleTailEvent(

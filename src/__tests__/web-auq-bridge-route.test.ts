@@ -106,7 +106,7 @@ describe("POST /api/auq-bridge", () => {
     setChatId(-100200300);
     addTopicMapping({
       topicId: 9999,
-      sessionName: "saas-builder",
+      sessionName: "shop-app",
       sessionDir: "/repo/saas",
       sessionId: "sid",
       isOnline: true,
@@ -252,7 +252,7 @@ describe("POST /api/auq-bridge", () => {
     setChatId(-42042);
     addTopicMapping({
       topicId: 3131,
-      sessionName: "saas-builder",
+      sessionName: "shop-app",
       sessionDir: "/repo/saas",
       sessionId: "old-sid", // stale (pre-/clear)
       launchUuid: "LU-1",

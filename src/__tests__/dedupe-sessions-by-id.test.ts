@@ -17,42 +17,42 @@ const si = (
 
 describe("dedupeSessionsById (moved-cwd port file vs JSONL)", () => {
   test("keeps the entry whose dir has a live process, drops the stale port-file dir", () => {
-    // Port file still says kx_repo (written at launch); Claude resumed a
-    // transcript whose cwd is kx_repo/kinetix-agents, so the process lives there.
-    const stale = si("sess-1", "/p/kx_repo");
-    const live = si("sess-1", "/p/kx_repo/kinetix-agents");
+    // Port file still says my_repo (written at launch); Claude resumed a
+    // transcript whose cwd is my_repo/acme-api, so the process lives there.
+    const stale = si("sess-1", "/p/my_repo");
+    const live = si("sess-1", "/p/my_repo/acme-api");
     const out = dedupeSessionsById(
       [stale, live],
-      new Map([["/p/kx_repo/kinetix-agents", 1]]),
+      new Map([["/p/my_repo/acme-api", 1]]),
     );
     expect(out).toEqual([live]);
   });
 
   test("order of discovery does not matter", () => {
-    const stale = si("sess-1", "/p/kx_repo");
-    const live = si("sess-1", "/p/kx_repo/kinetix-agents");
+    const stale = si("sess-1", "/p/my_repo");
+    const live = si("sess-1", "/p/my_repo/acme-api");
     const a = dedupeSessionsById(
       [stale, live],
-      new Map([["/p/kx_repo/kinetix-agents", 1]]),
+      new Map([["/p/my_repo/acme-api", 1]]),
     );
     const b = dedupeSessionsById(
       [live, stale],
-      new Map([["/p/kx_repo/kinetix-agents", 1]]),
+      new Map([["/p/my_repo/acme-api", 1]]),
     );
     expect(a).toEqual(b);
-    expect(a[0]?.dir).toBe("/p/kx_repo/kinetix-agents");
+    expect(a[0]?.dir).toBe("/p/my_repo/acme-api");
   });
 
   test("both dirs live (sibling in launch dir): the owning process's cwd wins, in either order", () => {
-    // A sibling Claude still runs in kx_repo, and the relay's own Claude
-    // (port-file ppid) has moved to kinetix-agents. Scan order must not matter.
-    const stale = si("sess-1", "/p/kx_repo");
-    const live = si("sess-1", "/p/kx_repo/kinetix-agents");
+    // A sibling Claude still runs in my_repo, and the relay's own Claude
+    // (port-file ppid) has moved to acme-api. Scan order must not matter.
+    const stale = si("sess-1", "/p/my_repo");
+    const live = si("sess-1", "/p/my_repo/acme-api");
     const running = new Map([
-      ["/p/kx_repo", 1],
-      ["/p/kx_repo/kinetix-agents", 1],
+      ["/p/my_repo", 1],
+      ["/p/my_repo/acme-api", 1],
     ]);
-    const cwdById = new Map([["sess-1", "/p/kx_repo/kinetix-agents"]]);
+    const cwdById = new Map([["sess-1", "/p/my_repo/acme-api"]]);
     expect(dedupeSessionsById([stale, live], running, cwdById)).toEqual([live]);
     expect(dedupeSessionsById([live, stale], running, cwdById)).toEqual([live]);
   });

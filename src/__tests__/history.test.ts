@@ -121,7 +121,7 @@ describe("history: getRecentHistory", () => {
   test("dot-aware encoding: finds JSONL for a cwd that contains dots", async () => {
     // history.ts must encode dots as dashes (matching Claude Code's own encoding).
     // Regression: the old encoding used only /→- so paths like
-    // /Users/ali/Dev/my.project resolved to the wrong directory and history
+    // /Users/me/Dev/my.project resolved to the wrong directory and history
     // silently returned [].
     //
     // We create a real directory under ~/.claude/projects using the encoded

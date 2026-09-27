@@ -256,7 +256,7 @@ export async function _resolveDriftTargetId(
   // Scanning the frozen original dir here would keep rediscovering whatever
   // stale sibling transcript happens to be newest THERE and drag the watch
   // back onto it every tick, fighting `_recoverMisboundTailer`'s correction
-  // in an endless "🔄 new conversation" flap (observed 2026-08-23, kx_repo-3).
+  // in an endless "🔄 new conversation" flap (observed 2026-08-23, my_repo-3).
   const newestJsonl = watchState.tailerPath
     ? await findNewestSessionInEncodedDir(
         dirname(watchState.tailerPath),

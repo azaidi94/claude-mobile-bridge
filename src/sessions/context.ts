@@ -2,8 +2,7 @@
  * SessionContext — the explicit per-handler session reference that replaces
  * the singleton `session` module and `getActiveSession()` global pointer.
  *
- * Phase 1 of the clean-architecture refactor. See
- * `docs/superpowers/plans/2026-05-25-phase-1-session-context.md`.
+ * Phase 1 of the clean-architecture refactor.
  *
  * Design:
  *   - Topic-first resolution. If the message arrives in a session topic,

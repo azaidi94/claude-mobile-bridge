@@ -121,8 +121,8 @@ mock.module("../sessions", () => ({
 
 const SESSION: SessionInfo = {
   id: "uuid-1",
-  name: "AHZ_Claw",
-  dir: "/Users/azaidi/Projects/Cursor/AHZ/AHZ_Claw",
+  name: "my_app",
+  dir: "/Users/me/Projects/my_app",
   lastActivity: Date.now(),
   source: "desktop",
 };
@@ -137,7 +137,7 @@ describe("_awaitSessionId", () => {
   test("returns immediately when session id is already populated", async () => {
     getSessionImpl = () => SESSION;
     const { _awaitSessionId } = await import("../handlers/watch");
-    const result = await _awaitSessionId("AHZ_Claw", [10, 10, 10]);
+    const result = await _awaitSessionId("my_app", [10, 10, 10]);
     expect(result?.id).toBe("uuid-1");
     expect(forceRefreshCalls).toBe(1);
   });
@@ -149,7 +149,7 @@ describe("_awaitSessionId", () => {
       return calls >= 3 ? SESSION : SESSION_NO_ID;
     };
     const { _awaitSessionId } = await import("../handlers/watch");
-    const result = await _awaitSessionId("AHZ_Claw", [10, 10, 10]);
+    const result = await _awaitSessionId("my_app", [10, 10, 10]);
     expect(result?.id).toBe("uuid-1");
     expect(calls).toBe(3);
     expect(forceRefreshCalls).toBe(3);
@@ -158,7 +158,7 @@ describe("_awaitSessionId", () => {
   test("returns null after exhausting retries", async () => {
     getSessionImpl = () => SESSION_NO_ID;
     const { _awaitSessionId } = await import("../handlers/watch");
-    const result = await _awaitSessionId("AHZ_Claw", [5, 5]);
+    const result = await _awaitSessionId("my_app", [5, 5]);
     expect(result).toBeNull();
     expect(forceRefreshCalls).toBe(3); // 1 initial + 2 retries
   });
@@ -170,7 +170,7 @@ describe("_awaitSessionId", () => {
       return calls === 1 ? SESSION_NO_ID : null;
     };
     const { _awaitSessionId } = await import("../handlers/watch");
-    const result = await _awaitSessionId("AHZ_Claw", [5, 5, 5]);
+    const result = await _awaitSessionId("my_app", [5, 5, 5]);
     expect(result).toBeNull();
   });
 });
@@ -212,7 +212,7 @@ describe("startAutoWatch intent-preservation guards", () => {
       fakeBotApi,
       CHAT_ID,
       THREAD_ID,
-      "AHZ_Claw",
+      "my_app",
     );
 
     expect(result).toBe(false);
@@ -230,7 +230,7 @@ describe("startAutoWatch intent-preservation guards", () => {
       fakeBotApi,
       CHAT_ID,
       THREAD_ID,
-      "AHZ_Claw",
+      "my_app",
     );
 
     expect(result).toBe(false);
@@ -254,7 +254,7 @@ describe("startAutoWatch intent-preservation guards", () => {
       fakeBotApi,
       CHAT_ID,
       THREAD_ID,
-      "AHZ_Claw",
+      "my_app",
     );
 
     expect(result).toBe(false);
@@ -564,7 +564,7 @@ describe("_resolveDriftTargetId", () => {
   });
 
   test("sole owner, cwd-moved (tailerPath set): scans the CURRENT tailer dir, not the frozen sessionDir", async () => {
-    // Regression for 2026-08-23 kx_repo-3: after a mid-session `cd` into a
+    // Regression for 2026-08-23 my_repo-3: after a mid-session `cd` into a
     // git worktree, tailerPath points at the worktree's encoded project dir.
     // A stale sibling transcript left behind in the ORIGINAL sessionDir must
     // not be rediscovered as "newest" and drag the watch back onto it —
@@ -591,9 +591,9 @@ describe("_resolveDriftTargetId", () => {
     // sole owner (no sibling watch), newest-in-dir must NOT be consulted.
     scanPortFilesImpl = async () => [
       { cwd: "/dir", ppid: 100, sessionId: "iter-live-id" },
-      { cwd: "/dir", ppid: 200, sessionId: "sibling-athletiq" },
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-demo-app" },
     ];
-    findNewestSessionInDirImpl = async () => "sibling-athletiq";
+    findNewestSessionInDirImpl = async () => "sibling-demo-app";
     const mod = await import("../handlers/watch");
     const ws = makeWatch({ pinnedPid: true, sessionPid: 100 });
     mod._registerWatchForTests(ws);
@@ -602,11 +602,11 @@ describe("_resolveDriftTargetId", () => {
 
   test("pinnedPid: keeps the current id when this pid has no live port file", async () => {
     // Between iterations the claude died — no port file for its pid. Must hold
-    // the current id, never drift onto a sibling athletiq's newest JSONL.
+    // the current id, never drift onto a sibling demo-app's newest JSONL.
     scanPortFilesImpl = async () => [
-      { cwd: "/dir", ppid: 200, sessionId: "sibling-athletiq" },
+      { cwd: "/dir", ppid: 200, sessionId: "sibling-demo-app" },
     ];
-    findNewestSessionInDirImpl = async () => "sibling-athletiq";
+    findNewestSessionInDirImpl = async () => "sibling-demo-app";
     const mod = await import("../handlers/watch");
     const ws = makeWatch({
       pinnedPid: true,

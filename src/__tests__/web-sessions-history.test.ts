@@ -91,7 +91,7 @@ describe("readSessionHistory", () => {
             {
               type: "text",
               text:
-                '<channel source="channel-relay" chat_id="-100123" request_id="r2" user="azaidiuk" ts="2026-04-23T09:44:29.709Z">' +
+                '<channel source="channel-relay" chat_id="-100123" request_id="r2" user="testuser" ts="2026-04-23T09:44:29.709Z">' +
                 "from telegram" +
                 "</channel>",
             },

@@ -1,6 +1,6 @@
 /**
  * Markdown → PDF conversion using marked + pdfmake.
- * Adapted from saas-builder/apps/md2pdf/src/lib/convert.ts
+ * Adapted from an md2pdf converter.
  */
 
 import { marked, type Token, type Tokens } from "marked";

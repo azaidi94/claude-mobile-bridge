@@ -190,11 +190,11 @@ describe("buildCursorInjectScript", () => {
   const chord = parseChord("ctrl+alt+cmd+t");
 
   test("targets the window by folder title and returns OK on success", () => {
-    const s = buildCursorInjectScript("saas-builder", "/clear", {
+    const s = buildCursorInjectScript("shop-app", "/clear", {
       focusChord: chord,
     });
     // window match on the folder basename
-    expect(s).toContain(`(name of w) ends with "saas-builder"`);
+    expect(s).toContain(`(name of w) ends with "shop-app"`);
     // sentinels for the ambiguous / not-found cases
     expect(s).toContain(`"ERR_NO_WINDOW"`);
     expect(s).toContain(`"ERR_MULTI_WINDOW"`);
@@ -539,7 +539,7 @@ describe("detectTerminalApp", () => {
   // Real ancestry observed for a cmux-hosted claude:
   //   claude → expect → bash → zsh → login → /Applications/cmux.app/.../cmux
   const cmuxTree: Record<number, ProcRow> = {
-    3313: { ppid: 3309, comm: "/Users/ali/.local/bin/claude" },
+    3313: { ppid: 3309, comm: "/Users/me/.local/bin/claude" },
     3309: { ppid: 3301, comm: "/usr/bin/expect" },
     3301: { ppid: 3187, comm: "bash" },
     3187: { ppid: 3186, comm: "-/bin/zsh" },

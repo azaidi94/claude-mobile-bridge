@@ -15,7 +15,7 @@ SELF="$HERE/claude-relay-launch.sh"
 # ── tmux outer phase ────────────────────────────────────────────────────
 # /new spawns must run Claude under `tmux -L claude` so the relay port file
 # records tmuxPane/tmuxSocket and the bot can inject /clear //compact via
-# `tmux send-keys` (spec: docs/superpowers/specs/2026-08-02-new-spawn-tmux-design.md).
+# `tmux send-keys`.
 # Nesting is tmux OUTSIDE, expect INSIDE: the pane runs this script's inner
 # phase, so expect talks straight to Claude's pty exactly as before and
 # `interact` hands the pane to the user.

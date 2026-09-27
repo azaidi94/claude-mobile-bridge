@@ -46,7 +46,7 @@ async function findJsonlPath(sessionId: string): Promise<string | null> {
 
 /**
  * Find the most recent JSONL file for a directory.
- * Project dirs are path-encoded: /Users/ali/Dev/foo → -Users-ali-Dev-foo
+ * Project dirs are path-encoded: /Users/me/Dev/foo → -Users-me-Dev-foo
  * Dots are also encoded: /path/to/.claude → -path-to--claude
  */
 async function findLatestJsonlForDir(dir: string): Promise<string | null> {

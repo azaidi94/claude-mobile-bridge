@@ -2,8 +2,7 @@
 # Test harness for scripts/claude-relay-launch.sh outer-phase tmux dispatch.
 # Run: bash scripts/claude-relay-launch.test.sh
 #
-# /new spawns must run Claude under tmux -L claude (spec:
-# docs/superpowers/specs/2026-08-02-new-spawn-tmux-design.md): outer phase
+# /new spawns must run Claude under tmux -L claude: outer phase
 # re-execs the script inside a fresh tmux session (always-create, stale-orphan
 # kill), inner phase is the unchanged expect flow. Falls back to inner when
 # tmux is unavailable / already inside tmux / CLAUDE_CODE_NO_TMUX=1.

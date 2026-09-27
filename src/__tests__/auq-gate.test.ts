@@ -26,7 +26,7 @@ function userLine(
 }
 
 const TG_TAG =
-  '<channel source="channel-relay" chat_id="-1003968796171" request_id="r1" user="az">\nhi\n</channel>';
+  '<channel source="channel-relay" chat_id="-1001111111111" request_id="r1" user="az">\nhi\n</channel>';
 
 describe("classifyOrigin", () => {
   test("channel → remote, human → local, else null", () => {
@@ -39,7 +39,7 @@ describe("classifyOrigin", () => {
 
 describe("extractChannelChatId", () => {
   test("pulls chat_id from a genuine channel tag", () => {
-    expect(extractChannelChatId(TG_TAG)).toBe("-1003968796171");
+    expect(extractChannelChatId(TG_TAG)).toBe("-1001111111111");
   });
   test("undefined when no channel tag", () => {
     expect(
@@ -54,7 +54,7 @@ describe("classifyTranscript (last surface wins)", () => {
       userLine("human", "earlier terminal msg"),
       userLine("channel", TG_TAG),
     ]);
-    expect(r).toEqual({ surface: "remote", chatId: "-1003968796171" });
+    expect(r).toEqual({ surface: "remote", chatId: "-1001111111111" });
   });
 
   test("last real prompt from terminal → local", () => {

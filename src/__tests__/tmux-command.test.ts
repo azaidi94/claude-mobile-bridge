@@ -19,7 +19,7 @@ const pf = (o: Partial<PortFileData>): PortFileData => ({
   port: 1,
   pid: 10,
   ppid: 100,
-  cwd: "/repo/kinetix",
+  cwd: "/repo/acme",
   startedAt: "t",
   ...o,
 });
@@ -56,24 +56,24 @@ describe("parseTmuxPanes", () => {
 
 describe("buildTmuxRows", () => {
   const panes = new Map<string, PaneInfo>([
-    ["%1", { pane: "%1", session: "cc-kinetix-1", attached: true }],
+    ["%1", { pane: "%1", session: "cc-acme-1", attached: true }],
     ["%2", { pane: "%2", session: "cc-saas-2", attached: false }],
   ]);
   const uuidByPid = new Map<number, string>([
-    [100, "u-kinetix"],
+    [100, "u-acme"],
     [200, "u-saas"],
   ]);
   const topicFor = (u: string) =>
-    u === "u-kinetix"
-      ? { topicId: 555, name: "kinetix-agents" }
+    u === "u-acme"
+      ? { topicId: 555, name: "acme-api" }
       : u === "u-saas"
-        ? { topicId: 777, name: "saas-builder" }
+        ? { topicId: 777, name: "shop-app" }
         : undefined;
 
   test("joins pane + launchUuid + topic id AND name for tmux sessions", () => {
     const rows = buildTmuxRows(
       [
-        pf({ ppid: 100, tmuxPane: "%1", cwd: "/repo/kinetix" }),
+        pf({ ppid: 100, tmuxPane: "%1", cwd: "/repo/acme" }),
         pf({ ppid: 200, tmuxPane: "%2", cwd: "/repo/saas" }),
       ],
       panes,
@@ -82,13 +82,13 @@ describe("buildTmuxRows", () => {
     );
     expect(rows).toEqual([
       {
-        launchUuid: "u-kinetix",
-        tmuxSession: "cc-kinetix-1",
+        launchUuid: "u-acme",
+        tmuxSession: "cc-acme-1",
         pane: "%1",
-        cwd: "/repo/kinetix",
+        cwd: "/repo/acme",
         attached: true,
         topicId: 555,
-        topicName: "kinetix-agents",
+        topicName: "acme-api",
       },
       {
         launchUuid: "u-saas",
@@ -97,7 +97,7 @@ describe("buildTmuxRows", () => {
         cwd: "/repo/saas",
         attached: false,
         topicId: 777,
-        topicName: "saas-builder",
+        topicName: "shop-app",
       },
     ]);
   });
@@ -131,7 +131,7 @@ describe("buildTmuxRows", () => {
     );
     expect(rows[0]!.launchUuid).toBeUndefined();
     expect(rows[0]!.topicId).toBeUndefined();
-    expect(rows[0]!.tmuxSession).toBe("cc-kinetix-1");
+    expect(rows[0]!.tmuxSession).toBe("cc-acme-1");
   });
 });
 
@@ -211,23 +211,21 @@ describe("fitEscapedCapture", () => {
 describe("rowLabel", () => {
   const base = {
     launchUuid: "6ce10182-aaaa",
-    tmuxSession: "cc-kinetix-agents-095bbde0-61530",
+    tmuxSession: "cc-acme-api-095bbde0-61530",
     pane: "%1",
-    cwd: "/repo/kinetix-agents",
+    cwd: "/repo/acme-api",
     attached: true,
   };
 
   test("prefers the Telegram topic name", () => {
-    expect(rowLabel({ ...base, topicName: "kinetix-agents-2" })).toBe(
-      "kinetix-agents-2",
-    );
+    expect(rowLabel({ ...base, topicName: "acme-api-2" })).toBe("acme-api-2");
   });
 
   test("no topic → <dir>-<pid>, which disambiguates same-folder siblings", () => {
-    expect(rowLabel(base)).toBe("kinetix-agents-61530");
+    expect(rowLabel(base)).toBe("acme-api-61530");
     expect(
-      rowLabel({ ...base, tmuxSession: "cc-kinetix-agents-095bbde0-61135" }),
-    ).toBe("kinetix-agents-61135");
+      rowLabel({ ...base, tmuxSession: "cc-acme-api-095bbde0-61135" }),
+    ).toBe("acme-api-61135");
   });
 
   test("falls back to the short launchUuid when there's no numeric pid suffix", () => {
@@ -244,22 +242,22 @@ describe("rowLabel", () => {
 describe("rendering", () => {
   const rows = [
     {
-      launchUuid: "u-kinetix",
-      tmuxSession: "cc-kinetix-1",
+      launchUuid: "u-acme",
+      tmuxSession: "cc-acme-1",
       pane: "%1",
-      cwd: "/repo/kinetix",
+      cwd: "/repo/acme",
       attached: true,
       topicId: 555,
-      topicName: "kinetix-agents",
+      topicName: "acme-api",
     },
     {
-      launchUuid: "u-kinetix-2",
-      tmuxSession: "cc-kinetix-2",
+      launchUuid: "u-acme-2",
+      tmuxSession: "cc-acme-2",
       pane: "%2",
-      cwd: "/repo/kinetix",
+      cwd: "/repo/acme",
       attached: false,
       topicId: 556,
-      topicName: "kinetix-agents-2",
+      topicName: "acme-api-2",
     },
   ];
 
@@ -271,30 +269,30 @@ describe("rendering", () => {
 
   test("body leads with the numbered topic name, keeps the tmux session as detail", () => {
     const body = renderPanelBody(rows);
-    expect(body).toContain("<b>1. kinetix-agents</b>");
-    expect(body).toContain("<b>2. kinetix-agents-2</b>");
-    expect(body).toContain("cc-kinetix-1"); // still shown, secondary
+    expect(body).toContain("<b>1. acme-api</b>");
+    expect(body).toContain("<b>2. acme-api-2</b>");
+    expect(body).toContain("cc-acme-1"); // still shown, secondary
   });
 
   test("a row with no topic is marked, and labelled by dir-pid", () => {
     const body = renderPanelBody([
-      { ...rows[0]!, topicName: undefined, tmuxSession: "cc-kinetix-99" },
+      { ...rows[0]!, topicName: undefined, tmuxSession: "cc-acme-99" },
     ]);
     expect(body).toContain("(no topic)");
-    expect(body).toContain("1. kinetix-99");
+    expect(body).toContain("1. acme-99");
   });
 
   test("buttons carry the row NUMBER + name so each maps to its row", () => {
     const kb = renderPanelKeyboard(rows);
     const btns = kb.inline_keyboard.flat() as any[];
     const texts = btns.map((b) => b.text);
-    expect(texts).toContain("🔍 1. kinetix-agents");
-    expect(texts).toContain("🔍 2. kinetix-agents-2");
+    expect(texts).toContain("🔍 1. acme-api");
+    expect(texts).toContain("🔍 2. acme-api-2");
     expect(texts).toContain("💀 1");
     expect(texts).toContain("💀 2");
     const data = btns.map((b) => b.callback_data);
-    expect(data).toContain("tmux:peek:u-kinetix");
-    expect(data).toContain("tmux:kill:u-kinetix-2");
+    expect(data).toContain("tmux:peek:u-acme");
+    expect(data).toContain("tmux:kill:u-acme-2");
     expect(data).toContain("tmux:start");
   });
 

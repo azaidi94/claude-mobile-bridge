@@ -315,7 +315,7 @@ function portStartedMs(p: PortFileData): number {
  * Identify the loop's current iteration claude by walking the runner's process
  * tree and matching it to a relay port file in the repo, returning a
  * SessionInfo pinned to that claude's PID + live sessionId. This is the ONLY
- * reliable way to pick the iteration out of the several same-named `athletiq`
+ * reliable way to pick the iteration out of the several same-named `demo-app`
  * sessions the name-keyed registry collapses to one. Null until an iteration
  * claude with a live relay exists in the tree.
  *
@@ -359,7 +359,7 @@ export async function _resolveIterationClaude(
   return {
     id: pf.sessionId!,
     // Synthetic name so this never cross-wires with the registry's collapsed
-    // `athletiq` entry — the pinned watch resolves by PID, not name.
+    // `demo-app` entry — the pinned watch resolves by PID, not name.
     name: `ralph:${loop.id}`,
     // The matched port file's OWN cwd, not loop.repoPath: the pinned drift loop
     // compares `cwd` by exact string, so under a symlinked repo path both sides

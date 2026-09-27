@@ -95,9 +95,9 @@ const botApi = {} as never;
 
 function makeWatch() {
   const state = buildWatchState({
-    sessionName: "kx_repo",
+    sessionName: "my_repo",
     sessionId: "old-session-id",
-    sessionDir: "/tmp/kx_repo",
+    sessionDir: "/tmp/my_repo",
     sessionPid: 111,
     chatId: CHAT_ID,
     threadId: THREAD_ID,
@@ -165,9 +165,9 @@ describe("relay reply rebinding after client replacement", () => {
     const clientY = new FakeRelayClient();
     currentClient = clientY;
     const sctx = {
-      sessionName: "kx_repo-2",
+      sessionName: "my_repo-2",
       sessionId: "sibling-session-y",
-      sessionDir: "/tmp/kx_repo",
+      sessionDir: "/tmp/my_repo",
       sessionPid: 222,
     } as SessionContext;
 
@@ -192,16 +192,16 @@ describe("relay reply rebinding after client replacement", () => {
     // id immediately (port-file hook), but state.sessionId lags until the
     // drift tick sees the new JSONL. Identity must match on the stable
     // sessionName, or the first post-/clear turn's attachments are lost.
-    const state = makeWatch(); // sessionName "kx_repo", sessionId "old-session-id"
+    const state = makeWatch(); // sessionName "my_repo", sessionId "old-session-id"
     const clientA = new FakeRelayClient();
     bindRelayReplyHandler(botApi, clientA as never, state, CHAT_ID, "watch");
 
     const clientB = new FakeRelayClient();
     currentClient = clientB;
     const sctx = {
-      sessionName: "kx_repo",
+      sessionName: "my_repo",
       sessionId: "new-id-after-clear",
-      sessionDir: "/tmp/kx_repo",
+      sessionDir: "/tmp/my_repo",
       sessionPid: 111,
     } as SessionContext;
 

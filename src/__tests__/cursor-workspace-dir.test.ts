@@ -7,8 +7,8 @@ describe("extractWorkspaceName", () => {
     expect(extractWorkspaceName("2.1.141 — claude-mobile-bridge")).toBe(
       "claude-mobile-bridge",
     );
-    expect(extractWorkspaceName("compose.local.env — kinetix-cloud")).toBe(
-      "kinetix-cloud",
+    expect(extractWorkspaceName("compose.local.env — acme-web")).toBe(
+      "acme-web",
     );
   });
 
@@ -35,7 +35,7 @@ describe("matchWorkspaceDir", () => {
   test("returns the matching directory on a unique basename hit", () => {
     const dirs = [
       "/Users/me/Projects/claude-mobile-bridge",
-      "/Users/me/Projects/saas-builder",
+      "/Users/me/Projects/shop-app",
       "/tmp/unrelated",
     ];
     expect(matchWorkspaceDir("2.1.141 — claude-mobile-bridge", dirs)).toBe(
@@ -44,8 +44,8 @@ describe("matchWorkspaceDir", () => {
   });
 
   test("returns null on ambiguous match (two dirs share a basename)", () => {
-    const dirs = ["/Users/me/a/saas-builder", "/Users/me/b/saas-builder"];
-    expect(matchWorkspaceDir("file — saas-builder", dirs)).toBeNull();
+    const dirs = ["/Users/me/a/shop-app", "/Users/me/b/shop-app"];
+    expect(matchWorkspaceDir("file — shop-app", dirs)).toBeNull();
   });
 
   test("returns null when nothing matches", () => {

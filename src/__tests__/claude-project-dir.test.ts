@@ -10,20 +10,20 @@ const root = (encoded: string) =>
 
 describe("encodeClaudeProjectDir (single shared encoder)", () => {
   test("encodes every non-alphanumeric char (slash, underscore, dot) as dash", () => {
-    expect(encodeClaudeProjectDir("/Users/a/kx_repo/my.app")).toBe(
-      "-Users-a-kx-repo-my-app",
+    expect(encodeClaudeProjectDir("/Users/a/my_repo/my.app")).toBe(
+      "-Users-a-my-repo-my-app",
     );
   });
 
   // Regression: tailer's encodeProjectPath used `[/.]` only, missing `_`, so
   // findSessionJsonlPath/history silently failed for any path with an underscore
-  // (e.g. kx_repo). It must now match the single shared encoder.
+  // (e.g. my_repo). It must now match the single shared encoder.
   test("tailer.encodeProjectPath matches the shared encoder (incl. underscores)", () => {
-    expect(encodeProjectPath("/Users/a/kx_repo/proj")).toBe(
-      encodeClaudeProjectDir("/Users/a/kx_repo/proj"),
+    expect(encodeProjectPath("/Users/a/my_repo/proj")).toBe(
+      encodeClaudeProjectDir("/Users/a/my_repo/proj"),
     );
-    expect(encodeProjectPath("/Users/a/kx_repo/proj")).toBe(
-      "-Users-a-kx-repo-proj",
+    expect(encodeProjectPath("/Users/a/my_repo/proj")).toBe(
+      "-Users-a-my-repo-proj",
     );
   });
 });
@@ -34,13 +34,13 @@ describe("claudeProjectDir", () => {
   });
 
   // Regression: Claude Code encodes every non-alphanumeric character — not
-  // just slashes — so a path segment like `kx_repo` becomes `kx-repo` on disk.
+  // just slashes — so a path segment like `my_repo` becomes `my-repo` on disk.
   // The old slash-only encoder pointed at a directory that never exists for
   // any project whose path contains `_` or `.`, so sessionId discovery and
   // backfill silently found nothing.
   test("encodes underscores as dashes", () => {
-    expect(claudeProjectDir("/Users/a/kx_repo/kinetix-agents")).toBe(
-      root("-Users-a-kx-repo-kinetix-agents"),
+    expect(claudeProjectDir("/Users/a/my_repo/acme-api")).toBe(
+      root("-Users-a-my-repo-acme-api"),
     );
   });
 

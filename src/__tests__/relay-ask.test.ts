@@ -114,7 +114,7 @@ function captureBusEvents(sessionName: string): {
 
 const SAMPLE_REQ: RelayAskRemoteRequest = {
   ask_id: "a1_test",
-  chat_id: "-1003968796171",
+  chat_id: "-1001111111111",
   thread_id: "33308",
   question: "Apply the patch?",
   options: [
@@ -142,7 +142,7 @@ describe("relay-ask: post + button tap round-trip", () => {
 
     expect(sent).toHaveLength(1);
     const msg = sent[0]!;
-    expect(msg.chatId).toBe(-1003968796171);
+    expect(msg.chatId).toBe(-1001111111111);
     expect(msg.text).toContain("Apply the patch?");
     expect(msg.text).toContain("Yes, apply now");
     expect(msg.text).toContain("No, skip");
@@ -202,7 +202,7 @@ describe("relay-ask: post + button tap round-trip", () => {
 
     // User sends free-text in the same (chat, thread).
     const consumed = tryConsumeCustomTextAnswer(
-      -1003968796171,
+      -1001111111111,
       33308,
       "Apply only fixture A but skip B",
     );
@@ -231,7 +231,7 @@ describe("relay-ask: post + button tap round-trip", () => {
 
     // User types in topic 33409 (sibling) — must NOT be consumed.
     const consumedSibling = tryConsumeCustomTextAnswer(
-      -1003968796171,
+      -1001111111111,
       33409,
       "this should NOT be hijacked",
     );
@@ -242,7 +242,7 @@ describe("relay-ask: post + button tap round-trip", () => {
 
     // Typing in the correct thread does consume it.
     const consumedSelf = tryConsumeCustomTextAnswer(
-      -1003968796171,
+      -1001111111111,
       33308,
       "this answers the right ask",
     );
@@ -271,8 +271,8 @@ describe("relay-ask: post + button tap round-trip", () => {
     await handleAskRemoteCallback(api, "askremote:aT2:custom", "cbq-2");
 
     // Each thread's text resolves only its own ask.
-    tryConsumeCustomTextAnswer(-1003968796171, 33308, "for T1");
-    tryConsumeCustomTextAnswer(-1003968796171, 33409, "for T2");
+    tryConsumeCustomTextAnswer(-1001111111111, 33308, "for T1");
+    tryConsumeCustomTextAnswer(-1001111111111, 33409, "for T2");
 
     expect(sentAnswers).toEqual([
       { ask_id: "aT1", answer: "for T1" },
@@ -649,7 +649,7 @@ describe("relay-ask: thread_id fallback via session→topic store (regression 20
   test("when ask_remote_request omits thread_id, postQuestionToTelegram resolves the bot's topic mapping", async () => {
     const { setChatId, addTopicMapping } =
       await import("../topics/topic-store");
-    setChatId(-1003968796171);
+    setChatId(-1001111111111);
     addTopicMapping({
       sessionName: "UML",
       topicId: 37030,
@@ -669,7 +669,7 @@ describe("relay-ask: thread_id fallback via session→topic store (regression 20
     // request would post to chat-general instead of the UML topic.
     fireAskRemote({
       ask_id: "a_thread_fallback",
-      chat_id: "-1003968796171",
+      chat_id: "-1001111111111",
       // thread_id intentionally omitted
       question: "Pick one",
       options: [{ label: "A" }, { label: "B" }],
@@ -684,7 +684,7 @@ describe("relay-ask: thread_id fallback via session→topic store (regression 20
   test("explicit thread_id in the request still wins over the fallback", async () => {
     const { setChatId, addTopicMapping } =
       await import("../topics/topic-store");
-    setChatId(-1003968796171);
+    setChatId(-1001111111111);
     addTopicMapping({
       sessionName: "UML",
       topicId: 37030,
@@ -700,7 +700,7 @@ describe("relay-ask: thread_id fallback via session→topic store (regression 20
 
     fireAskRemote({
       ask_id: "a_thread_explicit",
-      chat_id: "-1003968796171",
+      chat_id: "-1001111111111",
       thread_id: "99999", // explicit, not the store's mapping
       question: "Pick one",
       options: [{ label: "A" }, { label: "B" }],
@@ -720,7 +720,7 @@ describe("relay-ask: thread_id fallback via session→topic store (regression 20
 
     fireAskRemote({
       ask_id: "a_thread_none",
-      chat_id: "-1003968796171",
+      chat_id: "-1001111111111",
       question: "Pick one",
       options: [{ label: "A" }, { label: "B" }],
       allow_custom: false,

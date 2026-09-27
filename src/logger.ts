@@ -171,7 +171,7 @@ export function createOpId(prefix = "op"): string {
  * Canonical correlation fields for the message lifecycle. Attach these to
  * log lines along a request's path (handler → streaming → relay) so one
  * message can be traced end-to-end, e.g. `grep 'opId="text_..."' bot.log` or
- * `grep 'session="athletiq"' bot.log`. Prefer these exact key names over
+ * `grep 'session="demo-app"' bot.log`. Prefer these exact key names over
  * ad-hoc ones (`sessionName`, `threadId`) so a single grep spans the codebase.
  *
  *   opId    — stable per-request id from createOpId()

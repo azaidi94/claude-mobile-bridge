@@ -31,7 +31,7 @@ describe("bridgeTailToSse", () => {
     const e: TailEvent = {
       type: "user",
       content: "hello",
-      originChat: "-1003968796171",
+      originChat: "-1001111111111",
     };
     bridgeTailToSse(bus, SID, e);
     expect(emitted).toHaveLength(0);
@@ -70,7 +70,7 @@ describe("bridgeTailToSse", () => {
     bridgeTailToSse(bus, SID, {
       type: "relay_reply",
       content: "answer",
-      originChat: "-1003968796171",
+      originChat: "-1001111111111",
     });
     expect(emitted).toHaveLength(1);
     expect(emitted[0]!.event).toMatchObject({
