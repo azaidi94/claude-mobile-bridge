@@ -13,8 +13,14 @@ import { execFileSync } from "child_process";
 
 const SCRIPT = resolve(import.meta.dir, "../../scripts/ralph/afk_tasks_md.sh");
 
+// Git hooks export GIT_INDEX_FILE etc.; inherited, they'd point the throwaway
+// repo's git at this repo's index. Strip them so the test is hook-safe.
+const ENV = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+);
+
 function git(cwd: string, args: string[]) {
-  execFileSync("git", args, { cwd, stdio: "ignore" });
+  execFileSync("git", args, { cwd, env: ENV, stdio: "ignore" });
 }
 
 /**
@@ -45,7 +51,7 @@ function setupRepo(prefix: string, tasksMd: string): string {
 function runLoop(repo: string, iterations: string): string {
   const opts = {
     cwd: repo,
-    env: { ...process.env, PATH: `${join(repo, ".bin")}:${process.env.PATH}` },
+    env: { ...ENV, PATH: `${join(repo, ".bin")}:${process.env.PATH}` },
     encoding: "utf8" as const,
   };
   try {
