@@ -527,9 +527,78 @@ async function scanSessions(): Promise<{
     found.push(...dirFound);
   }
 
-  assignPidsToSessions(found, runningProcesses, portFiles);
+  // Authoritative cwd per sessionId: the Claude process that owns the relay
+  // (port file ppid) reports its live cwd via the process scan.
+  const procDirByPid = new Map(runningProcesses.map((p) => [p.pid, p.dir]));
+  const cwdBySessionId = new Map<string, string>();
+  for (const pf of portFiles) {
+    if (!pf.sessionId || !pf.ppid) continue;
+    const dir = procDirByPid.get(pf.ppid);
+    if (dir) cwdBySessionId.set(pf.sessionId, dir);
+  }
+  const deduped = dedupeSessionsById(found, runningDirs, cwdBySessionId);
+  assignPidsToSessions(deduped, runningProcesses, portFiles);
 
-  return { sessions: found, portFiles };
+  return { sessions: deduped, portFiles };
+}
+
+/**
+ * Collapse entries that share one sessionId but were discovered under
+ * different dirs. This happens when Claude resumes a transcript from another
+ * folder (or otherwise chdir's): the relay port file keeps the cwd it was
+ * written with at launch, while the JSONL — and the live process — report the
+ * new cwd. Left as two entries, only one can inherit the prior name each
+ * refresh, discovery order flips, and the loser's name alternates between
+ * `<dirA>` and `<dirB>-2`; `portFileNameUpdates` then writes the alternating
+ * name into the port file, which trips the STATE_DIR watch and schedules the
+ * next refresh — a ~1/s "offline/online" flap.
+ *
+ * Keeps the entry whose dir is the owning Claude process's live cwd (port
+ * file ppid → process scan); failing that, a dir with any live Claude
+ * process; failing that, the first seen. Id-less entries are never merged.
+ */
+export function dedupeSessionsById(
+  sessions: SessionInfo[],
+  runningDirs: ReadonlyMap<string, number>,
+  cwdBySessionId: ReadonlyMap<string, string> = new Map(),
+): SessionInfo[] {
+  const keptById = new Map<string, SessionInfo>();
+  const out: SessionInfo[] = [];
+  // Higher wins. 2 = dir is the owning process's live cwd (authoritative);
+  // 1 = some Claude process runs in that dir; 0 = nothing live there.
+  // Ties keep the incumbent, so the result is order-independent whenever a
+  // rank-2 entry exists — the common case, since the port file's ppid is
+  // the Claude that resumed into the new cwd.
+  const rank = (s: SessionInfo): number =>
+    cwdBySessionId.get(s.id) === s.dir ? 2 : runningDirs.has(s.dir) ? 1 : 0;
+  for (const s of sessions) {
+    if (!s.id) {
+      out.push(s);
+      continue;
+    }
+    const prev = keptById.get(s.id);
+    if (!prev) {
+      keptById.set(s.id, s);
+      out.push(s);
+      continue;
+    }
+    if (rank(s) > rank(prev)) {
+      debug("watcher: dedupe by sessionId, preferring live cwd", {
+        sessionId: s.id,
+        dropped: prev.dir,
+        kept: s.dir,
+      });
+      out[out.indexOf(prev)] = s;
+      keptById.set(s.id, s);
+    } else {
+      debug("watcher: dedupe by sessionId, dropping duplicate dir", {
+        sessionId: s.id,
+        dropped: s.dir,
+        kept: prev.dir,
+      });
+    }
+  }
+  return out;
 }
 
 /**
