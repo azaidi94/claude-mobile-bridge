@@ -527,7 +527,16 @@ async function scanSessions(): Promise<{
     found.push(...dirFound);
   }
 
-  const deduped = dedupeSessionsById(found, runningDirs);
+  // Authoritative cwd per sessionId: the Claude process that owns the relay
+  // (port file ppid) reports its live cwd via the process scan.
+  const procDirByPid = new Map(runningProcesses.map((p) => [p.pid, p.dir]));
+  const cwdBySessionId = new Map<string, string>();
+  for (const pf of portFiles) {
+    if (!pf.sessionId || !pf.ppid) continue;
+    const dir = procDirByPid.get(pf.ppid);
+    if (dir) cwdBySessionId.set(pf.sessionId, dir);
+  }
+  const deduped = dedupeSessionsById(found, runningDirs, cwdBySessionId);
   assignPidsToSessions(deduped, runningProcesses, portFiles);
 
   return { sessions: deduped, portFiles };
@@ -544,16 +553,24 @@ async function scanSessions(): Promise<{
  * name into the port file, which trips the STATE_DIR watch and schedules the
  * next refresh — a ~1/s "offline/online" flap.
  *
- * Keeps the entry whose dir has a live Claude process (the authoritative
- * cwd); with no such entry, keeps the first seen. Id-less entries are never
- * merged.
+ * Keeps the entry whose dir is the owning Claude process's live cwd (port
+ * file ppid → process scan); failing that, a dir with any live Claude
+ * process; failing that, the first seen. Id-less entries are never merged.
  */
 export function dedupeSessionsById(
   sessions: SessionInfo[],
   runningDirs: ReadonlyMap<string, number>,
+  cwdBySessionId: ReadonlyMap<string, string> = new Map(),
 ): SessionInfo[] {
   const keptById = new Map<string, SessionInfo>();
   const out: SessionInfo[] = [];
+  // Higher wins. 2 = dir is the owning process's live cwd (authoritative);
+  // 1 = some Claude process runs in that dir; 0 = nothing live there.
+  // Ties keep the incumbent, so the result is order-independent whenever a
+  // rank-2 entry exists — the common case, since the port file's ppid is
+  // the Claude that resumed into the new cwd.
+  const rank = (s: SessionInfo): number =>
+    cwdBySessionId.get(s.id) === s.dir ? 2 : runningDirs.has(s.dir) ? 1 : 0;
   for (const s of sessions) {
     if (!s.id) {
       out.push(s);
@@ -565,10 +582,8 @@ export function dedupeSessionsById(
       out.push(s);
       continue;
     }
-    const prevLive = runningDirs.has(prev.dir);
-    const curLive = runningDirs.has(s.dir);
-    if (curLive && !prevLive) {
-      debug("watcher: dedupe by sessionId, preferring live-process dir", {
+    if (rank(s) > rank(prev)) {
+      debug("watcher: dedupe by sessionId, preferring live cwd", {
         sessionId: s.id,
         dropped: prev.dir,
         kept: s.dir,

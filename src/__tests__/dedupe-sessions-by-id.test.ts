@@ -43,6 +43,20 @@ describe("dedupeSessionsById (moved-cwd port file vs JSONL)", () => {
     expect(a[0]?.dir).toBe("/p/kx_repo/kinetix-agents");
   });
 
+  test("both dirs live (sibling in launch dir): the owning process's cwd wins, in either order", () => {
+    // A sibling Claude still runs in kx_repo, and the relay's own Claude
+    // (port-file ppid) has moved to kinetix-agents. Scan order must not matter.
+    const stale = si("sess-1", "/p/kx_repo");
+    const live = si("sess-1", "/p/kx_repo/kinetix-agents");
+    const running = new Map([
+      ["/p/kx_repo", 1],
+      ["/p/kx_repo/kinetix-agents", 1],
+    ]);
+    const cwdById = new Map([["sess-1", "/p/kx_repo/kinetix-agents"]]);
+    expect(dedupeSessionsById([stale, live], running, cwdById)).toEqual([live]);
+    expect(dedupeSessionsById([live, stale], running, cwdById)).toEqual([live]);
+  });
+
   test("with no live-process tiebreak, keeps the first and drops the rest", () => {
     const first = si("sess-1", "/p/a");
     const second = si("sess-1", "/p/b");
