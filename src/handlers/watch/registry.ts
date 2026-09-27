@@ -8,6 +8,8 @@
  */
 
 import type { WatchState } from "./state";
+import { setupCrossPostSubscription } from "./cross-post";
+import type { Api } from "grammy";
 
 // Active watches: "chatId:threadId" -> WatchState
 export type WatchKey = `${number}:${number}`;
@@ -116,11 +118,19 @@ export function _getWatchForTests(
  * The watch keeps its chat/thread/tailer — only the label changes, so
  * stopWatchByName / notifySessionOffline keep finding it.
  */
-export function renameWatchesByName(oldName: string, newName: string): number {
+export function renameWatchesByName(
+  oldName: string,
+  newName: string,
+  botApi: Api,
+): number {
   let n = 0;
   for (const state of watches.values()) {
     if (state.sessionName === oldName) {
+      // The cross-post subscription is keyed by session name on the event
+      // bus; re-subscribe so terminal/web previews keep reaching this topic.
+      state.unsubCrossPost?.();
       state.sessionName = newName;
+      setupCrossPostSubscription(botApi, state);
       n++;
     }
   }

@@ -198,6 +198,7 @@ function makeRealLikeState(name: string) {
 }
 
 mock.module("../sessions/session-state", () => ({
+  hasSessionState: mock(() => false),
   renameSessionState: mock(() => true),
   getSessionState: mock((name?: string) => {
     if (name && realSessionStates.has(name)) {

@@ -20,9 +20,17 @@ import {
   renameSession,
   forceRefresh,
 } from "../../sessions/watcher";
-import { renameSessionState } from "../../sessions/session-state";
+import {
+  hasSessionState,
+  renameSessionState,
+} from "../../sessions/session-state";
 import { getTopicBySession, updateTopicMapping } from "../../topics";
 import { renameWatchesByName } from "../watch";
+import {
+  renameRelayClients,
+  scanPortFiles,
+  updatePortFile,
+} from "../../relay/discovery";
 import { busReply } from "./helpers";
 
 /** Same shape the watcher generates (dir basenames): letters, digits, . _ - */
@@ -81,7 +89,11 @@ export async function handleRename(
     );
     return;
   }
-  if (getSession(newName) || getTopicBySession(newName)) {
+  if (
+    getSession(newName) ||
+    getTopicBySession(newName) ||
+    hasSessionState(newName)
+  ) {
     await busReply(
       ctx,
       `❌ <b>${escapeHtml(newName)}</b> is already in use.`,
@@ -108,21 +120,64 @@ export async function handleRename(
     return;
   }
 
-  updateTopicMapping(oldName, { sessionName: newName });
-  const cacheRenamed = renameSession(oldName, newName);
+  // Cache before store: the topic store must never point at a name the
+  // watcher cache doesn't hold, or routing for the topic breaks. If the cache
+  // entry vanished (concurrent refresh) put the Telegram title back and stop.
+  if (!renameSession(oldName, newName)) {
+    await ctx.api
+      .editForumTopic(chatId, sctx.topicId, { name: oldName })
+      .catch(() => {});
+    warn("rename: cache entry missing, reverted", {
+      chatId,
+      topic: sctx.topicId,
+      session: oldName,
+    });
+    await busReply(
+      ctx,
+      "❌ Session changed underneath the rename; nothing was changed. Try again.",
+    );
+    return;
+  }
   const stateRenamed = renameSessionState(oldName, newName);
-  const watches = renameWatchesByName(oldName, newName);
+  updateTopicMapping(oldName, { sessionName: newName });
+  const watches = renameWatchesByName(oldName, newName, ctx.api);
+  const relayClients = renameRelayClients(oldName, newName);
+
+  // Relay port file: `sessionName` is what the watcher would write on its
+  // next refresh anyway; `topicName` is only ever written at topic creation
+  // and drives the post-/clear sessionId re-anchor, so it must move now.
+  let portFile = false;
+  try {
+    const pfs = await scanPortFiles(true);
+    const byId = pfs.filter(
+      (pf) => pf.sessionId && pf.sessionId === sctx.sessionId,
+    );
+    const byDir = pfs.filter((pf) => pf.cwd === sctx.sessionDir);
+    const pf = byId[0] ?? (byDir.length === 1 ? byDir[0] : undefined);
+    if (pf) {
+      await updatePortFile(pf.pid, {
+        sessionName: newName,
+        topicName: newName,
+      });
+      portFile = true;
+    }
+  } catch (e) {
+    warn("rename: port file update failed", {
+      session: newName,
+      err: String(e),
+    });
+  }
+
   info("rename: session renamed", {
     chatId,
     topic: sctx.topicId,
     session: newName,
     from: oldName,
-    cacheRenamed,
     stateRenamed,
     watches,
+    relayClients,
+    portFile,
   });
-  // Let the watcher settle the new name into the relay port file now rather
-  // than on its next poll.
   forceRefresh().catch(() => {});
 
   await busReply(
