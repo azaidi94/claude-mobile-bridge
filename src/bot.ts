@@ -25,6 +25,7 @@ import {
 import { isAuthorized } from "./security";
 import { getCurrentModelDisplayName } from "./session";
 import { error as logError, info, warn, debug } from "./logger";
+import { ensureCommandEntity } from "./command-entity";
 import {
   handleStart,
   handleHelp,
@@ -273,6 +274,19 @@ export function createBot(options: BotOptions): Bot {
       return;
     }
 
+    await next();
+  });
+
+  // Commands pasted from a code block arrive wrapped in a code/pre entity
+  // with no bot_command entity, so bot.command() never matches and the text
+  // falls through to the free-text handler. Synthesise the entity first.
+  bot.use(async (ctx, next) => {
+    if (ctx.message && ensureCommandEntity(ctx.message)) {
+      debug("bot: synthesised bot_command entity for pasted command", {
+        chatId: ctx.chat?.id,
+        threadId: ctx.message.message_thread_id,
+      });
+    }
     await next();
   });
 

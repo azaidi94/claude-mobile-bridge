@@ -167,6 +167,9 @@ if {[info exists env(CRL_EXPECT_TIMEOUT)]
   set timeout 180
 }
 log_user 1
+# The cursor marker (U+276F) must decode as one char for the "on No" check;
+# launchd / cmux spawns may lack a UTF-8 LANG, so don't rely on the locale.
+encoding system utf-8
 
 # Word separator for prompt matching: Ink emits cursor-column escapes between
 # words, so "safety check" arrives as "safety\x1b\[15Gcheck". SEP admits full
@@ -174,29 +177,59 @@ log_user 1
 # or newlines — so prose like "safety first, always check" or a phrase split
 # across lines can never false-match and answer a menu early.
 set SEP {(?:\x1b\[[0-9;]*[A-Za-z]|[^A-Za-z\r\n]){0,24}?}
+set TRUST_RE "(?i)trust${SEP}this${SEP}folder|safety${SEP}check|project${SEP}you${SEP}created"
+set DEVCH_RE "(?i)local${SEP}development|loading${SEP}development${SEP}channels|dangerously-load-development-channels"
+
+proc answer_dev_channels {} {
+  sleep 0.5
+  send "\r"
+  interact
+  exit 0
+}
+
 spawn bash -lc $env(SPAWNCMD)
-# Set pty dimensions so Claude Code's Ink TUI renders properly.
-# Without this, spawn inherits a 0x0 pty and the UI may not draw at all.
 stty rows 50 cols 200
 expect {
-  -re "(?i)trust${SEP}this${SEP}folder|safety${SEP}check|project${SEP}you${SEP}created" {
+  -re $TRUST_RE {
+    # Claude >= 2.1.283 lists "No, exit" FIRST with the cursor on it, so a
+    # bare Enter declines trust and Claude exits (eof -> "success"). Wait for
+    # the option list to render; if the cursor marker sits on "No", move down
+    # one before confirming. Older UIs (cursor already on Yes) are unchanged.
+    set on_no 0
+    set outer_timeout $timeout
+    set timeout 5
+    expect {
+      -re "(?i)\u276f${SEP}no" { set on_no 1 }
+      -re "(?i)yes${SEP}i${SEP}trust|yes${SEP}proceed" {}
+      eof { exit 0 }
+      timeout {
+        puts stderr "claude-relay-launch: trust option list not seen within 5s; answering Enter (may decline on Claude >= 2.1.283)"
+      }
+    }
+    set timeout $outer_timeout
+    if {$on_no} {
+      send "\033\[B"
+      sleep 0.3
+    }
     sleep 0.5
     send "\r"
-    sleep 1
-    exp_continue
+    # Fall through to the dev-channels wait below. Do NOT exp_continue here:
+    # the option text "Yes, I trust this folder" still sits in the buffer and
+    # would re-trigger this handler, sending a second Down+Enter into the
+    # dev-channels menu — which selects "2. Exit".
   }
-  -re "(?i)local${SEP}development|loading${SEP}development${SEP}channels|dangerously-load-development-channels" {
-    sleep 0.5
-    send "\r"
-    # Hand control back to the terminal so the user can interact with Claude.
-    interact
-    exit 0
-  }
-  eof {
-    exit 0
-  }
+  -re $DEVCH_RE { answer_dev_channels }
+  eof { exit 0 }
   timeout {
     puts stderr "claude-relay-launch: timed out waiting for trust/dev-channel menus (Claude UI changed?)"
+    exit 1
+  }
+}
+expect {
+  -re $DEVCH_RE { answer_dev_channels }
+  eof { exit 0 }
+  timeout {
+    puts stderr "claude-relay-launch: timed out waiting for dev-channel menu after trust (Claude UI changed?)"
     exit 1
   }
 }

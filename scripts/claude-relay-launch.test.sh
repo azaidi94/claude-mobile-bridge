@@ -145,9 +145,25 @@ if read -t 1 -r _; then
   exit 1
 fi
 printf 'Quick\033[8Gsafety\033[15Gcheck:\033[22GIs\033[25Gthis\033[30Ga\033[32Gproject\033[40Gyou\033[44Gcreated\r\n'
-read -r _
+# Claude >= 2.1.283: cursor starts on "No, exit". A bare Enter here declines
+# trust and exits; expect must send Down first. (Bytes captured 2026-09-26.)
+printf '\342\235\257\033[3GNo,\033[7Gexit\r\n'
+printf '  Yes,\033[8GI\033[10Gtrust\033[16Gthis\033[21Gfolder\r\n'
+read -r ans
+if [[ "$ans" != *$'\033[B'* ]]; then
+  printf 'TRUST_DECLINED\r\n'
+  exit 1
+fi
 printf 'Loading\033[9Gdevelopment\033[21Gchannels\033[30Gfrom\033[35Gserver\r\n'
-read -r _
+printf '\342\235\257\033[3G1.\033[6GI\033[8Gam\033[11Gusing\033[17Gthis\033[22Gfor\033[26Glocal\033[32Gdevelopment\r\n'
+printf '  2.\033[6GExit\r\n'
+# The trust handler must answer exactly once: a re-triggered Down here would
+# select "2. Exit" and kill the session.
+read -r ans
+if [[ "$ans" == *$'\033[B'* ]]; then
+  printf 'DEV_CHANNEL_DECLINED\r\n'
+  exit 1
+fi
 printf 'E2E_READY\r\n'
 sleep 1
 FAKEEOF
@@ -162,6 +178,8 @@ if [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/expect ]; then
     script -q /dev/null bash "$HERE/claude-relay-launch.sh" "$TESTDIR" 2>&1) || true
   assert_match "$OUT" "*E2E_READY*" "expect answers CHA-broken prompts, ignores prose decoys"
   assert_no_match "$OUT" "*PREMATURE_ANSWER*" "expect does not answer prose decoys before the real prompt"
+  assert_no_match "$OUT" "*TRUST_DECLINED*" "expect moves off the default 'No, exit' before confirming trust"
+  assert_no_match "$OUT" "*DEV_CHANNEL_DECLINED*" "expect answers trust once and does not send Down into the dev-channels menu"
   rm -rf "$TESTDIR"
 else
   echo "ok   - (skip) inner-phase pty test needs macOS script(1) + expect"
