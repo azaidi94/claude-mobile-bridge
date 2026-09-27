@@ -23,6 +23,7 @@ export {
   getWatch,
   isWatching,
   isWatchingAny,
+  renameWatchesByName,
 } from "./registry";
 
 export { _isTypingForTests } from "./typing";

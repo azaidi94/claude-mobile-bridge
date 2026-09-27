@@ -18,6 +18,7 @@ export {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleRename,
   handleGroupMode,
   handleVerbose,
   handleTmux,

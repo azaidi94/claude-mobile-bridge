@@ -156,6 +156,7 @@ mock.module("../handlers", () => ({
   handleRefresh: mock(() => {}),
   handlePlan: mock(() => {}),
   handlePin: mock(() => {}),
+  handleRename: mock(() => {}),
   handleGroupMode: mock(() => {}),
   handleVerbose: mock(() => {}),
   handleTmux: mock(() => {}),

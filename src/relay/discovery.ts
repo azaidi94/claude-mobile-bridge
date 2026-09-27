@@ -643,3 +643,19 @@ export function disconnectAllRelays(): void {
   }
   clientCache.clear();
 }
+
+/**
+ * Relabel cached relay clients bound to `oldName` (used by /rename).
+ * `client.sessionName` is stamped at connect and read by relay-ask to route
+ * ask_remote keyboards to the session topic, so it must follow a rename.
+ */
+export function renameRelayClients(oldName: string, newName: string): number {
+  let n = 0;
+  for (const { client } of clientCache.values()) {
+    if (client.sessionName === oldName) {
+      client.sessionName = newName;
+      n++;
+    }
+  }
+  return n;
+}

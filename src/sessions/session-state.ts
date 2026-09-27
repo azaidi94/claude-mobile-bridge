@@ -252,6 +252,31 @@ export function dropSessionState(name: string): void {
 /**
  * Snapshot of all live SessionStates (debug / web routes).
  */
+/** True when a SessionState already exists under `name` (no lazy create). */
+export function hasSessionState(name: string): boolean {
+  return states.has(name);
+}
+
+/**
+ * Re-key a SessionState under a new name (used by /rename). Re-runs the
+ * on-create hook so per-name listeners (e.g. the pinned-status mode_change
+ * subscriber, keyed by bus session name) attach under the new name; the old
+ * subscriber stays registered as a state cleanup and is simply never fed.
+ */
+export function renameSessionState(oldName: string, newName: string): boolean {
+  const state = states.get(oldName);
+  if (!state || states.has(newName)) return false;
+  states.delete(oldName);
+  state.sessionName = newName;
+  states.set(newName, state);
+  try {
+    onCreateHook?.(state);
+  } catch {
+    // never let a misbehaving hook break the rename
+  }
+  return true;
+}
+
 export function listSessionStates(): SessionState[] {
   return Array.from(states.values());
 }
