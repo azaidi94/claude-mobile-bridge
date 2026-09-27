@@ -198,6 +198,7 @@ function makeRealLikeState(name: string) {
 }
 
 mock.module("../sessions/session-state", () => ({
+  renameSessionState: mock(() => true),
   getSessionState: mock((name?: string) => {
     if (name && realSessionStates.has(name)) {
       return realSessionStates.get(name);
@@ -311,6 +312,7 @@ const mockMarkPendingRunCompletion = mock(
 const mockClearPendingRunCompletion = mock(() => {});
 
 mock.module("../handlers/watch", () => ({
+  renameWatchesByName: mock(() => 0),
   startWatchingSession: mockStartWatchingSession,
   startWatchingAndNotify: mockStartWatchingAndNotify,
   stopWatchByName: mockStopWatchByName,
@@ -336,6 +338,7 @@ let mockIsSessionTopicResult: {
 } | null = null;
 
 mock.module("../topics", () => ({
+  updateTopicMapping: mock(() => {}),
   isGeneralTopic: mock((ctx: any) => {
     const threadId = ctx.message?.message_thread_id;
     return threadId === undefined || threadId === 1;

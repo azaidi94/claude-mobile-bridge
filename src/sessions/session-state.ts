@@ -252,6 +252,16 @@ export function dropSessionState(name: string): void {
 /**
  * Snapshot of all live SessionStates (debug / web routes).
  */
+/** Re-key a SessionState under a new name (used by /rename). */
+export function renameSessionState(oldName: string, newName: string): boolean {
+  const state = states.get(oldName);
+  if (!state || states.has(newName)) return false;
+  states.delete(oldName);
+  state.sessionName = newName;
+  states.set(newName, state);
+  return true;
+}
+
 export function listSessionStates(): SessionState[] {
   return Array.from(states.values());
 }

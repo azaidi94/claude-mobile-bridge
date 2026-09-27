@@ -41,6 +41,7 @@ import {
   handleSwitch,
   handleRefresh,
   handlePin,
+  handleRename,
   handleGroupMode,
   handleVerbose,
   handleTmux,
@@ -305,6 +306,7 @@ export function createBot(options: BotOptions): Bot {
   bot.command("watch", withSctx(handleWatch));
   bot.command("unwatch", withSctx(handleUnwatch));
   bot.command("pin", withSctx(handlePin));
+  bot.command("rename", withSctx(handleRename));
   bot.command("groupmode", handleGroupMode);
   bot.command("verbose", handleVerbose);
   bot.command("tmux", handleTmux);

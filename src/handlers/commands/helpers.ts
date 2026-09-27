@@ -259,6 +259,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "/execute — configured scripts",
       "/settings — bot settings",
       "/pin — update pinned status",
+      "/rename &lt;name&gt; — rename this session and its topic",
       "/restart — restart bot",
     ].join("\n");
     await busReply(ctx, topicHelp, "html");

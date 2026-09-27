@@ -99,3 +99,4 @@ export {
   handleContext,
   handleClaude,
 } from "./inject";
+export { handleRename } from "./rename";

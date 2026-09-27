@@ -110,3 +110,19 @@ export function _getWatchForTests(
 ): WatchState | undefined {
   return watches.get(watchKey(chatId, threadId));
 }
+
+/**
+ * Point every live watch bound to `oldName` at `newName` (used by /rename).
+ * The watch keeps its chat/thread/tailer — only the label changes, so
+ * stopWatchByName / notifySessionOffline keep finding it.
+ */
+export function renameWatchesByName(oldName: string, newName: string): number {
+  let n = 0;
+  for (const state of watches.values()) {
+    if (state.sessionName === oldName) {
+      state.sessionName = newName;
+      n++;
+    }
+  }
+  return n;
+}

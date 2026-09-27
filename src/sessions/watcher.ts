@@ -1236,6 +1236,26 @@ export function updateSessionId(name: string, sessionId: string): void {
 }
 
 /**
+ * Re-key a cached session under a new name (used by /rename). Name
+ * stickiness on the next refresh comes from priorNameById/priorNameByPid,
+ * which are rebuilt from this cache — so updating the cache is enough for
+ * the watcher to keep the new name and to write it into the relay port file
+ * via portFileNameUpdates.
+ */
+export function renameSession(oldName: string, newName: string): boolean {
+  const info = cache.sessions.get(oldName);
+  if (!info || cache.sessions.has(newName)) return false;
+  cache.sessions.delete(oldName);
+  info.name = newName;
+  cache.sessions.set(newName, info);
+  if (cache.active === oldName) {
+    cache.active = newName;
+    saveActiveSession();
+  }
+  return true;
+}
+
+/**
  * Update session activity timestamp.
  */
 export function updateSessionActivity(name: string): void {

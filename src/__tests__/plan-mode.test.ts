@@ -146,6 +146,7 @@ const stubSessionState = {
 };
 
 mock.module("../sessions/session-state", () => ({
+  renameSessionState: mock(() => true),
   getSessionState: mock(() => stubSessionState),
   dropSessionState: mock(() => {}),
   setOnSessionStateCreated: mock(() => {}),
