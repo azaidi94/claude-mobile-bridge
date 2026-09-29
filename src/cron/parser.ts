@@ -109,20 +109,30 @@ export function parseCron(spec: string): CronExpr {
   };
 }
 
-/** True iff the cron expression matches the given Date (uses UTC fields). */
-export function matchesAt(expr: CronExpr, when: Date): boolean {
-  const minuteOk = expr.minute.has(when.getUTCMinutes());
-  const hourOk = expr.hour.has(when.getUTCHours());
-  const monthOk = expr.month.has(when.getUTCMonth() + 1);
+/**
+ * True iff the cron expression matches the given Date. Uses UTC fields by
+ * default; `local` evaluates in the bot host's timezone (ralph schedules).
+ */
+export function matchesAt(expr: CronExpr, when: Date, local = false): boolean {
+  const minute = local ? when.getMinutes() : when.getUTCMinutes();
+  const hour = local ? when.getHours() : when.getUTCHours();
+  const month = (local ? when.getMonth() : when.getUTCMonth()) + 1;
+  const date = local ? when.getDate() : when.getUTCDate();
+  const day = local ? when.getDay() : when.getUTCDay();
 
-  if (!minuteOk || !hourOk || !monthOk) return false;
+  if (
+    !expr.minute.has(minute) ||
+    !expr.hour.has(hour) ||
+    !expr.month.has(month)
+  )
+    return false;
 
   // POSIX: when both dom and dow are restricted (neither field was a bare
   // `*`), a time matches if EITHER field matches.
   if (!expr.domStar && !expr.dowStar) {
-    return expr.dom.has(when.getUTCDate()) || expr.dow.has(when.getUTCDay());
+    return expr.dom.has(date) || expr.dow.has(day);
   }
 
   // Otherwise AND across both — any `*` field is trivially satisfied.
-  return expr.dom.has(when.getUTCDate()) && expr.dow.has(when.getUTCDay());
+  return expr.dom.has(date) && expr.dow.has(day);
 }

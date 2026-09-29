@@ -130,7 +130,7 @@ If you don't use tmux, injection still works via fallbacks: a **Cursor** accessi
 | Control    | `/stop`, `/retry`, `/status`, `/restart`              |
 | Inject     | `/clear`, `/compact`, `/context`, `/skills`, `/model` |
 | tmux       | `/tmux` (panel), `/peek` (screen)                     |
-| Automation | `/ralph <path> [N]`, `/cron`                          |
+| Automation | `/ralph <path> [N]`, `/ralph at\|every`, `/cron`      |
 | Files      | `/pwd`, `/cd`, `/ls`                                  |
 | Quota      | `/usage`                                              |
 | Scripts    | `/execute`                                            |

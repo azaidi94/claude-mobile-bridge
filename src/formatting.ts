@@ -24,6 +24,17 @@ export function escapeHtml(text: string): string {
 // entity-shaped token (e.g. &copy;, &mdash;, or prose like `R&D;`) still escapes
 // to `&amp;…`, because Telegram rejects unsupported named entities with a 400
 // (can't parse entities), which would degrade the whole message to plain text.
+/** Host-local "Tue 30 Sept, 02:00" — for schedule times shown to the user. */
+export function formatLocalDateTime(d: Date): string {
+  return d.toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function escapeHtmlText(text: string): string {
   return text
     .replace(/&(?!(?:amp|lt|gt|quot);|#\d+;|#[xX][0-9a-fA-F]+;)/g, "&amp;")

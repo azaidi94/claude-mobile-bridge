@@ -429,7 +429,10 @@ await bot.api.setMyCommands([
   { command: "cursor", description: "Enable or disable Cursor AI bridge" },
   { command: "cleanzombie", description: "Delete stale forum topics" },
   { command: "cron", description: "Schedule prompts at cron times" },
-  { command: "ralph", description: "Run a ralph loop (afk_tasks.sh)" },
+  {
+    command: "ralph",
+    description: "Run or schedule a ralph loop (afk_tasks.sh)",
+  },
   { command: "prompts", description: "Tappable saved-prompt menu" },
   { command: "skills", description: "Browse & run Claude skills/commands" },
   { command: "clear", description: "Send /clear to the desktop session" },

@@ -1,3 +1,5 @@
+// Non-UTC host so local-time assertions can't pass by coincidence on UTC CI.
+process.env.TZ = "America/New_York";
 process.env.TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "test-token";
 process.env.TELEGRAM_ALLOWED_USERS =
   process.env.TELEGRAM_ALLOWED_USERS || "12345";
@@ -28,6 +30,28 @@ mock.module("../messaging", () => ({
   }),
 }));
 
+// Ralph launch seams — fireRalphJob dynamic-imports both. Narrow mocks are
+// safe only while nothing in scheduler.ts's STATIC import graph loads these
+// modules; if that changes, spread the real module in.
+const ralphStarts: Array<{ path: string; chatId?: number }> = [];
+let activeLoop: { repoPath: string } | null = null;
+let startImpl: (
+  reply: (html: string) => Promise<unknown>,
+) => Promise<boolean> = async () => true;
+mock.module("../handlers/commands/ralph", () => ({
+  startRalphLoop: async (
+    _api: unknown,
+    args: { path: string },
+    target: { chatId?: number; reply: (html: string) => Promise<unknown> },
+  ) => {
+    ralphStarts.push({ path: args.path, chatId: target.chatId });
+    return startImpl(target.reply);
+  },
+}));
+mock.module("../ralph/store", () => ({
+  getActiveLoop: async () => activeLoop,
+}));
+
 mock.module("../relay/discovery", () => ({
   getRelayClient: async () =>
     relayAvailable
@@ -47,6 +71,9 @@ beforeEach(async () => {
   busCalls.length = 0;
   relayCalls.length = 0;
   relayAvailable = true;
+  ralphStarts.length = 0;
+  activeLoop = null;
+  startImpl = async () => true;
   sessionsByName.clear();
 
   const { clearTopicStore, addTopicMapping } =
@@ -254,8 +281,211 @@ describe("evaluateMissedMinutes", () => {
     // Large gap (simulated sleep): last=0, now=20
     const result = await evaluateMissedMinutes(fakeApi, -100, 20, 0);
     expect(result).toBe(20);
-    // Capped at 5 fires (minutes 1-5 only), not 20
+    // Capped at 5 fires (most recent minutes 16-20), not 20
     expect(relayCalls).toHaveLength(5);
     expect(busCalls).toHaveLength(5);
+  });
+});
+
+describe("evaluateMissedMinutes window", () => {
+  it("replays the most recent minutes after a long gap, not the oldest", async () => {
+    const store = await freshStore();
+    // Epoch minute 20 = 00:20Z; minute 3 = 00:03Z.
+    await store.addJob({
+      schedule: "20 * * * *",
+      sessionName: "proj",
+      prompt: "late",
+      enabled: true,
+    });
+    await store.addJob({
+      schedule: "3 * * * *",
+      sessionName: "proj",
+      prompt: "early",
+      enabled: true,
+    });
+    const { evaluateMissedMinutes } = await import("../cron/scheduler");
+    await evaluateMissedMinutes({} as any, -100, 20, 0);
+    expect(relayCalls.map((c) => c.text)).toEqual(["late"]);
+  });
+});
+
+const RALPH = { path: "/tmp/repo", iterations: 5, prMode: false };
+
+function ralphJob(over: Record<string, unknown> = {}) {
+  return {
+    kind: "ralph" as const,
+    ralph: RALPH,
+    tz: "local" as const,
+    schedule: "0 2 * * *",
+    sessionName: "",
+    prompt: "",
+    enabled: true,
+    ...over,
+  };
+}
+
+describe("ralph jobs", () => {
+  it("starts a loop on a recurring local-time match", async () => {
+    const store = await freshStore();
+    const when = new Date(2026, 4, 31, 2, 0); // local 02:00
+    await store.addJob({
+      kind: "ralph",
+      ralph: RALPH,
+      tz: "local",
+      schedule: "0 2 * * *",
+      sessionName: "",
+      prompt: "",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, when);
+    expect(ralphStarts).toEqual([{ path: "/tmp/repo", chatId: 777 }]);
+    expect(relayCalls).toHaveLength(0);
+    // Recurring jobs stay in the store.
+    expect(await store.getJobs()).toHaveLength(1);
+  });
+
+  it("skips (not queues) when a loop is already running", async () => {
+    const store = await freshStore();
+    activeLoop = { repoPath: "/tmp/busy" };
+    await store.addJob({
+      kind: "ralph",
+      ralph: RALPH,
+      tz: "local",
+      schedule: "* * * * *",
+      sessionName: "",
+      prompt: "",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date());
+    expect(ralphStarts).toHaveLength(0);
+    expect(busCalls.at(-1)?.content).toContain("skipped");
+    expect(busCalls.at(-1)?.content).toContain("/tmp/busy");
+  });
+
+  it("one-shot fires once when due, then is removed", async () => {
+    const store = await freshStore();
+    const due = new Date("2026-05-31T02:00:00.000Z");
+    await store.addJob({
+      kind: "ralph",
+      ralph: RALPH,
+      runAt: due.toISOString(),
+      schedule: "",
+      sessionName: "",
+      prompt: "",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(due.getTime() - 60_000));
+    expect(ralphStarts).toHaveLength(0);
+    await tick({} as any, 777, due);
+    expect(ralphStarts).toHaveLength(1);
+    expect(await store.getJobs()).toHaveLength(0);
+    await tick({} as any, 777, new Date(due.getTime() + 60_000));
+    expect(ralphStarts).toHaveLength(1);
+  });
+
+  it("one-shot fires late within the grace window (bot restart)", async () => {
+    const store = await freshStore();
+    const due = new Date("2026-05-31T02:00:00.000Z");
+    await store.addJob({
+      kind: "ralph",
+      ralph: RALPH,
+      runAt: due.toISOString(),
+      schedule: "",
+      sessionName: "",
+      prompt: "",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(due.getTime() + 20 * 60_000));
+    expect(ralphStarts).toHaveLength(1);
+  });
+
+  it("drops a one-shot found past the grace window with a notice", async () => {
+    const store = await freshStore();
+    const due = new Date("2026-05-31T02:00:00.000Z");
+    await store.addJob({
+      kind: "ralph",
+      ralph: RALPH,
+      runAt: due.toISOString(),
+      schedule: "",
+      sessionName: "",
+      prompt: "",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(due.getTime() + 3 * 3_600_000));
+    expect(ralphStarts).toHaveLength(0);
+    expect(busCalls.at(-1)?.content).toContain("missed");
+    expect(await store.getJobs()).toHaveLength(0);
+  });
+});
+
+describe("ralph jobs — edge cases", () => {
+  it("UTC prompt jobs don't fire at local-time matches", async () => {
+    const store = await freshStore();
+    await store.addJob({
+      schedule: "0 2 * * *",
+      sessionName: "proj",
+      prompt: "utc",
+      enabled: true,
+    });
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(2026, 4, 31, 2, 0)); // local 02:00 = 06:00Z
+    expect(relayCalls).toHaveLength(0);
+  });
+
+  it("does not re-fire when the same minute is ticked twice", async () => {
+    const store = await freshStore();
+    await store.addJob(ralphJob());
+    const { tick } = await import("../cron/scheduler");
+    const when = new Date(2026, 4, 31, 2, 0);
+    await tick({} as any, 777, when);
+    await tick({} as any, 777, when);
+    expect(ralphStarts).toHaveLength(1);
+  });
+
+  it("fires once across the DST fall-back repeat of the same local minute", async () => {
+    const store = await freshStore();
+    await store.addJob(ralphJob({ schedule: "30 1 * * *" }));
+    const { tick } = await import("../cron/scheduler");
+    // 2026-11-01 America/New_York: 01:30 EDT = 05:30Z, then 01:30 EST = 06:30Z.
+    await tick({} as any, 777, new Date("2026-11-01T05:30:00Z"));
+    await tick({} as any, 777, new Date("2026-11-01T06:30:00Z"));
+    expect(ralphStarts).toHaveLength(1);
+    // Next day still fires.
+    await tick({} as any, 777, new Date("2026-11-02T06:30:00Z"));
+    expect(ralphStarts).toHaveLength(2);
+  });
+
+  it("second job in the same minute is skipped while the first is starting", async () => {
+    const store = await freshStore();
+    let release!: (ok: boolean) => void;
+    startImpl = () => new Promise<boolean>((r) => (release = r));
+    await store.addJob(ralphJob({ id: "a" }));
+    await store.addJob(ralphJob({ id: "b" }));
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(2026, 4, 31, 2, 0));
+    expect(ralphStarts).toHaveLength(1);
+    expect(busCalls.at(-1)?.content).toContain("another scheduled loop");
+    release(true);
+  });
+
+  it("posts start progress to General and reports a thrown start", async () => {
+    const store = await freshStore();
+    startImpl = async (reply) => {
+      await reply("launching");
+      throw new Error("boom");
+    };
+    await store.addJob(ralphJob());
+    const { tick } = await import("../cron/scheduler");
+    await tick({} as any, 777, new Date(2026, 4, 31, 2, 0));
+    await Bun.sleep(0);
+    const launch = busCalls.find((c) => c.content.includes("launching"));
+    expect(launch?.threadId).toBeUndefined();
+    expect(busCalls.at(-1)?.content).toContain("scheduled start failed");
+    expect(busCalls.at(-1)?.content).toContain("boom");
   });
 });

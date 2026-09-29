@@ -1,3 +1,6 @@
+// Non-UTC host so local-time assertions can't pass by coincidence on UTC CI.
+process.env.TZ = "America/New_York";
+
 import { describe, it, expect } from "bun:test";
 import { parseCron, matchesAt } from "../cron/parser";
 
@@ -130,5 +133,17 @@ describe("parseCron", () => {
     // step that starts beyond the range and never enters the loop
     // e.g. minute=60/5 starts at 60, hi=59 → empty
     expect(() => parseCron("60/5 * * * *")).toThrow(/empty set/);
+  });
+});
+
+describe("matchesAt local", () => {
+  it("evaluates fields in host local time when local=true", async () => {
+    const { parseCron, matchesAt } = await import("../cron/parser");
+    const expr = parseCron("30 2 * * *");
+    const localTwoThirty = new Date(2026, 6, 1, 2, 30);
+    expect(matchesAt(expr, localTwoThirty, true)).toBe(true);
+    expect(matchesAt(expr, new Date(2026, 6, 1, 3, 30), true)).toBe(false);
+    // Same instant evaluated in UTC (06:30Z) must not match.
+    expect(matchesAt(expr, localTwoThirty, false)).toBe(false);
   });
 });

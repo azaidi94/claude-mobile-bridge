@@ -9,12 +9,16 @@ One loop runs at a time.
 
 ## Commands
 
-| Command                                | Effect                                                              |
-| -------------------------------------- | ------------------------------------------------------------------- |
-| `/ralph <path> [N] [-pr] [-l <label>]` | Start a loop on `<path>` for `N` iterations (default 10).           |
-| `/ralph`                               | Status of the running loop (repo, iteration, uptime, verbose flag). |
-| `/ralph stop`                          | Hard tree-kill the loop mid-iteration and finalize.                 |
-| `/ralph verbose on\|off`               | Stream / stop streaming the full session transcript into the topic. |
+| Command                                | Effect                                                               |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| `/ralph <path> [N] [-pr] [-l <label>]` | Start a loop on `<path>` for `N` iterations (default 10).            |
+| `/ralph`                               | Status of the running loop (repo, iteration, uptime, verbose flag).  |
+| `/ralph stop`                          | Hard tree-kill the loop mid-iteration and finalize.                  |
+| `/ralph verbose on\|off`               | Stream / stop streaming the full session transcript into the topic.  |
+| `/ralph at <HH:MM> <start args>`       | Start once at the next local `HH:MM`. See [Scheduling](#scheduling). |
+| `/ralph every <cron> <start args>`     | Start on a recurring 5-field cron spec (local time).                 |
+| `/ralph jobs`                          | List scheduled runs.                                                 |
+| `/ralph unsched <id>`                  | Remove a scheduled run.                                              |
 
 Flags:
 
@@ -24,6 +28,41 @@ Flags:
   `-l -` forces no filter for one run even when a default is set.
 - Relative `<path>` resolves against the `Working dir` setting (like `/new`); `~` is
   expanded. The path must be an existing **git repo** on the bot host.
+
+## Scheduling
+
+Queue a loop to start later, e.g. overnight or once your usage window resets.
+`<start args>` are the same as `/ralph <path> [N] [-pr] [-l <label>]`.
+
+```text
+/ralph at 02:00 myrepo 20 -pr            # once, next 02:00
+/ralph every "0 2 * * 1-5" myrepo 10     # weekdays 02:00
+/ralph jobs
+/ralph unsched <id>
+```
+
+- **Local time** — schedules use the bot host's timezone (unlike `/cron`, which
+  is UTC). `at` picks today if the time is still ahead, else tomorrow.
+- **DST** — on the autumn change a repeated local time fires once; on the
+  spring change a time inside the skipped hour (e.g. `30 1 * * *` in the UK)
+  doesn't fire that day.
+- **Validated up front** — the path is resolved (against `Working dir`) and
+  checked to be a git repo when you schedule, so a typo fails now, not at 2am.
+  Omitting `-l` follows the `Ralph label` setting **at fire time**.
+- **Busy ⇒ skip** — if a loop is already running when a run fires, it is
+  skipped with a `⏭ skipped — loop busy` notice in General, not queued. A
+  skipped one-shot is used up, not retried.
+- **Where results go** — fire/skip/error notices post to General; the loop
+  itself gets its usual `🔁 ralph <repo>` topic.
+- **Bot offline / host asleep** — a one-shot that came due fires on restart
+  or wake if ≤ 1h late; later than that it's dropped with a `⏭ missed` notice.
+  Recurring runs missed while the bot was down aren't replayed; a ≤ 5 min
+  stall (e.g. host sleep) is caught up.
+- **Reserved words** — `at`, `every`, `jobs`, `unsched` (like `stop` and
+  `verbose`) are subcommands, so a repo named e.g. `jobs` needs `./jobs`.
+- Schedules live in the cron store (`~/.claude-mobile-bridge/cron.json`) but are
+  managed only via `/ralph` — `/cron` hides and refuses them. The scheduler only
+  runs when the bot has a primary chat configured (`/ralph at` warns if not).
 
 ## What the topic shows
 

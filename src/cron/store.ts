@@ -19,6 +19,21 @@ export interface CronJob {
   enabled: boolean;
   createdAt: string; // ISO 8601 UTC
   lastRunAt?: string; // ISO 8601 UTC
+  /** "ralph" starts a ralph loop instead of relaying `prompt` to a session. */
+  kind?: "prompt" | "ralph";
+  /** kind=ralph: loop args (path already resolved to a canonical repo). */
+  ralph?: RalphJobArgs;
+  /** Evaluate `schedule` in the bot host's local time instead of UTC. */
+  tz?: "local";
+  /** One-shot: fire at this ISO instant, then remove. `schedule` is unused. */
+  runAt?: string;
+}
+
+export interface RalphJobArgs {
+  path: string;
+  iterations: number;
+  prMode: boolean;
+  label?: string;
 }
 
 interface CronStore {
@@ -94,11 +109,8 @@ export async function addJob(
     job.id ||
     `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
   const created: CronJob = {
+    ...job,
     id,
-    schedule: job.schedule,
-    sessionName: job.sessionName,
-    prompt: job.prompt,
-    enabled: job.enabled,
     createdAt: new Date().toISOString(),
   };
   cache.jobs.push(created);

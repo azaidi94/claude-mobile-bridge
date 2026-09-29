@@ -73,7 +73,8 @@ export async function handleCron(
 }
 
 async function listJobs(ctx: Context, sctx?: SessionContext): Promise<void> {
-  const all = await getJobs();
+  // Ralph schedules share the store but are managed via /ralph jobs.
+  const all = (await getJobs()).filter((j) => j.kind !== "ralph");
   const scoped = sctx?.sessionName
     ? all.filter((j) => j.sessionName === sctx.sessionName)
     : all;
@@ -150,11 +151,24 @@ async function addCmd(
   );
 }
 
+/** Ralph schedules share the store but are managed via /ralph jobs|unsched. */
+async function rejectRalphJob(ctx: Context, id: string): Promise<boolean> {
+  const job = (await getJobs()).find((j) => j.id === id);
+  if (job?.kind !== "ralph") return false;
+  await busReply(
+    ctx,
+    `<code>${escapeHtml(id)}</code> is a ralph schedule — use <code>/ralph unsched ${escapeHtml(id)}</code>.`,
+    "html",
+  );
+  return true;
+}
+
 async function delCmd(ctx: Context, id: string): Promise<void> {
   if (!id) {
     await busReply(ctx, "Need a job id. Use <code>/cron list</code>.", "html");
     return;
   }
+  if (await rejectRalphJob(ctx, id)) return;
   const ok = await removeJob(id);
   await busReply(
     ctx,
@@ -170,6 +184,7 @@ async function toggleCmd(ctx: Context, id: string, on: boolean): Promise<void> {
     await busReply(ctx, "Need a job id.", "html");
     return;
   }
+  if (await rejectRalphJob(ctx, id)) return;
   const ok = await setEnabled(id, on);
   await busReply(
     ctx,
