@@ -174,7 +174,18 @@ interface IssueSummary {
 /** Best-effort open-issue snapshot for beat enrichment. Silent on any failure. */
 async function ghIssueSummary(loop: RalphLoop): Promise<IssueSummary | null> {
   try {
-    const args = ["issue", "list", "--state", "open", "--json", "number,title"];
+    // gh defaults to --limit 30, which caps the count and hides older issues
+    // from `next`.
+    const args = [
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      "1000",
+      "--json",
+      "number,title",
+    ];
     if (loop.label) args.push("--label", loop.label);
     const proc = Bun.spawn(["gh", ...args], {
       cwd: loop.repoPath,
