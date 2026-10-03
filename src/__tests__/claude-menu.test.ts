@@ -16,18 +16,35 @@ import {
   CLAUDE_CMD_KIND,
   CLAUDE_GROUP_KIND,
   CLAUDE_HELP_KIND,
+  CLAUDE_ASK_KIND,
 } from "../menus/claude-menu";
-import { CLAUDE_COMMANDS } from "../handlers/commands/claude-command-reference";
+import { pendingClaudeArg } from "../menus/claude-pending";
+import {
+  CLAUDE_COMMANDS,
+  type CommandGroup,
+} from "../handlers/commands/claude-command-reference";
 import { handleMenuCallback, _resetMenuKindsForTests } from "../menus/menu";
 import { putToken, _resetMenuRegistryForTests } from "../menus/registry";
 
-const groups = [
+const groups: CommandGroup[] = [
   {
     title: "Session",
     commands: [
       { name: "/clear", purpose: "x" },
       { name: "/exit", purpose: "blocked" },
       { name: "/model", purpose: "x", options: ["opus", "sonnet"] },
+      {
+        name: "/btw",
+        purpose: "x",
+        arg: "required",
+        argHint: "your side question",
+      },
+      {
+        name: "/code-review",
+        purpose: "x",
+        arg: "optional",
+        argHint: "a target",
+      },
     ],
   },
   { title: "Only blocked", commands: [{ name: "/quit", purpose: "blocked" }] },
@@ -46,7 +63,12 @@ describe("claude menu specs", () => {
 
   test("group level never offers blocklisted commands", () => {
     const spec = claudeGroupMenuSpec(0, groups);
-    expect(spec.items.map((i) => i.label)).toEqual(["/clear", "/model"]);
+    expect(spec.items.map((i) => i.label)).toEqual([
+      "/clear",
+      "/model",
+      "/btw",
+      "/code-review",
+    ]);
     expect(spec.items[0]?.payload).toEqual({ name: "clear" });
     expect(spec.back?.kind).toBe(CLAUDE_GROUP_KIND);
   });
@@ -153,6 +175,56 @@ describe("claude.cmd handler", () => {
       "/model opus",
       "➡️ Sent /model opus.",
     );
+  });
+
+  test("a command that REQUIRES text asks for it and waits instead of sending", async () => {
+    pendingClaudeArg.clear();
+    const t = putToken({
+      kind: CLAUDE_CMD_KIND,
+      payload: { name: "btw" },
+      chatId: 1,
+    });
+    await handleMenuCallback(
+      { ...ctx, msg: { message_thread_id: 77 } } as never,
+      t,
+    );
+    expect(inject).not.toHaveBeenCalled();
+    expect(replies[0]).toContain("/btw");
+    expect(replies[0]).toContain("your side question");
+    expect([...pendingClaudeArg.values()].map((p) => p.name)).toEqual(["btw"]);
+  });
+
+  test("a command with OPTIONAL text offers 'send as is' or 'enter text'", async () => {
+    pendingClaudeArg.clear();
+    const t = putToken({
+      kind: CLAUDE_CMD_KIND,
+      payload: { name: "code-review" },
+      chatId: 1,
+    });
+    await handleMenuCallback(ctx as never, t);
+    expect(inject).not.toHaveBeenCalled();
+    expect(edits[0]).toContain("/code-review — add text?");
+    const asIs = putToken({
+      kind: CLAUDE_CMD_KIND,
+      payload: { name: "code-review", arg: "" },
+      chatId: 1,
+    });
+    await handleMenuCallback(ctx as never, asIs);
+    expect(inject).toHaveBeenCalledWith(
+      ctx,
+      sctx,
+      "/code-review",
+      "➡️ Sent /code-review.",
+    );
+    const ask = putToken({
+      kind: CLAUDE_ASK_KIND,
+      payload: { name: "code-review" },
+      chatId: 1,
+    });
+    await handleMenuCallback(ctx as never, ask);
+    expect([...pendingClaudeArg.values()].map((p) => p.name)).toEqual([
+      "code-review",
+    ]);
   });
 
   test("outside a session topic the tap is refused with an alert", async () => {

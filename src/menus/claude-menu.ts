@@ -11,17 +11,21 @@ import {
   CLAUDE_COMMANDS,
   CLAUDE_COMMAND_REFERENCE,
   type CommandGroup,
+  type CommandEntry,
 } from "../handlers/commands/claude-command-reference";
 import {
   injectSlashCommand,
   CLAUDE_COMMAND_BLOCKLIST,
 } from "../handlers/commands/inject";
 import { busReply } from "../handlers/commands/helpers";
+import { pendingClaudeArg } from "./claude-pending";
+import { escapeHtml } from "../formatting";
 import { registerMenuKind, replaceMenu, showMenu, type MenuSpec } from "./menu";
 
 export const CLAUDE_CMD_KIND = "claude.cmd";
 export const CLAUDE_HELP_KIND = "claude.help";
 export const CLAUDE_GROUP_KIND = "claude.group";
+export const CLAUDE_ASK_KIND = "claude.ask";
 
 export interface ClaudeCmdPayload {
   name: string; // without the leading slash
@@ -98,6 +102,40 @@ export function claudeOptionsMenuSpec(
   };
 }
 
+export function entryFor(
+  name: string,
+  groups: readonly CommandGroup[] = CLAUDE_COMMANDS,
+): CommandEntry | undefined {
+  for (const g of groups) {
+    const hit = g.commands.find((c) => strip(c.name) === strip(name));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** "Send as is" / "Enter text…" for commands with an optional argument. */
+export function claudeOptionalArgMenuSpec(
+  name: string,
+  hint?: string,
+): MenuSpec {
+  return {
+    title: `/${strip(name)} — add text?${hint ? ` <i>(${escapeHtml(hint)})</i>` : ""}`,
+    items: [
+      {
+        label: `➡️ Send /${strip(name)} as is`,
+        kind: CLAUDE_CMD_KIND,
+        payload: { name: strip(name), arg: "" },
+      },
+      {
+        label: "✏️ Enter text…",
+        kind: CLAUDE_ASK_KIND,
+        payload: { name: strip(name) },
+      },
+    ],
+    back: { label: "‹ Back", kind: CLAUDE_GROUP_KIND, payload: { index: -1 } },
+  };
+}
+
 export function optionsFor(
   name: string,
   groups: readonly CommandGroup[] = CLAUDE_COMMANDS,
@@ -128,6 +166,27 @@ async function resolveSctxLazily(
   return resolveSessionContext(ctx);
 }
 
+/** Ask for the command's text; the next message in this topic completes it. */
+async function askForArg(
+  ctx: Context,
+  name: string,
+  hint?: string,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  // Lazy: streaming.ts pulls in the whole messaging stack, which inject.ts
+  // (our importer) keeps out of its static graph.
+  const { pendingKey } = await import("../handlers/streaming");
+  const key = pendingKey(chatId, ctx.msg?.message_thread_id);
+  pendingClaudeArg.set(key, { name, createdAt: Date.now() });
+  await ctx.answerCallbackQuery().catch(() => {});
+  await busReply(
+    ctx,
+    `✏️ Send the text for <code>/${escapeHtml(name)}</code>${hint ? ` — ${escapeHtml(hint)}` : ""}.\n(or /cancel)`,
+    "html",
+  );
+}
+
 export function registerClaudeMenu(
   deps: {
     inject: typeof injectSlashCommand;
@@ -144,6 +203,12 @@ export function registerClaudeMenu(
   registerMenuKind(CLAUDE_HELP_KIND, async (ctx) => {
     await busReply(ctx, CLAUDE_COMMAND_REFERENCE, "html");
     await ctx.answerCallbackQuery().catch(() => {});
+  });
+
+  registerMenuKind(CLAUDE_ASK_KIND, async (ctx, entry) => {
+    const { name } = entry.payload as { name: string };
+    const e = entryFor(name, deps.groups);
+    await askForArg(ctx, strip(name), e?.argHint);
   });
 
   registerMenuKind(CLAUDE_GROUP_KIND, async (ctx, entry) => {
@@ -168,9 +233,19 @@ export function registerClaudeMenu(
         .catch(() => {});
       return;
     }
-    const opts = optionsFor(name, deps.groups);
-    if (opts && !arg) {
+    const entry2 = entryFor(name, deps.groups);
+    const opts = entry2?.options;
+    if (opts && opts.length && arg === undefined) {
       await replaceMenu(ctx, claudeOptionsMenuSpec(name, opts));
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    if (arg === undefined && entry2?.arg === "required") {
+      await askForArg(ctx, name, entry2.argHint);
+      return;
+    }
+    if (arg === undefined && entry2?.arg === "optional") {
+      await replaceMenu(ctx, claudeOptionalArgMenuSpec(name, entry2.argHint));
       await ctx.answerCallbackQuery().catch(() => {});
       return;
     }

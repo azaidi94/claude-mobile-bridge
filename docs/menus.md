@@ -42,10 +42,19 @@ session…` (in General: pick a live session), `▶️ Resume a conversation…`
 `--resume <id>`). Resuming an id that is already live is refused with an
 alert; branching sidesteps that by forking.
 
-**`/claude` menu.** Groups → commands (two per row) → fixed options for
-commands that have them (`/model`, `/permissions`). Taps go through the same
-injector and blocklist as `/claude <cmd>`; `/claude help` prints the text
-reference.
+**`/claude` menu.** Groups → commands (two per row). Each entry in
+`claude-command-reference.ts` declares how it takes its argument:
+
+| `arg`            | Tap behaviour                                                      | Examples                             |
+| ---------------- | ------------------------------------------------------------------ | ------------------------------------ |
+| `none` (default) | sends `/name` immediately                                          | `/clear`, `/compact`, `/usage`       |
+| `options: [...]` | second-level menu of fixed choices → `/name <choice>`              | `/model`, `/permissions`, `/effort`  |
+| `optional`       | "Send as is" or "Enter text…"                                      | `/code-review`, `/resume`, `/export` |
+| `required`       | asks for the text; the **next message in that topic** completes it | `/btw`, `/rename`, `/goal`, `/cd`    |
+
+Pending text (`src/menus/claude-pending.ts`) is keyed by chat+topic, expires
+after 10 minutes, and `/cancel` clears it. Taps go through the same injector
+and blocklist as `/claude <cmd>`; `/claude help` prints the text reference.
 
 ## Adding a supplier
 

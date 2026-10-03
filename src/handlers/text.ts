@@ -44,6 +44,11 @@ import { sendViaRelay } from "./relay-bridge";
 import { isAbsolute } from "path";
 import { stat } from "fs/promises";
 import { pendingSettingsInput } from "./settings";
+import {
+  pendingClaudeArg,
+  takePendingClaudeArg,
+} from "../menus/claude-pending";
+import { injectSlashCommand } from "./commands/inject";
 import { pendingSkillArgs, runSkill } from "./commands/skills";
 import { saveSetting } from "../settings";
 import { isTopicChat } from "./commands";
@@ -178,7 +183,8 @@ export async function handleText(
     if (
       !pendingSettingsInput.has(incomingPendingKey) &&
       !pendingPlanFeedback.has(incomingPendingKey) &&
-      !pendingAskUserQuestionCustom.has(incomingPendingKey)
+      !pendingAskUserQuestionCustom.has(incomingPendingKey) &&
+      !pendingClaudeArg.has(incomingPendingKey)
     ) {
       await busReply(
         ctx,
@@ -186,6 +192,21 @@ export async function handleText(
       );
       return;
     }
+  }
+
+  // 1.3. A /claude menu tap is waiting for this text (e.g. /btw <question>).
+  const _claudePK = pendingKey(chatId, incomingThreadId);
+  if (pendingClaudeArg.has(_claudePK)) {
+    const outcome = takePendingClaudeArg(_claudePK, message);
+    if (outcome?.kind === "cancel") {
+      await busReply(ctx, "✖ Cancelled.", { threadId });
+      return;
+    }
+    if (outcome?.kind === "send") {
+      await injectSlashCommand(ctx, sctx, outcome.slash, outcome.label);
+      return;
+    }
+    // expired → fall through and treat as a normal message
   }
 
   // 1.4. Check for pending settings input (working dir entry)
