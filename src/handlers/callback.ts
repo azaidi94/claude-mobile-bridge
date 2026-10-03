@@ -581,7 +581,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
     );
     await ctx.answerCallbackQuery();
 
-    await spawnDesktopClaudeSession(ctx.api, chatId, s.dir, userId);
+    await spawnDesktopClaudeSession(ctx.api, chatId, s.dir, userId, {
+      resumeSessionId: s.sessionId,
+    });
     return;
   }
 

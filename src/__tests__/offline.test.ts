@@ -11,7 +11,12 @@ import { tmpdir } from "os";
 // We'll test the helper functions by pointing them at temp dirs.
 // listOfflineSessions reads PROJECTS_DIR from a module-level const, so we
 // test the lower-level helpers directly via re-exports.
-import { findNewestJsonlInDir, readCwdFromJsonl } from "../sessions/offline";
+import {
+  findNewestJsonlInDir,
+  readCwdFromJsonl,
+  findTranscriptCwd,
+  listOfflineSessions,
+} from "../sessions/offline";
 
 let tmpDir: string;
 
@@ -88,5 +93,44 @@ describe("readCwdFromJsonl", () => {
 
   test("returns null for non-existent file", async () => {
     expect(await readCwdFromJsonl("/nonexistent/path.jsonl")).toBeNull();
+  });
+});
+
+describe("findTranscriptCwd", () => {
+  test("finds a transcript by id across project dirs and returns its cwd", async () => {
+    const proj = join(tmpDir, "-p-a");
+    await mkdir(proj, { recursive: true });
+    await writeFile(
+      join(proj, "11111111-1111-1111-1111-111111111111.jsonl"),
+      '{"cwd":"/p/a","type":"user"}\n',
+    );
+    expect(
+      await findTranscriptCwd("11111111-1111-1111-1111-111111111111", tmpDir),
+    ).toBe("/p/a");
+    expect(
+      await findTranscriptCwd("22222222-2222-2222-2222-222222222222", tmpDir),
+    ).toBeNull();
+  });
+});
+
+describe("listOfflineSessions sessionId", () => {
+  test("each entry carries the newest transcript's session id", async () => {
+    // cwd must exist, be a directory and sit under ALLOWED_PATHS (tmpdir in tests)
+    const cwd = join(tmpDir, "work");
+    await mkdir(cwd, { recursive: true });
+    const proj = join(tmpDir, "projects", "-work");
+    await mkdir(proj, { recursive: true });
+    await writeFile(
+      join(proj, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl"),
+      `{"cwd":"${cwd}","type":"user","message":{"role":"user","content":"old"}}\n`,
+    );
+    await Bun.sleep(10);
+    await writeFile(
+      join(proj, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl"),
+      `{"cwd":"${cwd}","type":"user","message":{"role":"user","content":"new"}}\n`,
+    );
+    const list = await listOfflineSessions(join(tmpDir, "projects"), [tmpDir]);
+    const hit = list.find((s) => s.dir === cwd);
+    expect(hit?.sessionId).toBe("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
   });
 });
