@@ -47,6 +47,7 @@ mock.module("../ralph/store", () => ({
 }));
 
 mock.module("../sessions/tailer", () => ({
+  getLastSessionMessage: mock(async () => null),
   findSessionJsonlPath: (id: string) => findSessionJsonlPathImpl(id),
   findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) => {
     lastExcludeIds = excludeIds;
@@ -559,6 +560,41 @@ describe("_resolveDriftTargetId", () => {
     findNewestSessionInDirImpl = async () => "newest-clear-id";
     const mod = await import("../handlers/watch");
     const ws = makeWatch({});
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
+  });
+
+  test("sole owner: prefers this pid's port-file id over a newer sibling transcript (e.g. /fork)", async () => {
+    // 2026-10-03: Claude's /fork wrote a 6 MB copy of the conversation into
+    // the same project dir; newest-by-mtime adopted it and the topic flapped.
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 100, sessionId: "own-live-id" },
+    ];
+    findNewestSessionInDirImpl = async () => "fork-copy-id";
+    findSessionJsonlPathImpl = async (id) => `/proj/${id}.jsonl`;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100 });
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("own-live-id");
+  });
+
+  test("sole owner: falls back to newest-in-dir when the port file carries no id", async () => {
+    scanPortFilesImpl = async () => [{ cwd: "/dir", ppid: 100 }];
+    findNewestSessionInDirImpl = async () => "newest-clear-id";
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100 });
+    mod._registerWatchForTests(ws);
+    expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
+  });
+
+  test("sole owner: falls back to newest-in-dir when the port-file id has no transcript on disk", async () => {
+    scanPortFilesImpl = async () => [
+      { cwd: "/dir", ppid: 100, sessionId: "stale-hookless-id" },
+    ];
+    findNewestSessionInDirImpl = async () => "newest-clear-id";
+    findSessionJsonlPathImpl = async () => null;
+    const mod = await import("../handlers/watch");
+    const ws = makeWatch({ sessionPid: 100 });
     mod._registerWatchForTests(ws);
     expect(await mod._resolveDriftTargetId(ws)).toBe("newest-clear-id");
   });

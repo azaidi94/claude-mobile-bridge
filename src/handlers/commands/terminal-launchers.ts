@@ -30,17 +30,48 @@ export function resolveCmuxBin(): string | null {
   }
 }
 
+/** Options that change which conversation a desktop spawn starts on. */
+export interface SpawnOptions {
+  /** Resume this transcript (`claude --resume <id>`). */
+  resumeSessionId?: string;
+  /** With `resumeSessionId`: fork into a NEW session id (`--fork-session`). */
+  fork?: boolean;
+}
+
+/** Extra Claude CLI args implied by `opts` — `[]` when there are none. */
+export function spawnExtraArgs(opts?: SpawnOptions): string[] {
+  if (!opts?.resumeSessionId) return [];
+  const args = ["--resume", opts.resumeSessionId];
+  if (opts.fork) args.push("--fork-session");
+  return args;
+}
+
 export function buildDesktopShellCommand(
   explicitPath: string,
   claudePath: string,
+  opts?: SpawnOptions,
+  cfg: { template: string; defaultArgs: string } = {
+    template: DESKTOP_CLAUDE_COMMAND_TEMPLATE,
+    defaultArgs: DESKTOP_CLAUDE_DEFAULT_ARGS,
+  },
 ): string {
-  if (DESKTOP_CLAUDE_COMMAND_TEMPLATE) {
-    return DESKTOP_CLAUDE_COMMAND_TEMPLATE.replace(
+  const extras = spawnExtraArgs(opts);
+  if (cfg.template) {
+    const cmd = cfg.template.replace(
       /\{dir\}/g,
       bashSingleQuotedPath(explicitPath),
     );
+    if (extras.length === 0) return cmd;
+    // The launch script reads CLAUDE_RELAY_ARGS and forwards it through the
+    // tmux outer phase; it REPLACES the script's defaults, so include them.
+    // Session ids are UUIDs (validated by the caller) — safe inside quotes.
+    // `export …;` (not a `VAR=… cmd` prefix) so a compound template such as
+    // `cd {dir} && …/claude-relay-launch.sh` still sees the variable.
+    const relayArgs = [cfg.defaultArgs, ...extras].join(" ");
+    return `export CLAUDE_RELAY_ARGS=${bashSingleQuotedPath(relayArgs)}; ${cmd}`;
   }
-  return `cd ${bashSingleQuotedPath(explicitPath)} && exec ${bashSingleQuotedPath(claudePath)} ${DESKTOP_CLAUDE_DEFAULT_ARGS}`;
+  const tail = [cfg.defaultArgs, ...extras].filter(Boolean).join(" ");
+  return `cd ${bashSingleQuotedPath(explicitPath)} && exec ${bashSingleQuotedPath(claudePath)} ${tail}`;
 }
 
 /**

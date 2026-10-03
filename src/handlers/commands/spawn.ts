@@ -36,6 +36,7 @@ import {
 import {
   buildDesktopShellCommand,
   openMacOSTerminalWithCommand,
+  type SpawnOptions,
 } from "./terminal-launchers";
 import { rememberCmuxWorkspace } from "./terminal-inject";
 
@@ -49,6 +50,7 @@ export async function spawnDesktopClaudeSession(
   chatId: number,
   explicitPath: string,
   userId: number,
+  opts?: SpawnOptions,
 ): Promise<void> {
   const bus = getMessageBus();
   const claudePath = await assertDesktopSpawnReady((text) =>
@@ -58,7 +60,14 @@ export async function spawnDesktopClaudeSession(
 
   const opId = createOpId("spawn");
   const spawnStartedAt = Date.now();
-  info("spawn: started", { opId, chatId, userId, explicitPath });
+  info("spawn: started", {
+    opId,
+    chatId,
+    userId,
+    explicitPath,
+    resume: opts?.resumeSessionId,
+    fork: !!opts?.fork,
+  });
 
   try {
     try {
@@ -122,7 +131,7 @@ export async function spawnDesktopClaudeSession(
     // Suppression outlives the 120s poll deadline.
     suppressDirNotifications(spawnCwd, 150_000);
 
-    const shellCmd = buildDesktopShellCommand(explicitPath, claudePath);
+    const shellCmd = buildDesktopShellCommand(explicitPath, claudePath, opts);
     const term = openMacOSTerminalWithCommand(shellCmd, explicitPath);
     // cmux prints the new `workspace:N` ref on stdout — stash it so /clear and
     // /compact can inject into this workspace later (keyed by canonical cwd).
@@ -157,7 +166,13 @@ export async function spawnDesktopClaudeSession(
     const statusSend = await bus.send({
       chatId,
       content:
-        "⏳ Terminal opened — starting Claude.\n\n" +
+        "⏳ Terminal opened — starting Claude." +
+        (opts?.resumeSessionId
+          ? opts.fork
+            ? `\n🔀 Branching from <code>${opts.resumeSessionId.slice(0, 8)}</code>`
+            : `\n▶️ Resuming <code>${opts.resumeSessionId.slice(0, 8)}</code>`
+          : "") +
+        "\n\n" +
         "<b>At the Mac:</b> if you see the development-channels menu, choose <b>1</b> (local development) and press Enter.\n\n" +
         "<b>Remote only:</b> set <code>DESKTOP_CLAUDE_COMMAND</code> to <code>…/scripts/claude-relay-launch.sh {dir}</code> (see README) so <code>expect</code> can send that for you.\n\n" +
         `Once the relay connects, <code>/pwd</code> and <code>/ls</code> will switch to this folder.\n\nWaiting for relay…`,

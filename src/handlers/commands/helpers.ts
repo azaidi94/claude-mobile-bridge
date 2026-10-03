@@ -50,7 +50,9 @@ export function busReply(
     typeof formatOrOpts === "string" ? { format: formatOrOpts } : formatOrOpts;
   return getMessageBus().send({
     chatId,
-    threadId: ctx.message?.message_thread_id,
+    // ctx.msg covers both a command message and a tapped button's message,
+    // so replies from menu callbacks land in the same topic.
+    threadId: ctx.msg?.message_thread_id,
     content,
     format: opts.format ?? "plain",
     replyMarkup: opts.replyMarkup,
@@ -248,6 +250,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "<b>Inject (into the desktop TUI)</b>",
       "/clear — send /clear",
       "/compact — send /compact",
+      "/claude — Claude Code command menu (buttons); /claude &lt;cmd&gt; sends it",
+      "/new --branch — fork this session into a new desktop session",
       "",
       "<b>Automation</b>",
       "/ralph &lt;path&gt; [N] [-pr] [-l &lt;label&gt;] — run a ralph loop (N default 10)",
@@ -274,6 +278,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/switch &lt;name&gt; - Switch to session\n` +
       `/sessions - Browse offline sessions\n` +
       `/new [path] - Open desktop Claude (Terminal)\n` +
+      `/new --branch | --resume &lt;id&gt; - Fork this session / resume a transcript\n` +
       `/respawn - Kill + restart current session, same cwd\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +

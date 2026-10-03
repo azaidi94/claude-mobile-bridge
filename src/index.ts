@@ -74,6 +74,9 @@ import { initRelayAsk } from "./handlers/relay-ask";
 import { initPermissionRelay } from "./handlers/permission-relay";
 import { setBotApiForBridge } from "./handlers/auq-bridge";
 import { startModalWatchdog } from "./tmux/watchdog";
+import { registerFolderMenu } from "./menus/folder-browser";
+import { registerNewMenu } from "./menus/new-menu";
+import { registerClaudeMenu } from "./menus/claude-menu";
 
 let topicManager: TopicManager | undefined;
 
@@ -129,6 +132,11 @@ try {
 // subscribes. The unsubscribe is registered as a state cleanup so a
 // kill→recreate of the same session name detaches the old subscriber instead
 // of stacking a duplicate.
+// Button menus (src/menus): folder browser + /new suppliers.
+registerFolderMenu();
+registerNewMenu();
+registerClaudeMenu();
+
 setOnSessionStateCreated((state) => {
   const sessionName = state.sessionName;
   if (!sessionName) return;

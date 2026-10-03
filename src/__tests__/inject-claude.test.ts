@@ -84,9 +84,20 @@ describe("/claude", () => {
     busReplyCalls = [];
   });
 
-  test("no argument: replies with the command reference, no injection", async () => {
+  test("no argument: opens the button menu, no injection", async () => {
     const { handleClaude } = await import("../handlers/commands/inject");
     await handleClaude(ctx(""), sctx());
+    expect(sendKeysCalls.length).toBe(0);
+    expect(busReplyCalls.length).toBe(1);
+    expect(busReplyCalls[0]!.content).toContain("Claude Code commands");
+    expect(
+      (busReplyCalls[0]!.opts as { replyMarkup?: unknown }).replyMarkup,
+    ).toBeDefined();
+  });
+
+  test("'help' argument: replies with the text command reference, no injection", async () => {
+    const { handleClaude } = await import("../handlers/commands/inject");
+    await handleClaude(ctx("help"), sctx());
     expect(sendKeysCalls.length).toBe(0);
     expect(busReplyCalls.length).toBe(1);
     expect(busReplyCalls[0]!.content).toContain("Claude Code slash commands");

@@ -13,15 +13,16 @@ import { busReply, resolveTopicSession } from "./helpers";
 import { sendKeysToSession } from "./terminal-inject";
 import { replyBlockedPanel } from "./tmux";
 import { CLAUDE_COMMAND_REFERENCE } from "./claude-command-reference";
+import { showClaudeMenu } from "../../menus/claude-menu";
 
 /**
  * Slash commands that must never be typed into the session via /claude:
  * exiting the CLI would kill the very process the bot is watching and orphan
  * the topic. Use the bot's own /kill or /stop for that instead.
  */
-const CLAUDE_COMMAND_BLOCKLIST = new Set(["exit", "quit"]);
+export const CLAUDE_COMMAND_BLOCKLIST = new Set(["exit", "quit"]);
 
-async function injectSlashCommand(
+export async function injectSlashCommand(
   ctx: Context,
   sctx: SessionContext | undefined,
   slash: string,
@@ -137,6 +138,10 @@ export async function handleClaude(
 ): Promise<void> {
   const arg = ((ctx.match as string | undefined) ?? "").trim();
   if (!arg) {
+    await showClaudeMenu(ctx, sctx);
+    return;
+  }
+  if (arg === "help" || arg === "list") {
     await busReply(ctx, CLAUDE_COMMAND_REFERENCE, "html");
     return;
   }

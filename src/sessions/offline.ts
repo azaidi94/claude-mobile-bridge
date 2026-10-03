@@ -7,7 +7,7 @@
  */
 
 import { readdir, stat, open } from "fs/promises";
-import { join } from "path";
+import { join, basename } from "path";
 import { homedir } from "os";
 import { getRelayDirs } from "../relay";
 import { getLastSessionMessage } from "./tailer";
@@ -24,6 +24,8 @@ export interface OfflineSession {
   lastActivity: number;
   /** ~80-char preview of last user or assistant message. */
   lastMessage: string | null;
+  /** Session id of the newest transcript (JSONL basename) — what Resume resumes. */
+  sessionId: string;
 }
 
 /**
@@ -94,10 +96,33 @@ export async function readCwdFromJsonl(
  * - Directories with a live relay (already shown in /list)
  * - Working directories that no longer exist on disk
  */
-export async function listOfflineSessions(): Promise<OfflineSession[]> {
+/**
+ * Locate a transcript by session id anywhere under ~/.claude/projects and
+ * return its recorded cwd (null when not found). Used by `/new --resume <id>`
+ * to default the spawn folder.
+ */
+export async function findTranscriptCwd(
+  sessionId: string,
+  projectsDir: string = PROJECTS_DIR,
+): Promise<string | null> {
+  const entries = await readdir(projectsDir).catch((): string[] => []);
+  for (const entry of entries) {
+    if (entry.startsWith(".")) continue;
+    const path = join(projectsDir, entry, `${sessionId}.jsonl`);
+    const st = await stat(path).catch(() => null);
+    if (!st?.isFile()) continue;
+    return (await readCwdFromJsonl(path)) ?? null;
+  }
+  return null;
+}
+
+export async function listOfflineSessions(
+  projectsDir: string = PROJECTS_DIR,
+  allowedPaths: readonly string[] = ALLOWED_PATHS,
+): Promise<OfflineSession[]> {
   const [liveRelayDirs, projectEntries] = await Promise.all([
     getRelayDirs(),
-    readdir(PROJECTS_DIR).catch((): string[] => []),
+    readdir(projectsDir).catch((): string[] => []),
   ]);
 
   const liveSet = new Set(liveRelayDirs);
@@ -107,7 +132,7 @@ export async function listOfflineSessions(): Promise<OfflineSession[]> {
       projectEntries.map(async (entry): Promise<OfflineSession | null> => {
         if (entry.startsWith(".")) return null;
 
-        const projectDir = join(PROJECTS_DIR, entry);
+        const projectDir = join(projectsDir, entry);
         const newest = await findNewestJsonlInDir(projectDir);
         if (!newest) return null;
 
@@ -122,7 +147,7 @@ export async function listOfflineSessions(): Promise<OfflineSession[]> {
         if (!dirStat?.isDirectory()) return null;
 
         // Only show sessions within allowed paths
-        if (!ALLOWED_PATHS.some((p) => cwd.startsWith(p))) return null;
+        if (!allowedPaths.some((p) => cwd.startsWith(p))) return null;
 
         const lastMsgResult = await getLastSessionMessage(newest.path, 80);
 
@@ -131,6 +156,7 @@ export async function listOfflineSessions(): Promise<OfflineSession[]> {
           encodedDir: entry,
           lastActivity: newest.mtime,
           lastMessage: lastMsgResult?.text ?? null,
+          sessionId: basename(newest.path, ".jsonl"),
         };
       }),
     )

@@ -33,6 +33,23 @@ terminal via `DESKTOP_TERMINAL_APP` in `.env`:
 
 Resume an offline session (one with JSONL history but no live process) with `/sessions`. The bot lists recent project directories within `ALLOWED_PATHS`, shows the last message preview, and tapping Resume opens Terminal in that directory and starts `claude` with the channel-relay flags (same as `/new`).
 
+## Branching and resuming (`/new --branch`, `/new --resume`)
+
+- `/new` with no arguments opens a button menu: open a folder, branch a
+  session, or resume a conversation (see [menus.md](menus.md)).
+- `/new --branch` — run inside a session topic. Starts a **new** desktop
+  Claude in that session's folder with `--resume <its id> --fork-session`,
+  so the fork gets a fresh session id and its own topic (e.g. `kx_repo-2`)
+  while the original keeps running. This is what people usually mean by
+  "branch"; Claude Code's own `/branch` forks _in place_ instead and does
+  not create a second session.
+- `/new --resume <id> [path]` — starts a desktop Claude on a dormant
+  transcript. The folder defaults to the transcript's recorded cwd. Refused
+  when that id is already live somewhere (two processes would write one
+  transcript) — branch it from its topic instead.
+- `/sessions` → `▶️ Resume` now resumes the transcript it shows (it used to
+  open a fresh session in that folder).
+
 ## Shell Scripts (`/execute`)
 
 `/execute` shows inline Start/Stop buttons for any shell scripts listed in `execute-commands.json` — handy for toggling a VPN, port-forward, or other long-running helper from your phone. Copy the example and edit:
