@@ -245,6 +245,21 @@ export async function _resolveDriftTargetId(
     return getSession(watchState.sessionName)?.id ?? watchState.sessionId;
   }
 
+  // Sole owner: this session's OWN relay port file names its live transcript
+  // (the SessionStart hook rewrites it on /clear), so prefer that over
+  // "newest JSONL in the dir". Other transcripts legitimately appear there
+  // without being ours — e.g. Claude's /fork writes the forked copy into the
+  // same project dir (observed 2026-10-03: a 6 MB fork transcript was adopted
+  // as a "new conversation" and the topic flapped onto it). Fall back to the
+  // mtime scan only when the port file carries no id, or its id has no
+  // transcript on disk (hook-less sessions after /clear).
+  if (watchState.sessionPid !== undefined) {
+    const byPid = await liveSessionIdForPid(
+      watchState.sessionDir,
+      watchState.sessionPid,
+    );
+    if (byPid && (await findSessionJsonlPath(byPid))) return byPid;
+  }
   const excludeIds =
     killedSessionIds.size > 0
       ? new Set<string>(killedSessionIds.keys())
