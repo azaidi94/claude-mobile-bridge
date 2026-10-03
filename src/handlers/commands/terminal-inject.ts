@@ -49,6 +49,7 @@ import {
   type TmuxTarget,
 } from "../../tmux/exec";
 import { isModalPresent, promptVisibleInPane } from "../../tmux/modal-detect";
+import { inputStillHolds } from "../../tmux/autocomplete";
 import { escapeAppleScriptDoubleQuoted } from "./helpers";
 import { resolveCmuxBin } from "./terminal-launchers";
 
@@ -757,6 +758,34 @@ export async function sendKeysToTmux(
       app: "tmux",
       reason: `tmux send-keys failed (${submitted.stderr || "pane gone?"}).`,
     };
+  }
+
+  // Slash commands: Claude's autocomplete popup can swallow the first Enter
+  // (it selects the highlighted entry instead of submitting). If the command
+  // is still alone in the input bar and no dialog appeared, press Enter once
+  // more. Never more than one retry, never into a modal.
+  if (text.startsWith("/")) {
+    await Bun.sleep(io.settleMs ?? SEND_KEYS_SETTLE_MS);
+    const afterEnter = io.capture(target);
+    if (
+      afterEnter &&
+      !isModalPresent(afterEnter) &&
+      inputStillHolds(afterEnter, text)
+    ) {
+      const again = io.send(target, ["Enter"]);
+      if (!again.ok) {
+        return {
+          ok: false,
+          app: "tmux",
+          reason: `tmux send-keys failed (${again.stderr || "pane gone?"}).`,
+        };
+      }
+      return {
+        ok: true,
+        app: "tmux",
+        note: `sent to tmux pane ${target.pane}; autocomplete popup dismissed`,
+      };
+    }
   }
   return { ok: true, app: "tmux", note: `sent to tmux pane ${target.pane}` };
 }

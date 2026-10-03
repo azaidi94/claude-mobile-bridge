@@ -212,3 +212,44 @@ describe("sendKeysToTmux", () => {
     expect(r.ok === false && r.reason).toContain("can't find pane");
   });
 });
+
+describe("sendKeysToTmux autocomplete retry", () => {
+  // Real input-bar layout (separator lines, "❯" + NBSP) from the fixtures.
+  const idle = pane("idle-bar");
+  const withInput = (text: string): string =>
+    idle.replace("❯\u00a0", `❯\u00a0${text}`);
+  const typed = withInput("/branch");
+  const modal = pane("bash-permission");
+
+  test("presses Enter again when the slash command is still in the input bar", async () => {
+    const { io, sent } = recordingIO([idle, typed, typed, idle]);
+    const r = await sendKeysToTmux(TARGET, "/branch", "u", io);
+    expect(r.ok).toBe(true);
+    expect(sent).toEqual([["-l", "/branch"], ["Enter"], ["Enter"]]);
+    expect(r.ok && r.note).toContain("autocomplete");
+  });
+
+  test("one Enter when the command was submitted", async () => {
+    const { io, sent } = recordingIO([idle, typed, idle]);
+    const r = await sendKeysToTmux(TARGET, "/branch", "u", io);
+    expect(r.ok).toBe(true);
+    expect(sent).toEqual([["-l", "/branch"], ["Enter"]]);
+  });
+
+  test("never a second Enter into a dialog that appeared after the first", async () => {
+    const { io, sent } = recordingIO([idle, typed, modal]);
+    await sendKeysToTmux(TARGET, "/branch", "u", io);
+    expect(sent.filter((k: string[]) => k.includes("Enter")).length).toBe(1);
+  });
+
+  test("retry applies to slash commands only", async () => {
+    const { io, sent } = recordingIO([
+      idle,
+      withInput("hello"),
+      withInput("hello"),
+      idle,
+    ]);
+    await sendKeysToTmux(TARGET, "hello", "u", io);
+    expect(sent.filter((k: string[]) => k.includes("Enter")).length).toBe(1);
+  });
+});
