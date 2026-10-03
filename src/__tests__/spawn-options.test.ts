@@ -32,7 +32,7 @@ describe("buildDesktopShellCommand with options", () => {
         tpl,
       ),
     ).toBe(
-      "CLAUDE_RELAY_ARGS='--a --b --resume abc --fork-session' /s/launch.sh '/p/x'",
+      "export CLAUDE_RELAY_ARGS='--a --b --resume abc --fork-session'; /s/launch.sh '/p/x'",
     );
   });
   test("template path, no options: unchanged", () => {

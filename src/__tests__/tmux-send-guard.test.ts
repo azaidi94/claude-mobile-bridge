@@ -229,8 +229,10 @@ describe("sendKeysToTmux autocomplete retry", () => {
     expect(r.ok && r.note).toContain("autocomplete");
   });
 
-  test("one Enter when the command was submitted", async () => {
-    const { io, sent } = recordingIO([idle, typed, idle]);
+  test("one Enter when the command was submitted (transcript echo of '❯ /cmd' is not the input bar)", async () => {
+    // After a real submit the transcript shows "❯ /branch" above an EMPTY bar.
+    const echoed = idle.replace("\n────", "\n❯ /branch\n────");
+    const { io, sent } = recordingIO([idle, typed, echoed]);
     const r = await sendKeysToTmux(TARGET, "/branch", "u", io);
     expect(r.ok).toBe(true);
     expect(sent).toEqual([["-l", "/branch"], ["Enter"]]);

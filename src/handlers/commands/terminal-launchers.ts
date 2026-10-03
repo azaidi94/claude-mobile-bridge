@@ -65,8 +65,10 @@ export function buildDesktopShellCommand(
     // The launch script reads CLAUDE_RELAY_ARGS and forwards it through the
     // tmux outer phase; it REPLACES the script's defaults, so include them.
     // Session ids are UUIDs (validated by the caller) — safe inside quotes.
+    // `export …;` (not a `VAR=… cmd` prefix) so a compound template such as
+    // `cd {dir} && …/claude-relay-launch.sh` still sees the variable.
     const relayArgs = [cfg.defaultArgs, ...extras].join(" ");
-    return `CLAUDE_RELAY_ARGS=${bashSingleQuotedPath(relayArgs)} ${cmd}`;
+    return `export CLAUDE_RELAY_ARGS=${bashSingleQuotedPath(relayArgs)}; ${cmd}`;
   }
   const tail = [cfg.defaultArgs, ...extras].filter(Boolean).join(" ");
   return `cd ${bashSingleQuotedPath(explicitPath)} && exec ${bashSingleQuotedPath(claudePath)} ${tail}`;

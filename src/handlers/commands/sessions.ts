@@ -123,8 +123,11 @@ export async function handleNew(
       return;
     }
     opts = { resumeSessionId: args.resume };
+    // The transcript's own folder first: `claude --resume <id>` resolves the
+    // id against the CURRENT project's transcripts, so resuming project B's
+    // conversation from project A's topic must still start in B.
     defaultDir =
-      sctx?.sessionDir ?? (await findTranscriptCwd(args.resume)) ?? defaultDir;
+      (await findTranscriptCwd(args.resume)) ?? sctx?.sessionDir ?? defaultDir;
     statusLine = `\n▶️ resuming <code>${args.resume.slice(0, 8)}</code>`;
   }
 

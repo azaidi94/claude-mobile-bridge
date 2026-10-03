@@ -13,6 +13,8 @@ mock.module("../handlers/commands/helpers", () => ({
 import {
   newMenuSpec,
   liveSessionsMenuSpec,
+  branchableSessions,
+  NEW_HOME_KIND,
   transcriptsMenuSpec,
   encodeProjectDir,
   registerNewMenu,
@@ -74,6 +76,22 @@ describe("newMenuSpec", () => {
     const spec = newMenuSpec(undefined, live);
     expect(spec.items[1]?.kind).toBe(NEW_PICK_LIVE_KIND);
   });
+  test("in General with only non-branchable sessions (Cursor / no id): no branch entry", () => {
+    const only = [
+      {
+        name: "cur",
+        dir: "/p/c",
+        id: "cursor-x",
+        source: "cursor",
+        lastActivity: 0,
+      },
+      { name: "noid", dir: "/p/n", id: "", source: "desktop", lastActivity: 0 },
+    ] as never[];
+    expect(branchableSessions(only)).toEqual([]);
+    const spec = newMenuSpec(undefined, only);
+    expect(spec.items.some((i) => i.kind === NEW_PICK_LIVE_KIND)).toBe(false);
+  });
+
   test("in General with no live sessions: no branch entry", () => {
     const spec = newMenuSpec(undefined, []);
     expect(spec.items.map((i) => i.kind)).toEqual([
@@ -100,6 +118,7 @@ describe("liveSessionsMenuSpec", () => {
         payload: { dir: "/p/kx_repo", resume: SID, fork: true },
       },
     ]);
+    expect(spec.back?.kind).toBe(NEW_HOME_KIND);
   });
 });
 
@@ -172,6 +191,7 @@ describe("new.spawn handler", () => {
       spawn: spawn as never,
       scan: scan as never,
       sessions: () => live as never,
+      allowed: (d) => !d.startsWith("/forbidden"),
     });
   });
 
@@ -229,6 +249,23 @@ describe("new.spawn handler", () => {
       fork: false,
     });
     expect(edits[0]).toContain("Resuming");
+  });
+
+  test("a dir outside the allow-list is refused before spawning", async () => {
+    const t = putToken({
+      kind: NEW_SPAWN_KIND,
+      payload: { dir: "/forbidden/x", resume: SID, fork: true },
+      chatId: 1,
+    });
+    await handleMenuCallback(ctx as never, t);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(answers[0]).toMatchObject({ show_alert: true });
+  });
+
+  test("Back from the live picker returns to the top-level /new menu", async () => {
+    const t = putToken({ kind: NEW_HOME_KIND, payload: null, chatId: 1 });
+    await handleMenuCallback(ctx as never, t);
+    expect(edits[0]).toBe("🚀 New session");
   });
 
   test("live picker replaces the message with the session list", async () => {

@@ -83,6 +83,7 @@ import { handleAskRemoteCallback, handleBridgeCallback } from "./relay-ask";
 import { handlePermissionCallback } from "./permission-relay";
 import { getMessageBus } from "../messaging";
 import { handleMenuCallback } from "../menus";
+import { scanPortFiles } from "../relay";
 
 /**
  * Bus-routed reply helper. ctx.editMessageText / ctx.answerCallbackQuery /
@@ -575,9 +576,22 @@ export async function handleCallback(ctx: Context): Promise<void> {
       return;
     }
 
+    // The list is a snapshot from when /sessions ran; refuse if that
+    // transcript has come alive since (two processes would write one file).
+    const liveNow = (await scanPortFiles(true)).find(
+      (pf) => pf.sessionId === s.sessionId,
+    );
+    if (liveNow) {
+      await ctx.answerCallbackQuery({
+        text: `Already running as ${liveNow.sessionName ?? "a live session"} — use /new --branch in its topic to fork it.`,
+        show_alert: true,
+      });
+      return;
+    }
+
     const dir = s.dir.replace(/^\/Users\/[^/]+/, "~");
     await ctx.editMessageText(
-      `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
+      `▶️ Resuming desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
       { parse_mode: "HTML" },
     );
     await ctx.answerCallbackQuery();

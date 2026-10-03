@@ -5,15 +5,19 @@
  * first Enter only selects the highlighted entry — the command is still
  * sitting in the input bar. This detects that state so the injector can
  * press Enter once more.
+ *
+ * Structural, not textual: Claude echoes every submitted prompt into the
+ * transcript as `❯ /cmd`, so a free regex over the pane would fire on a
+ * successful submit too. Only the input bar (the `───` / `❯ …` / `───`
+ * sandwich at the bottom) counts.
  */
 
-const escapeRe = (s: string): string =>
-  s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+import { claudeInputBarContent } from "./modal-detect";
 
-/** True when some pane line is the prompt head followed only by `text`. */
+/** True when the input bar holds exactly `text` (trimmed). */
 export function inputStillHolds(pane: string, text: string): boolean {
   const t = text.trim();
-  if (!t) return false;
-  const re = new RegExp(`^\\s*[❯>]\\s*${escapeRe(t)}\\s*$`, "m");
-  return re.test(pane);
+  if (!t || !pane) return false;
+  const bar = claudeInputBarContent(pane);
+  return bar !== null && bar.trim() === t;
 }

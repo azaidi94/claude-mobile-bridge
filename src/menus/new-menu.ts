@@ -20,6 +20,7 @@ import { formatTimeAgo, escapeHtml } from "../formatting";
 import { spawnDesktopClaudeSession } from "../handlers/commands/spawn";
 import type { SpawnOptions } from "../handlers/commands/terminal-launchers";
 import { info } from "../logger";
+import { isPathAllowed } from "../security";
 import { registerMenuKind, replaceMenu, showMenu, type MenuSpec } from "./menu";
 import {
   browseFolder,
@@ -33,6 +34,12 @@ export const NEW_SPAWN_KIND = "new.spawn";
 export const NEW_PICK_LIVE_KIND = "new.pick-live";
 export const NEW_PICK_TRANSCRIPT_KIND = "new.pick-transcript";
 export const TRANSCRIPT_LIMIT = 10;
+export const NEW_HOME_KIND = "new.home";
+
+/** Live sessions a fork can be made from: desktop Claudes with a known id. */
+export function branchableSessions(live: SessionInfo[]): SessionInfo[] {
+  return live.filter((s) => s.source === "desktop" && !!s.id);
+}
 
 export interface SpawnPayload {
   dir: string;
@@ -73,7 +80,7 @@ export function newMenuSpec(
         fork: true,
       } satisfies SpawnPayload,
     });
-  } else if (live.length > 0) {
+  } else if (branchableSessions(live).length > 0) {
     spec.items.push({
       label: "🔀 Branch a session…",
       kind: NEW_PICK_LIVE_KIND,
@@ -94,13 +101,12 @@ export function liveSessionsMenuSpec(
 ): MenuSpec {
   return {
     title: fork ? "🔀 Branch which session?" : "Which session?",
-    items: live
-      .filter((s) => s.source === "desktop" && s.id)
-      .map((s) => ({
-        label: `${s.name} · ${displayPath(s.dir)}`,
-        kind: NEW_SPAWN_KIND,
-        payload: { dir: s.dir, resume: s.id, fork } satisfies SpawnPayload,
-      })),
+    items: branchableSessions(live).map((s) => ({
+      label: `${s.name} · ${displayPath(s.dir)}`,
+      kind: NEW_SPAWN_KIND,
+      payload: { dir: s.dir, resume: s.id, fork } satisfies SpawnPayload,
+    })),
+    back: { label: "‹ Back", kind: NEW_HOME_KIND, payload: null },
   };
 }
 
@@ -157,12 +163,19 @@ export function registerNewMenu(
     spawn: typeof spawnDesktopClaudeSession;
     scan: typeof scanPortFiles;
     sessions: typeof getSessions;
+    allowed: (dir: string) => boolean;
   } = {
     spawn: spawnDesktopClaudeSession,
     scan: scanPortFiles,
     sessions: getSessions,
+    allowed: isPathAllowed,
   },
 ): void {
+  registerMenuKind(NEW_HOME_KIND, async (ctx) => {
+    await replaceMenu(ctx, newMenuSpec(undefined, deps.sessions()));
+    await ctx.answerCallbackQuery().catch(() => {});
+  });
+
   registerMenuKind(NEW_PICK_LIVE_KIND, async (ctx, entry) => {
     const { fork } = entry.payload as { fork: boolean };
     await replaceMenu(ctx, liveSessionsMenuSpec(deps.sessions(), fork));
@@ -180,6 +193,18 @@ export function registerNewMenu(
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
     if (chatId === undefined || userId === undefined) return;
+
+    // Same gate as typed /new: live port files can point anywhere a Claude
+    // was started by hand, and a bot-managed spawn must stay in ALLOWED_PATHS.
+    if (!deps.allowed(dir)) {
+      await ctx
+        .answerCallbackQuery({
+          text: "That folder isn't in the bot's allowed paths.",
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
 
     if (resume && !fork) {
       const live = (await deps.scan(true)).find(
