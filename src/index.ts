@@ -76,6 +76,7 @@ import { setBotApiForBridge } from "./handlers/auq-bridge";
 import { startModalWatchdog } from "./tmux/watchdog";
 import { registerFolderMenu } from "./menus/folder-browser";
 import { registerNewMenu } from "./menus/new-menu";
+import { registerClaudeMenu } from "./menus/claude-menu";
 
 let topicManager: TopicManager | undefined;
 
@@ -134,6 +135,7 @@ try {
 // Button menus (src/menus): folder browser + /new suppliers.
 registerFolderMenu();
 registerNewMenu();
+registerClaudeMenu();
 
 setOnSessionStateCreated((state) => {
   const sessionName = state.sessionName;

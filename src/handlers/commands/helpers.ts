@@ -50,7 +50,9 @@ export function busReply(
     typeof formatOrOpts === "string" ? { format: formatOrOpts } : formatOrOpts;
   return getMessageBus().send({
     chatId,
-    threadId: ctx.message?.message_thread_id,
+    // ctx.msg covers both a command message and a tapped button's message,
+    // so replies from menu callbacks land in the same topic.
+    threadId: ctx.msg?.message_thread_id,
     content,
     format: opts.format ?? "plain",
     replyMarkup: opts.replyMarkup,

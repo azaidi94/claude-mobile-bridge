@@ -9,12 +9,14 @@
 
 import { escapeHtml } from "../../formatting";
 
-interface CommandEntry {
+export interface CommandEntry {
   name: string;
   purpose: string;
+  /** Fixed choices offered as a second-level menu (tap → `/name <option>`). */
+  options?: string[];
 }
 
-interface CommandGroup {
+export interface CommandGroup {
   title: string;
   commands: CommandEntry[];
 }
@@ -47,7 +49,11 @@ const GROUPS: CommandGroup[] = [
   {
     title: "Model and reasoning",
     commands: [
-      { name: "/model", purpose: "Switch model" },
+      {
+        name: "/model",
+        purpose: "Switch model",
+        options: ["opus", "sonnet", "haiku"],
+      },
       { name: "/effort", purpose: "Set reasoning effort" },
       { name: "/fast", purpose: "Toggle fast mode" },
       { name: "/advisor", purpose: "Enable/disable the advisor tool" },
@@ -87,7 +93,11 @@ const GROUPS: CommandGroup[] = [
       { name: "/init", purpose: "Generate a starter CLAUDE.md" },
       { name: "/memory", purpose: "Edit CLAUDE.md / auto memory" },
       { name: "/config", purpose: "Settings interface" },
-      { name: "/permissions", purpose: "Manage allow/ask/deny rules" },
+      {
+        name: "/permissions",
+        purpose: "Manage allow/ask/deny rules",
+        options: ["default", "acceptEdits", "plan", "bypassPermissions"],
+      },
       {
         name: "/auto-mode-setup",
         purpose: "Draft autoMode.environment entries",
@@ -204,3 +214,6 @@ function render(): string {
 }
 
 export const CLAUDE_COMMAND_REFERENCE = render();
+
+/** Structured form of the reference, for the /claude button menu. */
+export const CLAUDE_COMMANDS: readonly CommandGroup[] = GROUPS;
