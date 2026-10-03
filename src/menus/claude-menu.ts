@@ -39,7 +39,9 @@ function visible(groups: readonly CommandGroup[]): readonly CommandGroup[] {
     .map((g) => ({
       ...g,
       commands: g.commands.filter(
-        (c) => !CLAUDE_COMMAND_BLOCKLIST.has(strip(c.name).toLowerCase()),
+        (c) =>
+          !c.hidden &&
+          !CLAUDE_COMMAND_BLOCKLIST.has(strip(c.name).toLowerCase()),
       ),
     }))
     .filter((g) => g.commands.length > 0);

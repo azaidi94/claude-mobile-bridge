@@ -26,6 +26,8 @@ export interface CommandEntry {
   argHint?: string;
   /** Fixed choices offered as a second-level menu (tap → `/name <option>`). */
   options?: string[];
+  /** Not offered in the /claude button menu (still typeable as /claude <name>). */
+  hidden?: boolean;
 }
 
 export interface CommandGroup {
@@ -47,8 +49,17 @@ const GROUPS: CommandGroup[] = [
       },
       { name: "/context", purpose: "Visualize context usage" },
       { name: "/rewind", purpose: "Roll back to a checkpoint" },
-      { name: "/branch", purpose: "Branch the conversation" },
-      { name: "/fork", purpose: "Copy into a new background session" },
+      {
+        name: "/branch",
+        purpose:
+          "Branch the conversation in place (from the phone prefer /new --branch)",
+      },
+      {
+        name: "/fork",
+        purpose:
+          "Copy into a new background session (in-process; from the phone use /new --branch)",
+        hidden: true,
+      },
       {
         name: "/subtask",
         purpose: "Hand a side task to a subagent",

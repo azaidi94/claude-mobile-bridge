@@ -73,6 +73,16 @@ describe("claude menu specs", () => {
     expect(spec.back?.kind).toBe(CLAUDE_GROUP_KIND);
   });
 
+  test("hidden entries (e.g. /fork) are not offered", () => {
+    const spec = claudeGroupMenuSpec(0, groups);
+    expect(spec.items.map((i) => i.label)).not.toContain("/fork");
+    for (let i = 0; ; i++) {
+      const real = claudeGroupMenuSpec(i, CLAUDE_COMMANDS);
+      if (real.title === "🤖 Claude Code commands") break;
+      expect(real.items.map((it) => it.label)).not.toContain("/fork");
+    }
+  });
+
   test("real reference contains no blocklisted names", () => {
     for (let i = 0; ; i++) {
       const spec = claudeGroupMenuSpec(i, CLAUDE_COMMANDS);
