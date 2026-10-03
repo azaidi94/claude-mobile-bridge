@@ -250,6 +250,8 @@ export async function handleHelp(ctx: Context): Promise<void> {
       "<b>Inject (into the desktop TUI)</b>",
       "/clear — send /clear",
       "/compact — send /compact",
+      "/claude — Claude Code command menu (buttons); /claude &lt;cmd&gt; sends it",
+      "/new --branch — fork this session into a new desktop session",
       "",
       "<b>Automation</b>",
       "/ralph &lt;path&gt; [N] [-pr] [-l &lt;label&gt;] — run a ralph loop (N default 10)",

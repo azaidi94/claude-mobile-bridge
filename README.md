@@ -124,32 +124,33 @@ If you don't use tmux, injection still works via fallbacks: a **Cursor** accessi
 
 ## Commands
 
-| Category   | Commands                                              |
-| ---------- | ----------------------------------------------------- |
-| Sessions   | `/list`, `/new`, `/sessions`, `/kill`, `/respawn`     |
-| Control    | `/stop`, `/retry`, `/status`, `/restart`              |
-| Inject     | `/clear`, `/compact`, `/context`, `/skills`, `/model` |
-| tmux       | `/tmux` (panel), `/peek` (screen)                     |
-| Automation | `/ralph <path> [N]`, `/ralph at\|every`, `/cron`      |
-| Files      | `/pwd`, `/cd`, `/ls`                                  |
-| Quota      | `/usage`                                              |
-| Scripts    | `/execute`                                            |
-| Mini App   | `/app`                                                |
-| Settings   | `/settings`, `/verbose 0\|1\|2`                       |
+| Category   | Commands                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| Sessions   | `/list`, `/new` (menu: folder / branch / resume), `/sessions`, `/kill`, `/respawn`, `/rename` |
+| Control    | `/stop`, `/retry`, `/status`, `/restart`                                                      |
+| Inject     | `/claude` (menu), `/clear`, `/compact`, `/context`, `/skills`, `/model`                       |
+| tmux       | `/tmux` (panel), `/peek` (screen)                                                             |
+| Automation | `/ralph <path> [N]`, `/ralph at\|every`, `/cron`                                              |
+| Files      | `/pwd`, `/cd`, `/ls`                                                                          |
+| Quota      | `/usage`                                                                                      |
+| Scripts    | `/execute`                                                                                    |
+| Mini App   | `/app`                                                                                        |
+| Settings   | `/settings`, `/verbose 0\|1\|2`                                                               |
 
 ## Documentation
 
-| Doc                                          | What's in it                                                                               |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [Channel Relay](docs/channel-relay.md)       | Message running desktop sessions without disconnecting; remote-use setup                   |
-| [Sessions & shell scripts](docs/sessions.md) | Auto-discovery, `/new`, terminal picker, resuming offline sessions, `/execute`             |
-| [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth          |
-| [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)        |
-| [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization |
-| [Skills browser](docs/skills-menu.md)        | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args   |
-| [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                    |
-| [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                  |
-| [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging                   |
+| Doc                                          | What's in it                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Channel Relay](docs/channel-relay.md)       | Message running desktop sessions without disconnecting; remote-use setup                                |
+| [Sessions & shell scripts](docs/sessions.md) | Auto-discovery, `/new` (`--branch`, `--resume`), terminal picker, resuming offline sessions, `/execute` |
+| [Button menus](docs/menus.md)                | Tappable menus for `/new` and `/claude`; how to add a menu to another command                           |
+| [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth                       |
+| [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)                     |
+| [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization              |
+| [Skills browser](docs/skills-menu.md)        | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args                |
+| [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                                 |
+| [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                               |
+| [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging                                |
 
 ## Development
 
