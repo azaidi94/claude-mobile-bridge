@@ -295,6 +295,7 @@ mock.module("../relay", () => ({
 
 const mockFindSessionJsonlPath = mock(async () => "/tmp/mock-session.jsonl");
 mock.module("../sessions/tailer", () => ({
+  getLastSessionMessage: mock(async () => null),
   findSessionJsonlPath: mockFindSessionJsonlPath,
 }));
 

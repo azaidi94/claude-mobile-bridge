@@ -47,6 +47,7 @@ mock.module("../ralph/store", () => ({
 }));
 
 mock.module("../sessions/tailer", () => ({
+  getLastSessionMessage: mock(async () => null),
   findSessionJsonlPath: (id: string) => findSessionJsonlPathImpl(id),
   findNewestSessionInDir: (dir: string, excludeIds?: ReadonlySet<string>) => {
     lastExcludeIds = excludeIds;

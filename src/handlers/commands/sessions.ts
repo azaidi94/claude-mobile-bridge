@@ -40,6 +40,7 @@ import {
 import { spawnDesktopClaudeSession } from "./spawn";
 import type { SpawnOptions } from "./terminal-launchers";
 import { parseNewArgs } from "./new-args";
+import { showNewMenu } from "../../menus/new-menu";
 import { findTranscriptCwd } from "../../sessions/offline";
 import type { SessionContext } from "../../sessions/context";
 
@@ -79,6 +80,12 @@ export async function handleNew(
   const args = parseNewArgs(ctx.message?.text || "");
   if (args.error) {
     await busReply(ctx, `❌ ${escapeHtml(args.error)}\n\n${NEW_USAGE}`, "html");
+    return;
+  }
+
+  // Bare /new → button menu (open a folder / branch / resume).
+  if (!args.path && !args.branch && !args.resume) {
+    await showNewMenu(ctx, sctx);
     return;
   }
 
