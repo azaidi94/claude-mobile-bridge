@@ -94,6 +94,25 @@ export async function readCwdFromJsonl(
  * - Directories with a live relay (already shown in /list)
  * - Working directories that no longer exist on disk
  */
+/**
+ * Locate a transcript by session id anywhere under ~/.claude/projects and
+ * return its recorded cwd (null when not found). Used by `/new --resume <id>`
+ * to default the spawn folder.
+ */
+export async function findTranscriptCwd(
+  sessionId: string,
+): Promise<string | null> {
+  const entries = await readdir(PROJECTS_DIR).catch((): string[] => []);
+  for (const entry of entries) {
+    if (entry.startsWith(".")) continue;
+    const path = join(PROJECTS_DIR, entry, `${sessionId}.jsonl`);
+    const st = await stat(path).catch(() => null);
+    if (!st?.isFile()) continue;
+    return (await readCwdFromJsonl(path)) ?? null;
+  }
+  return null;
+}
+
 export async function listOfflineSessions(): Promise<OfflineSession[]> {
   const [liveRelayDirs, projectEntries] = await Promise.all([
     getRelayDirs(),

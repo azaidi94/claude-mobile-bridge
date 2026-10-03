@@ -27,7 +27,7 @@ import {
   getSessionState,
   dropSessionState,
 } from "../../sessions/session-state";
-import { disconnectRelay } from "../../relay";
+import { disconnectRelay, scanPortFiles } from "../../relay";
 import { stopWatchByName } from "../watch";
 import { debug, info } from "../../logger";
 import {
@@ -38,6 +38,10 @@ import {
   showSessionPicker,
 } from "./helpers";
 import { spawnDesktopClaudeSession } from "./spawn";
+import type { SpawnOptions } from "./terminal-launchers";
+import { parseNewArgs } from "./new-args";
+import { findTranscriptCwd } from "../../sessions/offline";
+import type { SessionContext } from "../../sessions/context";
 
 /** `~` / `~/x` → absolute. The bot prints paths with `~`, so accept them back. */
 function expandHome(p: string): string {
@@ -46,10 +50,22 @@ function expandHome(p: string): string {
   return p;
 }
 
+const NEW_USAGE =
+  "Usage:\n" +
+  "/new [path] — open a fresh session\n" +
+  "/new --branch — fork this topic's session into a new one\n" +
+  "/new --resume &lt;id&gt; [path] — resume a dormant conversation";
+
 /**
- * /new [path] - Open Terminal (or iTerm) with Claude in the project directory.
+ * /new [path] | --branch | --resume <id> [path]
+ * Open a desktop terminal running Claude. `--branch` forks the current
+ * topic's conversation (`--resume <id> --fork-session`); `--resume` picks up a
+ * dormant transcript. Refuses to resume an id that is already live.
  */
-export async function handleNew(ctx: Context): Promise<void> {
+export async function handleNew(
+  ctx: Context,
+  sctx?: SessionContext,
+): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
@@ -60,14 +76,54 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   if (!chatId) return;
 
+  const args = parseNewArgs(ctx.message?.text || "");
+  if (args.error) {
+    await busReply(ctx, `❌ ${escapeHtml(args.error)}\n\n${NEW_USAGE}`, "html");
+    return;
+  }
+
+  if (args.branch && (!sctx?.sessionId || sctx.source !== "cc")) {
+    await busReply(
+      ctx,
+      "❌ Run /new --branch inside the Claude session topic you want to fork.",
+    );
+    return;
+  }
+
   const ready = await assertDesktopSpawnReady((t) => busReply(ctx, t, "html"));
   if (!ready) return;
 
-  const text = ctx.message?.text || "";
-  const rawPath = text.split(/\s+/).slice(1).join(" ").trim();
-  const explicitPath = rawPath
-    ? resolve(getWorkingDir(), expandHome(rawPath))
-    : getWorkingDir();
+  let opts: SpawnOptions | undefined;
+  let defaultDir = getWorkingDir();
+  let statusLine = "";
+
+  if (args.branch && sctx) {
+    opts = { resumeSessionId: sctx.sessionId, fork: true };
+    defaultDir = sctx.sessionDir;
+    statusLine = `\n🔀 branching from <b>${escapeHtml(sctx.sessionName)}</b>`;
+  } else if (args.resume) {
+    const live = (await scanPortFiles(true)).find(
+      (pf) => pf.sessionId === args.resume,
+    );
+    if (live) {
+      await busReply(
+        ctx,
+        `❌ That conversation is already running as <b>${escapeHtml(
+          live.sessionName || "a live session",
+        )}</b>. Use /new --branch in its topic to fork it instead.`,
+        "html",
+      );
+      return;
+    }
+    opts = { resumeSessionId: args.resume };
+    defaultDir =
+      sctx?.sessionDir ?? (await findTranscriptCwd(args.resume)) ?? defaultDir;
+    statusLine = `\n▶️ resuming <code>${args.resume.slice(0, 8)}</code>`;
+  }
+
+  const explicitPath = args.path
+    ? resolve(getWorkingDir(), expandHome(args.path))
+    : defaultDir;
 
   if (!isPathAllowed(explicitPath)) {
     await busReply(ctx, "❌ Path not in allowed directories.");
@@ -88,11 +144,11 @@ export async function handleNew(ctx: Context): Promise<void> {
   const dir = explicitPath.replace(/^\/Users\/[^/]+/, "~");
   await busReply(
     ctx,
-    `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>`,
+    `🚀 Spawning desktop session...\n📁 <code>${escapeHtml(dir)}</code>${statusLine}`,
     "html",
   );
 
-  await spawnDesktopClaudeSession(ctx.api, chatId, explicitPath, userId!);
+  await spawnDesktopClaudeSession(ctx.api, chatId, explicitPath, userId!, opts);
 }
 
 /**

@@ -300,6 +300,7 @@ mock.module("../sessions/tailer", () => ({
 
 const mockListOfflineSessions = mock(async () => []);
 mock.module("../sessions/offline", () => ({
+  findTranscriptCwd: mock(async () => null),
   listOfflineSessions: mockListOfflineSessions,
 }));
 
@@ -1143,6 +1144,139 @@ describe("commands: /new", () => {
     fsAccessSpy?.mockRestore();
     bunSpawnSyncSpy?.mockRestore();
     bunSleepSpy?.mockRestore();
+  });
+
+  /**
+   * Make the spawn poll loop terminate: after the pre-spawn scans, a relay
+   * appears in `dir` and forceRefresh registers its session. Without this
+   * the loop spins (Bun.sleep is mocked) until the 120s wall-clock deadline.
+   */
+  const armSpawnedRelay = (dir: string): void => {
+    let calls = 0;
+    mockScanPortFiles.mockImplementation(async () => {
+      calls++;
+      if (calls <= 2) return [];
+      return [
+        {
+          port: 4100,
+          pid: 301,
+          ppid: 333,
+          sessionId: "spawned-session-id",
+          cwd: dir,
+          startedAt: "2026-01-01T00:00:01.000Z",
+        },
+      ] as any;
+    });
+    mockForceRefresh.mockImplementation(async () => {
+      if (!mockSessions.some((x: any) => x.id === "spawned-session-id")) {
+        mockSessions.push({
+          name: "spawned",
+          dir,
+          id: "spawned-session-id",
+          pid: 333,
+          source: "desktop",
+          lastActivity: Date.now(),
+        });
+      }
+    });
+  };
+
+  /** The osascript `do script` payload the launcher was asked to run. */
+  const spawnedScript = (): string => {
+    const call = bunSpawnSyncSpy!.mock.calls.find((c: any[]) => {
+      const cmd = Array.isArray(c[0]) ? c[0] : c[0]?.cmd;
+      return cmd?.[0] === "osascript";
+    });
+    const cmd = call ? (Array.isArray(call[0]) ? call[0] : call[0].cmd) : [];
+    return cmd.join(" ");
+  };
+
+  test("refuses --branch outside a session topic", async () => {
+    const { handleNew } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new --branch",
+    });
+    await handleNew(ctx as any, undefined);
+    expect(ctx._replies.at(-1)?.text).toContain(
+      "inside the Claude session topic",
+    );
+    expect(bunSpawnSyncSpy).not.toHaveBeenCalled();
+  });
+
+  test("--branch in a topic spawns with --resume <id> --fork-session in the session dir", async () => {
+    const { handleNew } = await import("../handlers/commands");
+    armSpawnedRelay("/tmp");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new --branch",
+      threadId: 55,
+    });
+    const sctx = {
+      sessionId: "62d0fa2e-bee6-4068-96fe-b41c96d6ce18",
+      sessionDir: "/tmp",
+      source: "cc",
+      topicId: 55,
+      chatId: 789,
+      sessionName: "kx_repo",
+    };
+    await handleNew(ctx as any, sctx as any);
+    expect(ctx._replies.map((r: any) => r.text).join("\n")).toContain(
+      "branching from",
+    );
+    const script = spawnedScript();
+    expect(script).toContain(
+      "--resume 62d0fa2e-bee6-4068-96fe-b41c96d6ce18 --fork-session",
+    );
+    expect(script).toContain("'/tmp'");
+  });
+
+  test("refuses --resume for a live session id", async () => {
+    mockScanPortFiles.mockResolvedValueOnce([
+      {
+        pid: 1,
+        port: 1,
+        cwd: "/tmp",
+        sessionId: "62d0fa2e-bee6-4068-96fe-b41c96d6ce18",
+        sessionName: "kx_repo-2",
+      },
+    ] as any);
+    const { handleNew } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new --resume 62d0fa2e-bee6-4068-96fe-b41c96d6ce18 /tmp",
+    });
+    await handleNew(ctx as any, undefined);
+    expect(ctx._replies.at(-1)?.text).toContain("already running");
+    expect(ctx._replies.at(-1)?.text).toContain("kx_repo-2");
+    expect(bunSpawnSyncSpy).not.toHaveBeenCalled();
+  });
+
+  test("--resume for a dormant id spawns with --resume and no fork", async () => {
+    armSpawnedRelay("/tmp");
+    const { handleNew } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new --resume 62d0fa2e-bee6-4068-96fe-b41c96d6ce18 /tmp",
+    });
+    await handleNew(ctx as any, undefined);
+    expect(ctx._replies.map((r: any) => r.text).join("\n")).toContain(
+      "resuming",
+    );
+    const script = spawnedScript();
+    expect(script).toContain("--resume 62d0fa2e-bee6-4068-96fe-b41c96d6ce18");
+    expect(script).not.toContain("--fork-session");
+  });
+
+  test("bad flags reply with usage and do not spawn", async () => {
+    const { handleNew } = await import("../handlers/commands");
+    const ctx = createMockContext({
+      userId: 123456,
+      messageText: "/new --resume nope",
+    });
+    await handleNew(ctx as any, undefined);
+    expect(ctx._replies.at(-1)?.text).toContain("Usage");
+    expect(bunSpawnSyncSpy).not.toHaveBeenCalled();
   });
 
   test("handleNew returns unauthorized for non-allowed user", async () => {

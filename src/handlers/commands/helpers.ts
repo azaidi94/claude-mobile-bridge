@@ -274,6 +274,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/switch &lt;name&gt; - Switch to session\n` +
       `/sessions - Browse offline sessions\n` +
       `/new [path] - Open desktop Claude (Terminal)\n` +
+      `/new --branch | --resume &lt;id&gt; - Fork this session / resume a transcript\n` +
       `/respawn - Kill + restart current session, same cwd\n\n` +
       `<b>Watch:</b>\n` +
       `/watch [name] - Watch desktop session live\n` +
