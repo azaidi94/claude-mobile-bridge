@@ -7,7 +7,6 @@
 
 import type { Context } from "grammy";
 import type { SessionContext } from "../sessions/context";
-import { resolveSessionContext } from "../sessions/context";
 import {
   CLAUDE_COMMANDS,
   CLAUDE_COMMAND_REFERENCE,
@@ -117,14 +116,28 @@ export async function showClaudeMenu(
   await showMenu(ctx, claudeMenuSpec());
 }
 
+/**
+ * Resolve the tapped topic's session. Imported lazily: the session-context
+ * module drags in the watcher/relay stack, which inject.ts (our importer)
+ * deliberately keeps out of its static graph.
+ */
+async function resolveSctxLazily(
+  ctx: Context,
+): Promise<SessionContext | undefined> {
+  const { resolveSessionContext } = await import("../sessions/context");
+  return resolveSessionContext(ctx);
+}
+
 export function registerClaudeMenu(
   deps: {
     inject: typeof injectSlashCommand;
-    resolveSctx: (ctx: Context) => SessionContext | undefined;
+    resolveSctx: (
+      ctx: Context,
+    ) => SessionContext | undefined | Promise<SessionContext | undefined>;
     groups: readonly CommandGroup[];
   } = {
     inject: injectSlashCommand,
-    resolveSctx: resolveSessionContext,
+    resolveSctx: resolveSctxLazily,
     groups: CLAUDE_COMMANDS,
   },
 ): void {
@@ -161,7 +174,7 @@ export function registerClaudeMenu(
       await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
-    const sctx = deps.resolveSctx(ctx);
+    const sctx = await deps.resolveSctx(ctx);
     if (!sctx) {
       await ctx
         .answerCallbackQuery({
