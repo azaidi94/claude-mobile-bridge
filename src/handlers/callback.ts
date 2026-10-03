@@ -82,6 +82,7 @@ import {
 import { handleAskRemoteCallback, handleBridgeCallback } from "./relay-ask";
 import { handlePermissionCallback } from "./permission-relay";
 import { getMessageBus } from "../messaging";
+import { handleMenuCallback } from "../menus";
 
 /**
  * Bus-routed reply helper. ctx.editMessageText / ctx.answerCallbackQuery /
@@ -1000,6 +1001,12 @@ export async function handleCallback(ctx: Context): Promise<void> {
   }
 
   // 6. Parse callback data: askuser:{request_id}:{option_index}
+  // Reusable paged menus (src/menus): menu:<token>
+  if (callbackData.startsWith("menu:")) {
+    await handleMenuCallback(ctx, callbackData.slice(5));
+    return;
+  }
+
   if (!callbackData.startsWith("askuser:")) {
     await ctx.answerCallbackQuery();
     return;
