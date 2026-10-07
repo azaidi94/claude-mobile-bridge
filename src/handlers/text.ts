@@ -59,6 +59,8 @@ import { globalEventBus } from "../web/sse";
 import { getMessageBus } from "../messaging";
 import { markReceived } from "./reactions";
 import { isRalphLoopTopic } from "../ralph/store";
+import { pendingFolderCreate } from "../menus/folder-pending";
+import { handlePendingFolderText } from "../menus/folder-browser";
 
 /**
  * Bus-routed reply helper. Use for plain or HTML text replies including
@@ -184,12 +186,26 @@ export async function handleText(
       !pendingSettingsInput.has(incomingPendingKey) &&
       !pendingPlanFeedback.has(incomingPendingKey) &&
       !pendingAskUserQuestionCustom.has(incomingPendingKey) &&
-      !pendingClaudeArg.has(incomingPendingKey)
+      !pendingClaudeArg.has(incomingPendingKey) &&
+      !pendingFolderCreate.has(incomingPendingKey)
     ) {
       await busReply(
         ctx,
         "❌ Send messages in a session topic.\nUse /list to see sessions.",
       );
+      return;
+    }
+  }
+
+  // 1.2. A "➕ New folder…" tap is waiting for the folder name.
+  if (pendingFolderCreate.has(pendingKey(chatId, incomingThreadId))) {
+    if (
+      await handlePendingFolderText(
+        ctx,
+        pendingKey(chatId, incomingThreadId),
+        message,
+      )
+    ) {
       return;
     }
   }

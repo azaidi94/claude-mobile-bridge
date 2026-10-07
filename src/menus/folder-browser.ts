@@ -6,16 +6,21 @@
  * node_modules, __pycache__) are skipped. Navigation never escapes a root.
  */
 
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, mkdir } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
 import { homedir } from "os";
 import { ALLOWED_PATHS } from "../config";
 import {
   registerMenuKind,
   replaceMenu,
+  showMenu,
   type MenuSpec,
   type MenuItem,
 } from "./menu";
+import { busReply } from "../handlers/commands/helpers";
+import { isPathAllowed } from "../security";
+import { pendingFolderCreate, takePendingFolderName } from "./folder-pending";
+import type { Context } from "grammy";
 
 export interface FolderBrowseResult {
   /** "" for the virtual root listing. */
@@ -34,6 +39,7 @@ export interface FolderPick {
 const HIDDEN = new Set(["node_modules", "__pycache__", "dist", "build"]);
 export const FOLDER_PAGE_SIZE = 10;
 export const FOLDER_ENTER_KIND = "folder.enter";
+export const FOLDER_CREATE_KIND = "folder.create";
 
 function underRoot(dir: string, root: string): boolean {
   const d = resolve(dir);
@@ -102,6 +108,13 @@ export function folderMenuSpec(
       payload: { ...(onPick.extra ?? {}), dir: res.dir },
     });
   }
+  if (!res.isRoot) {
+    items.push({
+      label: "➕ New folder…",
+      kind: FOLDER_CREATE_KIND,
+      payload: { dir: res.dir, onPick },
+    });
+  }
   for (const sub of res.subdirs) {
     items.push({
       label: `📁 ${res.isRoot ? displayPath(sub) : basename(sub)}`,
@@ -150,4 +163,74 @@ export function registerFolderMenu(): void {
     await replaceMenu(ctx, folderMenuSpec(res, onPick));
     await ctx.answerCallbackQuery().catch(() => {});
   });
+}
+
+/** Registers "folder.create": ask for a name; the next message creates it. */
+export function registerFolderCreateMenu(): void {
+  registerMenuKind(FOLDER_CREATE_KIND, async (ctx, entry) => {
+    const { dir, onPick } = entry.payload as {
+      dir: string;
+      onPick: FolderPick;
+    };
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return;
+    // Lazy: streaming.ts drags in the messaging stack.
+    const { pendingKey } = await import("../handlers/streaming");
+    pendingFolderCreate.set(pendingKey(chatId, ctx.msg?.message_thread_id), {
+      parent: dir,
+      onPick,
+      createdAt: Date.now(),
+    });
+    await ctx.answerCallbackQuery().catch(() => {});
+    await busReply(
+      ctx,
+      `✏️ Name for the new folder in <code>${escapeHtmlLite(displayPath(dir))}</code>?\n(or /cancel)`,
+      "html",
+    );
+  });
+}
+
+/**
+ * Text-handler hook: if a "New folder…" prompt is pending for `key`, consume
+ * `message` as the name. Returns true when the message was handled.
+ */
+export async function handlePendingFolderText(
+  ctx: Context,
+  key: string,
+  message: string,
+  roots: readonly string[] = ALLOWED_PATHS,
+): Promise<boolean> {
+  const outcome = takePendingFolderName(key, message);
+  if (!outcome) return false;
+  if (outcome.kind === "cancel") {
+    await busReply(ctx, "✖ Cancelled.");
+    return true;
+  }
+  if (outcome.kind === "invalid") {
+    await busReply(ctx, `❌ ${outcome.reason} Try again, or /cancel.`);
+    return true;
+  }
+  const target = join(outcome.parent, outcome.name);
+  if (!isPathAllowed(target) || !roots.some((r) => underRoot(target, r))) {
+    await busReply(ctx, "❌ That folder would be outside the allowed paths.");
+    return true;
+  }
+  try {
+    await mkdir(target, { recursive: false });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    await busReply(
+      ctx,
+      code === "EEXIST"
+        ? `ℹ️ <code>${escapeHtmlLite(outcome.name)}</code> already exists — opening it.`
+        : `❌ Couldn't create the folder: <code>${escapeHtmlLite(String(e))}</code>`,
+      "html",
+    );
+    if (code !== "EEXIST") return true;
+  }
+  await showMenu(
+    ctx,
+    folderMenuSpec(await browseFolder(target, roots), outcome.onPick, roots),
+  );
+  return true;
 }
