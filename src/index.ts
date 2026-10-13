@@ -74,7 +74,10 @@ import { initRelayAsk } from "./handlers/relay-ask";
 import { initPermissionRelay } from "./handlers/permission-relay";
 import { setBotApiForBridge } from "./handlers/auq-bridge";
 import { startModalWatchdog } from "./tmux/watchdog";
-import { registerFolderMenu } from "./menus/folder-browser";
+import {
+  registerFolderMenu,
+  registerFolderCreateMenu,
+} from "./menus/folder-browser";
 import { registerNewMenu } from "./menus/new-menu";
 import { registerClaudeMenu } from "./menus/claude-menu";
 
@@ -134,6 +137,7 @@ try {
 // of stacking a duplicate.
 // Button menus (src/menus): folder browser + /new suppliers.
 registerFolderMenu();
+registerFolderCreateMenu();
 registerNewMenu();
 registerClaudeMenu();
 

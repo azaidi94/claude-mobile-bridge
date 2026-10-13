@@ -34,6 +34,11 @@ root listing, then per-folder pages (10 per page) with `✅ Open here`,
 subfolders and `⬆️ Up`. Dot-dirs, `node_modules`, `__pycache__`, `dist`,
 `build` are hidden. Navigation can never leave an allowed root. Callers pass
 a `FolderPick { kind, extra }` describing what "Open here" should dispatch.
+`➕ New folder…` asks for a name (next message in the topic; `/cancel` to
+abort), creates it under the current folder, and reopens the browser inside
+it so "Open here" is one tap away. Names: letters, digits, space, `. _ -`,
+max 64 chars, no slashes or leading dot; creation is refused outside the
+allowed roots.
 
 **`/new` menu.** `📂 Open a folder…` (plain spawn), `🔀 Branch this session`
 (in a session topic: `--resume <id> --fork-session`) or `🔀 Branch a
