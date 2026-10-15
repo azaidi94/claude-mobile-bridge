@@ -59,8 +59,11 @@ All tasks for the same issue share one branch.
 
 1. `gh issue view <number>` — read requirements
 2. Explore repo, find relevant files
-3. Implement the task
-4. Run feedback loops (lint, typecheck, test) — fix failures
+3. Implement the task following the `/implement` workflow (mattpocock-skills — it's user-only, so follow these steps; don't try to invoke it):
+   - Use `/mattpocock-skills:tdd` where possible, at the seams the issue names (or the obvious public interface if none)
+   - Run typecheck regularly and single test files regularly while working — not the full suite
+   - Skip `/implement`'s own `/code-review` step (PR mode: the PR is reviewed; direct mode: the squash-merge is the gate, so the full suite below must pass)
+4. Fix any typecheck/test failures before moving on
 5. Check issue's Acceptance section for `/commands` — run any skills found
 6. Stage changes: `git add <files>` (do NOT commit yet)
 7. Mark complete: `TaskUpdate(taskId=<id>, status="completed")`
@@ -68,11 +71,9 @@ All tasks for the same issue share one branch.
 Then check TaskList for your issue:
 
 - More tasks remaining → go to CLAIM TASK
-- All tasks completed → run final checks, then continue to FINALIZE ISSUE
+- All tasks completed → run the full suite once, then continue to FINALIZE ISSUE
 
-```bash
-bun run lint && bun run type-check && bun run test
-```
+Run the repo's own lint, typecheck and test scripts (check `package.json` for their names; skip any the repo doesn't have, e.g. here `bun run typecheck && bun run test`).
 
 # FINALIZE ISSUE
 

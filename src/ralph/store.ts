@@ -38,7 +38,7 @@ export interface RalphLoop {
   initialIssueCount?: number;
   startedAt: string; // ISO
   endedAt?: string;
-  endReason?: string; // "complete" | "max-iterations" | "no-issues" | "stopped" | "exit:<code>" | "process-died"
+  endReason?: string; // "complete" | "max-iterations" | "no-issues" | "no-workable" | "fetch-failed" | "stopped" | "exit:<code>" | "process-died"
 }
 
 interface RalphStore {

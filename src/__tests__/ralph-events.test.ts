@@ -22,6 +22,13 @@ describe("RalphLogParser", () => {
     expect(p.push("Reached max iterations (10)\n")).toEqual([
       { type: "max-iterations", n: 10 },
     ]);
+    expect(
+      p.push(
+        "No workable issues: 4 open, all blocked, claimed or parents. Exiting.\n",
+      ),
+    ).toEqual([{ type: "no-workable", open: 4 }]);
+    expect(p.push("Issue fetch failed\n")).toEqual([{ type: "fetch-failed" }]);
+    expect(p.push("Issue count failed\n")).toEqual([{ type: "fetch-failed" }]);
   });
 
   it("strips ANSI CSI escapes wrapping a marker line", () => {

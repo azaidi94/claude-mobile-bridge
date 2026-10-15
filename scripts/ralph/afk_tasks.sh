@@ -17,10 +17,36 @@ if [ -z "$ITERATIONS" ]; then
   exit 1
 fi
 
-LABEL_FLAG=""
+# An array, so a label with spaces stays one argument.
+LABEL_ARGS=()
 if [ -n "$LABEL" ]; then
-  LABEL_FLAG="--label $LABEL"
+  LABEL_ARGS=(--label "$LABEL")
 fi
+
+# Frontier = open issues (with $LABEL if set) that are workable NOW: unassigned (an
+# assignee is a human/other-session claim), no open native blocked-by issues, and no
+# sub-issues (a parent/spec issue is never work itself). Filtering here — not in the
+# prompt — means the model only ever sees issues it may take, even on slim fetches
+# that carry no bodies. $1 = full (body + comments) | slim (number + title).
+REPO_OWNER=$(gh repo view --json owner -q .owner.login 2>/dev/null)
+REPO_NM=$(gh repo view --json name -q .name 2>/dev/null)
+fetch_frontier() {
+  local extra="" label_var=()
+  # The label goes in as a GraphQL variable, never spliced into the query, so
+  # quotes in it can't break the query. Newest 50 comments (`last`), in order.
+  [ -n "$LABEL" ] && label_var=(-f "labels[]=$LABEL")
+  [ "$1" = full ] && extra="body comments(last: 50) { nodes { author { login } body createdAt } }"
+  gh api graphql \
+    -f query="query(\$owner: String!, \$name: String!, \$labels: [String!]) { repository(owner: \$owner, name: \$name) { issues(first: 100, states: OPEN, labels: \$labels) { nodes { number title $extra assignees(first: 1) { totalCount } subIssuesSummary { total } blockedBy(first: 50) { nodes { state } } } } } }" \
+    -f owner="$REPO_OWNER" -f name="$REPO_NM" ${label_var[@]+"${label_var[@]}"} \
+  | jq '[.data.repository.issues.nodes[]
+         | select(.assignees.totalCount == 0
+                  and .subIssuesSummary.total == 0
+                  and ([.blockedBy.nodes[] | select(.state == "OPEN")] | length) == 0)
+         | del(.assignees, .subIssuesSummary, .blockedBy)
+         | if .comments then .comments = [.comments.nodes[] | {author: .author.login, body, createdAt}] else . end]
+        | sort_by(.number)'
+}
 
 REPO_NAME=$(basename $PWD)
 export CLAUDE_CODE_TASK_LIST_ID="ralph-$REPO_NAME"
@@ -47,17 +73,28 @@ for ((i=1; i<=$ITERATIONS; i++)); do
   # Two-phase fetch: full on first run (for task creation), slim on subsequent
   if [ -d "$TASK_DIR" ] && [ "$(ls -A "$TASK_DIR" 2>/dev/null)" ]; then
     echo "Tasks exist - slim fetch (number, title only)"
-    issues=$(gh issue list --state open $LABEL_FLAG --json number,title)
+    issues=$(fetch_frontier slim)
   else
     echo "First run - full fetch (with body, comments)"
-    issues=$(gh issue list --state open $LABEL_FLAG --json number,title,body,comments)
+    issues=$(fetch_frontier full)
   fi
+  [ -z "$issues" ] && { echo "Issue fetch failed"; exit 1; }
 
   # Check if any open issues
   issue_count=$(echo "$issues" | jq 'length')
   if [ "$issue_count" -eq 0 ]; then
-    echo "No open issues. All done!"
-    rm -rf "$TASK_DIR"
+    # A failed count must not read as zero: that path deletes the task dir.
+    if ! open_total=$(gh issue list --state open ${LABEL_ARGS[@]+"${LABEL_ARGS[@]}"} --limit 500 --json number -q 'length') \
+      || [ -z "$open_total" ]; then
+      echo "Issue count failed"
+      exit 1
+    fi
+    if [ "$open_total" -eq 0 ]; then
+      echo "No open issues. All done!"
+      rm -rf "$TASK_DIR"
+    else
+      echo "No workable issues: $open_total open, all blocked, claimed or parents. Exiting."
+    fi
     exit 0
   fi
 

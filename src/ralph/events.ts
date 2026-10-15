@@ -15,6 +15,8 @@ export type RalphEvent =
   | { type: "iteration"; n: number; total: number }
   | { type: "waiting" }
   | { type: "no-issues" }
+  | { type: "no-workable"; open: number }
+  | { type: "fetch-failed" }
   | { type: "complete"; iterations: number }
   | { type: "timeout"; seconds: number }
   | { type: "max-iterations"; n: number };
@@ -40,6 +42,12 @@ function matchLine(clean: string): RalphEvent | null {
   }
   if (/^No open issues\. All done!/.test(clean)) {
     return { type: "no-issues" };
+  }
+  if ((m = clean.match(/^No workable issues: (\d+) open/))) {
+    return { type: "no-workable", open: Number(m[1]) };
+  }
+  if (/^Issue (?:fetch|count) failed/.test(clean)) {
+    return { type: "fetch-failed" };
   }
   if (/^Waiting for other agents/.test(clean)) {
     return { type: "waiting" };
