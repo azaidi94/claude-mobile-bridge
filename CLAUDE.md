@@ -26,6 +26,8 @@ fails with "Could not open terminal — Failed to write to socket".
 
 **Adding topic-aware commands**: Use `isSessionTopic(ctx)` to detect topic context, `showSessionPicker(ctx, action)` for General-context pickers. Pass `threadId` through to streaming/relay.
 
+**Claude Code mods**: `plugins/` holds the `channel-pull` / `channel-pull-format` plugins (desktop-app inbound delivery; relay side is `src/mcp/channel-relay/pull-inbox.ts`). They're built on the `claude-code` hooks API, not bun — `bun test` and `tsc` skip them; check with `claude plugin validate plugins/<name>` and `claude plugin test plugins/<name>` (`bun run test` runs both when `claude` is installed). Bump `version` in `plugin.json` on change — installs from GitHub only update on a new version.
+
 **Ralph loops**: `/ralph` runs `afk_tasks.sh` in a desktop terminal; `src/ralph/` tails its log and posts beats. The loop topic is NOT in topic-store (created raw via `createForumTopic`) — see `docs/ralph-loops.md`.
 
 ## Configuration

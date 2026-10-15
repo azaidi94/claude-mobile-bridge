@@ -27,6 +27,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  chmodSync,
 } from "fs";
 import { writeJsonLine } from "../../utils/socket-writer";
 import { PermissionGate } from "./permission-gate";
@@ -43,6 +44,12 @@ import {
 } from "./session-discovery";
 import { readRegistry } from "../../sessions/registry";
 import { parentIsGone } from "./parent-watchdog";
+import { sessionIdFromClaudeArgs } from "../../utils/claude-args";
+import {
+  PullInbox,
+  channelsEnabledIn,
+  type InboundMessage,
+} from "./pull-inbox";
 
 // ── Port file ──────────────────────────────────────────────────────────
 
@@ -98,6 +105,21 @@ const PORT_FILE = join(
 );
 const parentSessionId = getParentClaudeSessionId();
 
+/** Parent claude's full command line; "" if the probe fails. */
+function getParentCommand(): string {
+  try {
+    return execSync(`ps -p ${process.ppid} -o command=`, {
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+// Without channels (e.g. the Claude desktop app, which launches claude with
+// its own args) notifications are dropped; the pull inbox takes over.
+const channelsEnabled = channelsEnabledIn(getParentCommand());
+const PULL_SOCKET = join(STATE_DIR, `relay-${process.pid}.sock`);
+
 mkdirSync(STATE_DIR, { recursive: true });
 
 function writePortFile(port: number): void {
@@ -108,6 +130,9 @@ function writePortFile(port: number): void {
     sessionId: parentSessionId,
     cwd,
     startedAt: new Date().toISOString(),
+    channelsEnabled,
+    // Unix socket the channel-pull plugin long-polls (see pull-inbox.ts).
+    ...(pullServer ? { pullSocket: PULL_SOCKET } : {}),
     // cmux injects CMUX_WORKSPACE_ID into each surface shell; inherited down to
     // here. Lets the bot inject /clear & /compact into this session's cmux
     // workspace. Omitted on non-cmux terminals.
@@ -383,8 +408,7 @@ function startSessionIdDiscoveryLoop(): void {
 }
 
 function extractSessionIdFromArgs(args: string): string | undefined {
-  const match = args.match(/(?:^|\s)--session-id\s+(\S+)/);
-  return match?.[1];
+  return sessionIdFromClaudeArgs(args);
 }
 
 function getParentClaudeSessionId(ppid = process.ppid): string | undefined {
@@ -464,6 +488,84 @@ const tcpServer = createServer((socket) => {
     if (connectedClient === socket) connectedClient = null;
   });
 });
+
+// ── Pull inbox (sessions without channels) ─────────────────────────────
+
+const inbox = new PullInbox(Date.now, (reason, m) =>
+  process.stderr.write(
+    `channel-relay: dropped queued request_id=${m.meta.request_id} (${reason === "cap" ? "inbox full" : "expired unpolled"})\n`,
+  ),
+);
+// Under Bun's 10s idle timeout, which unix-socket servers can't raise.
+const PULL_MAX_WAIT_MS = 8_000;
+
+/** Unlink `relay-<pid>.sock` files whose relay is gone (SIGKILL leaves them). */
+function sweepDeadPullSockets(): void {
+  let names: string[];
+  try {
+    names = readdirSync(STATE_DIR);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^relay-(\d+)\.sock$/.exec(name)?.[1]);
+    if (!pid || pid === process.pid) continue;
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ESRCH") continue;
+      try {
+        unlinkSync(join(STATE_DIR, name));
+      } catch {
+        // silently ok: another relay swept it first
+      }
+    }
+  }
+}
+
+function startPullServer(): ReturnType<typeof Bun.serve> | null {
+  if (channelsEnabled) return null;
+  sweepDeadPullSockets();
+  try {
+    unlinkSync(PULL_SOCKET);
+  } catch {
+    // silently ok: no stale socket from a previous relay with this pid
+  }
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  // Bind under a 077 umask so the socket is never connectable by others,
+  // not even between bind and chmod.
+  const prevUmask = process.umask(0o077);
+  try {
+    server = Bun.serve({
+      unix: PULL_SOCKET,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname !== "/inbox") {
+          return new Response("not found", { status: 404 });
+        }
+        const wait = Math.min(
+          Number(url.searchParams.get("timeout")) || PULL_MAX_WAIT_MS,
+          PULL_MAX_WAIT_MS,
+        );
+        // The signal aborts when the poller hangs up, so a message is never
+        // handed to a connection that's gone.
+        const messages = await inbox.poll(wait, req.signal);
+        return Response.json({ messages });
+      },
+    });
+    chmodSync(PULL_SOCKET, 0o600);
+    process.stderr.write(`channel-relay: pull inbox on ${PULL_SOCKET}\n`);
+    return server;
+  } catch (err) {
+    server?.stop(true);
+    process.stderr.write(`channel-relay: pull inbox failed: ${err}\n`);
+    return null;
+  } finally {
+    process.umask(prevUmask);
+  }
+}
+
+const pullServer = startPullServer();
 
 // Listen on random port
 tcpServer.listen(0, "127.0.0.1", () => {
@@ -587,18 +689,30 @@ function handleBotMessage(msg: {
   validRequestIds.set(requestId, Date.now());
   if (chatId) validChatIds.add(chatId);
 
+  const inbound: InboundMessage = {
+    content: msg.text,
+    meta: {
+      chat_id: chatId,
+      request_id: requestId,
+      user: msg.user || "telegram",
+      ts: new Date().toISOString(),
+      ...(msg.image_path ? { image_path: msg.image_path } : {}),
+    },
+  };
+  if (pullServer) {
+    // No channels: a notification would be dropped, so queue even with no
+    // poller yet (a fresh session polls once its sessionId is known).
+    if (!inbox.isActive()) {
+      process.stderr.write(
+        `channel-relay: queued request_id=${requestId} with no channel-pull poller — is the plugin installed?\n`,
+      );
+    }
+    inbox.enqueue(inbound);
+    return;
+  }
   mcp.notification({
     method: "notifications/claude/channel",
-    params: {
-      content: msg.text,
-      meta: {
-        chat_id: chatId,
-        request_id: requestId,
-        user: msg.user || "telegram",
-        ts: new Date().toISOString(),
-        ...(msg.image_path ? { image_path: msg.image_path } : {}),
-      },
-    },
+    params: { ...inbound },
   });
 }
 
@@ -1040,6 +1154,14 @@ function cleanup(): void {
   }
   removePortFile();
   tcpServer.close();
+  if (pullServer) {
+    pullServer.stop(true);
+    try {
+      unlinkSync(PULL_SOCKET);
+    } catch {
+      // silently ok: best-effort cleanup
+    }
+  }
   if (connectedClient) connectedClient.destroy();
 }
 

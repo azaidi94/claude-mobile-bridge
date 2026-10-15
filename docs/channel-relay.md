@@ -20,6 +20,10 @@ claude --dangerously-skip-permissions --dangerously-load-development-channels se
 
 > **Development-channels prompt:** Claude Code will show a menu (“I am using this for local development” vs “Exit”). Choose **1** and press **Enter**. This is required by the CLI; Telegram/`/new` cannot automate it.
 
+## Claude desktop app
+
+The desktop app launches `claude` itself, so the channels flag can't be passed and channel notifications are dropped. The relay detects this and serves a pull inbox on a Unix socket instead; the [`channel-pull`](../plugins/channel-pull/README.md) plugin polls it and submits each message as a prompt. Install it once (user scope) and every new Code-tab session is messageable. Add the companion `channel-pull-format` so relayed prompts show as `📱 <message>` instead of the raw `<channel …>` tag.
+
 ## Remote use (you are not at the Mac)
 
 `/new` opens **Terminal on the machine running the bot**. If nobody can click through the dev-channels menu:

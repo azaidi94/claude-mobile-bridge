@@ -1,0 +1,19 @@
+{
+  "name": "claude-mobile-bridge",
+  "owner": {
+    "name": "Ali Zaidi"
+  },
+  "description": "Claude Code plugins for claude-mobile-bridge",
+  "plugins": [
+    {
+      "name": "channel-pull",
+      "source": "./plugins/channel-pull",
+      "description": "Telegram \u2192 Claude desktop app sessions via the channel relay"
+    },
+    {
+      "name": "channel-pull-format",
+      "source": "./plugins/channel-pull-format",
+      "description": "Companion to channel-pull: shows relayed Telegram prompts as their text alone"
+    }
+  ]
+}

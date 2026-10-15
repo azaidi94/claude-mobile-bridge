@@ -1,0 +1,6 @@
+{
+  "name": "channel-pull-format",
+  "version": "0.2.0",
+  "description": "Shows channel-pull's relayed Telegram prompts as their text alone; the channel tag goes to the model as hidden context.",
+  "author": { "name": "Ali Zaidi" }
+}
