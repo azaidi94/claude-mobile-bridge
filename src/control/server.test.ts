@@ -37,6 +37,7 @@ test("/status lists the bot and its sessions with topic ids", () => {
     pid: 42,
     startedAt: "2026-10-15T13:00:00.000Z",
     chatId: -1003728746073,
+    cwd: null,
     sessions: [
       {
         id: SID,
@@ -84,6 +85,41 @@ test("topic found by name when the mapping lacks a sessionId", () => {
     }),
   ).body as { topic: { topicId: number } };
   expect(body.topic.topicId).toBe(9);
+});
+
+test("a sibling's same-name topic is not this session's", () => {
+  const body = handleControl(
+    `/session/${SID}`,
+    deps({
+      topics: () => [
+        {
+          topicId: 9,
+          sessionName: "cmb",
+          sessionDir: "/d/cmb",
+          sessionId: "11111111-1111-1111-1111-111111111111",
+          isOnline: true,
+          createdAt: "t",
+        },
+      ],
+    }),
+  ).body as { topic: unknown };
+  expect(body.topic).toBeNull();
+});
+
+test("the bot's own resolver wins (launchUuid recovery after /clear)", () => {
+  const stale = {
+    topicId: 5,
+    sessionName: "renamed",
+    sessionDir: "/d/cmb",
+    sessionId: "22222222-2222-2222-2222-222222222222",
+    isOnline: true,
+    createdAt: "t",
+  };
+  const body = handleControl(
+    `/session/${SID}`,
+    deps({ topics: () => [stale], topicFor: () => stale }),
+  ).body as { topic: { topicId: number } };
+  expect(body.topic.topicId).toBe(5);
 });
 
 test("unknown paths 404", () => {

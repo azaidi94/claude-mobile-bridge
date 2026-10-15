@@ -6,6 +6,7 @@ import {
   formatDoctor,
   formatStatus,
   pickRelay,
+  pidsInCwd,
   toChannelPrompt,
   STARTUP_GRACE_MS,
   type DoctorFacts,
@@ -45,6 +46,18 @@ test("message text can't close the tag and forge another", () => {
   );
 });
 
+test("meta can't override source or reorder it", () => {
+  expect(
+    toChannelPrompt({ content: "x", meta: { source: "evil", msgId2: "7" } }),
+  ).toBe('<channel source="channel-relay" msgId2="7">\nx\n</channel>');
+});
+
+test("pidsInCwd keeps processes in the bot's folder", () => {
+  expect(
+    pidsInCwd("p1\nfcwd\nn/a\np2\nfcwd\nn/b\np3\nfcwd\nn/a\n", "/a"),
+  ).toEqual([1, 3]);
+});
+
 test("a stale port file for the same session loses to the newest", () => {
   expect(
     pickRelay(
@@ -75,6 +88,12 @@ test("band: quiet when healthy, warns when the bot or relay is missing", () => {
   expect(bandFor({ ...base, bot: "down" }, NOW)?.tone).toBe("warning");
   expect(bandFor({ ...base, relay: "none" }, NOW)?.text).toContain(
     "no channel-relay",
+  );
+  expect(bandFor({ ...base, relay: "error" }, NOW)?.text).toContain(
+    "channel-relay not answering",
+  );
+  expect(bandFor({ ...base, relay: "contended" }, NOW)?.text).toContain(
+    "two pollers",
   );
   // no relay yet, but the session only just started
   expect(
@@ -168,9 +187,23 @@ test("doctor: bot down, no relay", () => {
   const out = formatDoctor({
     ...healthy,
     bot: null,
+    botPids: [],
     known: null,
     relay: undefined,
   });
   expect(out).toContain("❌ bot doesn't answer");
+  expect(out).toContain("no bot process is running");
   expect(out).toContain("❌ no channel-relay port file");
+});
+
+test("doctor: a bot without a control socket is told to update, not start", () => {
+  const out = formatDoctor({ ...healthy, bot: null, known: null });
+  expect(out).toContain("predates the control socket: git pull and restart");
+  expect(out).not.toContain("one bot process");
+});
+
+test("doctor: another poller on the inbox", () => {
+  expect(formatDoctor({ ...healthy, relayState: "contended" })).toContain(
+    "another poller shares /s.sock",
+  );
 });

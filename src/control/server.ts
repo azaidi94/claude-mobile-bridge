@@ -3,11 +3,11 @@
  * (plugins/bridge). A Unix socket in STATE_DIR, mode 0600, so it needs no
  * token: only processes running as this user can connect.
  *
- *   GET /status         → the bot itself and every session it tracks
+ *   GET /status         → the bot (pid, cwd) and every session it tracks
  *   GET /session/<id>   → one Claude session by sessionId: name + topic
  */
 
-import { chmodSync, unlinkSync } from "fs";
+import { chmodSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { STATE_DIR } from "../paths";
 import type { SessionInfo } from "../sessions/types";
@@ -23,6 +23,16 @@ export interface ControlDeps {
   chatId: () => number | undefined;
   sessions: () => SessionInfo[];
   topics: () => TopicMapping[];
+  /** The bot's working directory: lets the mod tell its process from other bun apps. */
+  cwd?: string;
+  /**
+   * The bot's own sessionId resolver (`topicForSessionId`: exact id, then
+   * launchUuid). Defaults to an exact sessionId match over `topics()`.
+   */
+  topicFor?: (session: {
+    id: string;
+    pid?: number;
+  }) => TopicMapping | undefined;
 }
 
 export interface TopicView {
@@ -52,6 +62,27 @@ function viewTopic(t: TopicMapping, chatId: number | undefined): TopicView {
   };
 }
 
+/**
+ * A session's topic: the bot's resolver, else a same-name topic that isn't
+ * bound to another session id (siblings `x` / `x-2` can swap names).
+ */
+function resolveTopic(
+  deps: ControlDeps,
+  topics: TopicMapping[],
+  id: string,
+  session: SessionInfo | undefined,
+): TopicMapping | undefined {
+  const exact = deps.topicFor
+    ? deps.topicFor({ id, pid: session?.pid })
+    : topics.find((t) => t.sessionId === id);
+  if (exact) return exact;
+  if (!session) return undefined;
+  return topics.find(
+    (t) =>
+      t.sessionName === session.name && (!t.sessionId || t.sessionId === id),
+  );
+}
+
 /** Pure router: path → JSON response. */
 export function handleControl(
   path: string,
@@ -65,9 +96,10 @@ export function handleControl(
       body: {
         pid: deps.pid,
         startedAt: deps.startedAt,
+        cwd: deps.cwd ?? null,
         chatId: chatId ?? null,
         sessions: deps.sessions().map((s) => {
-          const t = topics.find((m) => m.sessionName === s.name);
+          const t = resolveTopic(deps, topics, s.id, s);
           return {
             id: s.id,
             name: s.name,
@@ -84,11 +116,7 @@ export function handleControl(
     const id = m[1]!;
     const session = deps.sessions().find((s) => s.id === id);
     const topics = deps.topics();
-    const topic =
-      topics.find((t) => t.sessionId === id) ??
-      (session
-        ? topics.find((t) => t.sessionName === session.name)
-        : undefined);
+    const topic = resolveTopic(deps, topics, id, session);
     return {
       status: 200,
       body: {
@@ -103,6 +131,8 @@ export function handleControl(
 }
 
 let server: ReturnType<typeof Bun.serve> | null = null;
+/** Inode of the socket we bound: a second bot rebinding the path gets a new one. */
+let boundIno: number | null = null;
 
 export function startControlServer(deps: ControlDeps): void {
   try {
@@ -124,6 +154,7 @@ export function startControlServer(deps: ControlDeps): void {
       },
     });
     chmodSync(CONTROL_SOCKET, 0o600);
+    boundIno = statSync(CONTROL_SOCKET).ino;
     info("control: socket listening", { socket: CONTROL_SOCKET });
   } catch (err) {
     server?.stop(true);
@@ -141,9 +172,12 @@ export function stopControlServer(): void {
   if (!server) return;
   server.stop(true);
   server = null;
+  // Only remove our own socket: if another bot has since rebound the path,
+  // unlinking it would cut that live bot off from the mod.
   try {
-    unlinkSync(CONTROL_SOCKET);
+    if (statSync(CONTROL_SOCKET).ino === boundIno) unlinkSync(CONTROL_SOCKET);
   } catch {
     // silently ok: already gone
   }
+  boundIno = null;
 }

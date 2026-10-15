@@ -15,7 +15,7 @@ import type { Register } from "claude-code";
 const SUBMITTERS = new Set(["bridge", "channel-pull"]);
 
 const CHANNEL_PROMPT =
-  /^(<channel source="channel-relay"(?: [a-z_]+="[^"]*")*)>\n([\s\S]*)\n<\/channel>$/;
+  /^(<channel source="channel-relay"(?: [A-Za-z0-9_]+="[^"]*")*)>\n([\s\S]*)\n<\/channel>$/;
 
 /** What the transcript shows, and what only the model reads. */
 export const splitChannelPrompt = (

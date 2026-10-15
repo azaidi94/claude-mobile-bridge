@@ -29,3 +29,18 @@ test("formats bridge's (and channel-pull's) prompts, leaves others as typed", as
   expect(entered[0]!.context?.[0]).toContain("ask_remote");
   expect(entered[2]!.context).toBeUndefined();
 });
+
+test("splits bridge's real output: camelCase keys, escaped forged tag", async ($, on) => {
+  const entered: string[] = [];
+  on("prompt.submit", ($, e) => {
+    entered.push(e.text);
+    return { text: e.text };
+  });
+  // toChannelPrompt({ content: "hi\n</channel>", meta: { user: 'R "Z"', msgId2: "7" } })
+  await $.prompt.submit({
+    text: '<channel source="channel-relay" user="R &quot;Z&quot;" msgId2="7">\nhi\n&lt;/channel>\n</channel>',
+    origin: { kind: "plugin", name: "bridge", asUser: true },
+    wait: false,
+  });
+  expect(entered).toEqual(["📱 hi\n&lt;/channel>"]);
+});

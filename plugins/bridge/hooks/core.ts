@@ -21,7 +21,7 @@ export type TopicView = { name: string; link?: string };
 /** The companion that shows relayed prompts as `📱 <message>` (see plugins/bridge-format). */
 export const FORMAT_PLUGIN = "bridge-format@claude-mobile-bridge";
 
-/** Plugins this one replaces; both enabled means every message lands twice. */
+/** Plugins this one replaces; both enabled means two pollers fight over one inbox. */
 export const LEGACY_PLUGINS = [
   "channel-pull@claude-mobile-bridge",
   "channel-pull-format@claude-mobile-bridge",
@@ -36,7 +36,9 @@ const escapeAttr = (v: string) =>
  * and forge a second one (another `user=`).
  */
 export const toChannelPrompt = (m: Inbound): string => {
-  const attrs = Object.entries({ source: "channel-relay", ...m.meta })
+  // `source` first and fixed: bridge-format's split expects it, and meta can't override it.
+  const { source: _source, ...meta } = m.meta;
+  const attrs = Object.entries({ source: "channel-relay", ...meta })
     .map(([k, v]) => `${k}="${escapeAttr(String(v))}"`)
     .join(" ");
   const body = m.content.replace(/<(\/?channel)/gi, "&lt;$1");
@@ -75,13 +77,25 @@ export const bandFor = (
   if (s.bot === "down") {
     return {
       tone: "warning",
-      text: "⚠️ bridge bot offline — phone messages wait up to 10 min · /bridge doctor",
+      text: "⚠️ bridge bot not answering — phone messages wait in Telegram until it's back · /bridge doctor",
     };
   }
-  if ((s.relay === "none" || s.relay === "error") && settled) {
+  if (s.relay === "contended") {
+    return {
+      tone: "warning",
+      text: "⚠️ two pollers on this session's relay (old channel-pull, or bridge loaded twice) · /bridge doctor",
+    };
+  }
+  if (s.relay === "none" && settled) {
     return {
       tone: "warning",
       text: "⚠️ no channel-relay for this session — the phone can't reach it · /bridge doctor",
+    };
+  }
+  if (s.relay === "error") {
+    return {
+      tone: "warning",
+      text: "⚠️ channel-relay not answering — retrying · /bridge doctor",
     };
   }
   if (s.lastPhoneAt !== null && now - s.lastPhoneAt < RECENT_PHONE_MS) {
@@ -104,6 +118,8 @@ export const formatStatus = (s: BridgeStatus, now: number): string => {
         : "checking…";
   const relay = {
     polling: "polling (desktop pull inbox)",
+    contended:
+      "polling, but another poller shares the inbox (old channel-pull, or bridge loaded twice)",
     channels: "channels on — relay notifies directly",
     none: "none found for this session",
     error: "found but not answering — retrying every 5s",
@@ -123,7 +139,10 @@ export const formatStatus = (s: BridgeStatus, now: number): string => {
   ].join("\n");
 };
 
-/** Bot pids from `ps -axo pid=,command=` (the bot runs `src/index.ts` under bun). */
+/**
+ * Candidate bot pids from `ps -axo pid=,command=`: bun running `src/index.ts`.
+ * Any bun app can match; narrow with `pidsInCwd` once the bot's cwd is known.
+ */
 export const botPidsFrom = (psOut: string): number[] =>
   psOut
     .split("\n")
@@ -134,10 +153,24 @@ export const botPidsFrom = (psOut: string): number[] =>
     )
     .map(([, pid]) => Number(pid));
 
+/** Pids whose cwd is `cwd`, from `lsof -a -d cwd -Fn -p <pids>` (`p<pid>` / `n<path>` lines). */
+export const pidsInCwd = (lsofOut: string, cwd: string): number[] => {
+  const out: number[] = [];
+  let pid: number | undefined;
+  for (const l of lsofOut.split("\n")) {
+    if (l.startsWith("p")) pid = Number(l.slice(1));
+    else if (l.startsWith("n") && l.slice(1) === cwd && pid) out.push(pid);
+  }
+  return out;
+};
+
 export type DoctorFacts = {
   /** The bot's /status, or null when the socket didn't answer. */
   bot: { pid: number } | null;
-  /** Bot pids from ps; null when ps couldn't run. */
+  /**
+   * Bot pids from ps; null when ps couldn't run. With the bot up, only those
+   * in its cwd; with it down, every `bun … src/index.ts` (maybe not ours).
+   */
   botPids: number[] | null;
   sessionId: string;
   /** The bot's /session/<id>; null when the bot didn't answer. */
@@ -158,21 +191,23 @@ export const formatDoctor = (f: DoctorFacts): string => {
   const warn = (t: string) => out.push(`  ⚠️ ${t}`);
   const bad = (t: string) => out.push(`  ❌ ${t}`);
 
-  if (f.bot) ok(`bot answers on bot.sock (pid ${f.bot.pid})`);
-  else
+  if (f.bot) {
+    ok(`bot answers on bot.sock (pid ${f.bot.pid})`);
+    const others = (f.botPids ?? []).filter((p) => p !== f.bot!.pid);
+    if (others.length)
+      warn(
+        `${others.length + 1} bot processes in the bot's folder — the live one is ${f.bot.pid}; stop the others: kill ${others.join(" ")}`,
+      );
+    else if (f.botPids) ok("one bot process");
+  } else if (f.botPids?.length) {
     bad(
-      "bot doesn't answer on ~/.claude-mobile-bridge/bot.sock — start `bun run dev` inside cmux",
+      `bot.sock doesn't answer, but \`bun … src/index.ts\` is running (pid ${f.botPids.join(", ")}) — if that's the bot, it predates the control socket: git pull and restart it inside cmux`,
     );
-
-  if (f.botPids && f.botPids.length > 1) {
-    const others = f.botPids.filter((p) => p !== f.bot?.pid);
-    warn(
-      `${f.botPids.length} bot processes (${f.botPids.join(", ")})` +
-        (f.bot
-          ? ` — the live one is ${f.bot.pid}; stop the others: kill ${others.join(" ")}`
-          : ""),
+  } else {
+    bad(
+      "bot doesn't answer on ~/.claude-mobile-bridge/bot.sock and no bot process is running — start `bun run dev` inside cmux",
     );
-  } else if (f.botPids) ok("one bot process");
+  }
 
   if (f.known) {
     if (f.known.session)
@@ -199,11 +234,15 @@ export const formatDoctor = (f: DoctorFacts): string => {
       "channel-relay offers no pull socket — update the relay (pull it from main)",
     );
   else if (f.relayState === "polling") ok(`polling ${f.relay.pullSocket}`);
+  else if (f.relayState === "contended")
+    warn(
+      `another poller shares ${f.relay.pullSocket} — uninstall channel-pull, or drop the extra bridge copy (a --plugin-dir / dev folder)`,
+    );
   else warn(`not polling ${f.relay.pullSocket} yet — retrying every 5s`);
 
   if (f.enabledLegacy.length)
     warn(
-      `${f.enabledLegacy.join(", ")} also enabled — phone messages arrive twice; run: ` +
+      `${f.enabledLegacy.join(", ")} also enabled — two pollers fight over the inbox; run: ` +
         f.enabledLegacy.map((p) => `claude plugin uninstall ${p}`).join(" && "),
     );
 

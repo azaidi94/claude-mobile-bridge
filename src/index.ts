@@ -5,11 +5,9 @@
  */
 
 import { setupBotLogRotation } from "./log-rotation";
-import { homedir } from "os";
 import { join } from "path";
-setupBotLogRotation(
-  join(homedir(), "Library", "Logs", "claude-mobile-bridge", "bot.log"),
-);
+import { LOG_DIR } from "./paths";
+setupBotLogRotation(join(LOG_DIR, "bot.log"));
 
 import { run } from "@grammyjs/runner";
 import {
@@ -61,8 +59,11 @@ import {
   backfillLedgerFromStore,
   TopicManager,
 } from "./topics";
-import { topicForSession } from "./topics/topic-store";
-import { launchUuidForPid } from "./sessions/resolve-session";
+import { topicForSession, topicForSessionId } from "./topics/topic-store";
+import {
+  launchUuidForPid,
+  launchUuidForSessionId,
+} from "./sessions/resolve-session";
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
@@ -199,6 +200,12 @@ startControlServer({
   chatId: () => getTopicStore().chatId,
   sessions: getSessions,
   topics: () => getTopicStore().topics,
+  cwd: process.cwd(),
+  topicFor: (s) =>
+    topicForSessionId({
+      sessionId: s.id,
+      launchUuid: launchUuidForSessionId(s.id) ?? launchUuidForPid(s.pid),
+    }),
 });
 
 // Watchdog scans active watches for mid-turn idle and pings the topic

@@ -11,7 +11,9 @@ type Host = {
   inboxes: string[];
   bot?: { status: unknown; session: unknown };
   ps?: string;
-  settings?: unknown;
+  /** `lsof -Fn` output for the cwd check. */
+  lsof?: string;
+  settings?: Record<string, unknown>;
   log?: string;
 };
 
@@ -48,10 +50,9 @@ function fakeHost(on: On, host: Host) {
   on("fs.read", ($, e) => {
     if (e.path.endsWith("-42.json"))
       return { value: JSON.stringify(host.port) };
-    if (e.path === `${HOME}/.claude/settings.json` && host.settings)
-      return { value: JSON.stringify(host.settings) };
     throw new Error("ENOENT");
   });
+  on("settings.read", () => ({ value: host.settings ?? {} }));
   on("http.fetch", ($, e) => {
     const res = (status: number, body?: unknown) => ({
       value: {
@@ -74,10 +75,10 @@ function fakeHost(on: On, host: Host) {
   });
   on("process.run", ($, e) => ({
     value:
-      e.argv[0] === "ps"
+      e.argv[0] === "ps" || e.argv[0] === "lsof"
         ? {
             exitCode: 0,
-            stdout: host.ps ?? "",
+            stdout: (e.argv[0] === "ps" ? host.ps : host.lsof) ?? "",
             stderr: "",
             isStdoutTruncated: false,
             isStderrTruncated: false,
@@ -186,8 +187,8 @@ test("/bridge status reports the bot's topic for this session", async ($, on) =>
 
   expect(text).toContain("bot:    up (pid 1646)");
   expect(text).toContain("topic:  cmb — https://t.me/c/1/2");
-  // the fake relay answers 503 after its one scripted poll
-  expect(text).toContain("relay:  found but not answering");
+  // one 503 after the scripted poll isn't enough to warn
+  expect(text).toContain("relay:  polling");
 });
 
 test("/bridge doctor flags a second bot, old plugins and log errors", async ($, on) => {
@@ -197,10 +198,12 @@ test("/bridge doctor flags a second bot, old plugins and log errors", async ($, 
     port: { sessionId: SID, pullSocket: SOCKET },
     inboxes: [],
     bot: {
-      status: { pid: 1646 },
+      status: { pid: 1646, cwd: "/w/cmb" },
       session: { session: { name: "cmb" }, topic: { name: "cmb" } },
     },
-    ps: " 1646 bun --watch run src/index.ts\n55856 bun --watch run src/index.ts\n",
+    // 777 is another bun app's src/index.ts, in another folder
+    ps: " 1646 bun --watch run src/index.ts\n55856 bun --watch run src/index.ts\n  777 bun src/index.ts\n",
+    lsof: "p1646\nfcwd\nn/w/cmb\np55856\nfcwd\nn/w/cmb\np777\nfcwd\nn/w/other\n",
     settings: { enabledPlugins: { "channel-pull@claude-mobile-bridge": true } },
     log: "2026 [INFO] fine\n2026 [ERROR] boom\n",
   });
@@ -210,7 +213,7 @@ test("/bridge doctor flags a second bot, old plugins and log errors", async ($, 
   const { text } = await bridge($, "doctor");
 
   expect(text).toContain("✅ bot answers on bot.sock (pid 1646)");
-  expect(text).toContain("kill 55856");
+  expect(text).toContain("stop the others: kill 55856\n");
   expect(text).toContain(
     "claude plugin uninstall channel-pull@claude-mobile-bridge",
   );
@@ -231,7 +234,46 @@ test("/bridge doctor when the bot is down", async ($, on) => {
   expect(status.text).toContain("bot:    down");
 });
 
-test("the band warns on every surface when the bot is offline", async ($, on) => {
+test("two pollers on one inbox back off and say so", async ($, on) => {
+  on("session.start", ($, e) => ({ cwd: e.cwd }));
+  const clock = mock.clock(on);
+  // another poller keeps superseding ours: every poll comes back empty at once
+  const empty = JSON.stringify({ messages: [] });
+  const host = {
+    port: { sessionId: SID, pullSocket: SOCKET },
+    inboxes: Array.from({ length: 50 }, () => empty),
+  };
+  fakeHost(on, host);
+
+  await $.session.start(START);
+  await clock.advance(20_000);
+
+  // backs off RETRY_MS between polls instead of spinning through the inbox
+  expect(50 - host.inboxes.length).toBeLessThanOrEqual(6);
+  const { text } = await bridge($, "status");
+  expect(text).toContain("another poller shares the inbox");
+});
+
+test("one failed poll doesn't warn; it recovers to polling", async ($, on) => {
+  on("session.start", ($, e) => ({ cwd: e.cwd }));
+  const clock = mock.clock(on);
+  const host = {
+    port: { sessionId: SID, pullSocket: SOCKET },
+    inboxes: [] as string[],
+  };
+  fakeHost(on, host);
+
+  await $.session.start(START);
+  await clock.advance(1); // first poll: 503
+  expect((await bridge($, "status")).text).toContain("relay:  checking");
+  await clock.advance(20_000); // three failures in a row
+  expect((await bridge($, "status")).text).toContain("found but not answering");
+  host.inboxes.push(JSON.stringify({ messages: [] }));
+  await clock.advance(5_000);
+  expect((await bridge($, "status")).text).toContain("relay:  polling");
+});
+
+test("the band warns on every surface when the bot is down", async ($, on) => {
   on("session.start", ($, e) => ({ cwd: e.cwd }));
   const clock = mock.clock(on);
   fakeHost(on, { port: { sessionId: SID, pullSocket: SOCKET }, inboxes: [] });
@@ -252,7 +294,7 @@ test("the band warns on every surface when the bot is offline", async ($, on) =>
       },
     } as never);
     expect(
-      await ui.find({ type: "Text", text: /bridge bot offline/ }),
+      await ui.find({ type: "Text", text: /bridge bot not answering/ }),
     ).toBeDefined();
     await ui.unmount();
   }

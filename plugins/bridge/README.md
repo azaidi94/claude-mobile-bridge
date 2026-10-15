@@ -3,7 +3,7 @@
 claude-mobile-bridge inside the **Claude desktop app** (Code tab):
 
 - **Telegram in:** messages from a session's Telegram topic arrive as prompts (desktop sessions can't load channels, so the [channel relay](../../docs/channel-relay.md) can't push them).
-- **Status band** above the prompt, only when it matters: `⚠️ bridge bot offline`, `⚠️ no channel-relay for this session`, or `📱 phone message in <topic> · 2m ago`.
+- **Status band** above the prompt, only when it matters: `⚠️ bridge bot not answering`, `⚠️ no channel-relay for this session` / `channel-relay not answering`, `⚠️ two pollers on this session's relay`, or `📱 phone message in <topic> · 2m ago`.
 - **`/bridge status`:** bot, this session's topic (with a `t.me` link), relay and poll state.
 - **`/bridge doctor`:** checks the bot answers, finds duplicate bot processes, whether the bot tracks this session and has a topic for it, whether the relay is up and polled, old plugins still enabled, `bridge-format` missing, and recent `[ERROR]`s in `bot.log`. Each problem says what to do.
 
@@ -27,7 +27,7 @@ claude plugin install bridge-format@claude-mobile-bridge
 
 From a local clone, use the clone's path in place of `azaidi94/claude-mobile-bridge`. In the desktop app: + next to the prompt box → Plugins → Add marketplace / Add plugin. Installed at user scope, it loads in every new session; sessions already open need a new session or `/reload-plugins`.
 
-**Replacing `channel-pull`:** uninstall `channel-pull` and `channel-pull-format` first, or every phone message arrives twice (`/bridge doctor` flags it).
+**Replacing `channel-pull`:** uninstall `channel-pull` and `channel-pull-format` first. With both installed the two pollers keep cutting each other's long-poll short; bridge backs off, and its band and `/bridge doctor` say so. If you added the marketplace before `bridge` existed, run `claude plugin marketplace update claude-mobile-bridge` before installing.
 
 ```bash
 claude plugin uninstall channel-pull@claude-mobile-bridge
@@ -46,6 +46,8 @@ Telegram ─► bot ─TCP─► channel-relay ─unix socket─► bridge ─�
 
 - **Inbound.** The relay checks its parent `claude`'s command line. Without the channels flag it serves a long-poll inbox on `~/.claude-mobile-bridge/relay-<pid>.sock` (mode 0600), named as `pullSocket` in its port file, and queues every message there (up to 10 minutes: the relay's request-id lifetime). The mod finds the newest port file whose `sessionId` matches its session and long-polls `GET /inbox` on a `$.clock.after` timer chain (8s per poll, retry every 5s); a reload drops the timers, so only one copy ever polls. Each message is submitted `asUser`, wrapped in the same `<channel source="channel-relay" chat_id=… request_id=… user=…>` tag a CLI session gets, so `reply`, attachments and `ask_remote` work as in the CLI. In a `cc` session (channels on) the relay offers no socket and the mod stands down.
 - **Status.** Every 15s the mod asks the bot's control socket, `~/.claude-mobile-bridge/bot.sock` (mode 0600, read-only: `GET /status`, `GET /session/<id>`; see `src/control/server.ts`), what it knows about this session.
+
+`CLAUDE_TELEGRAM_STATE_DIR` (the bot's and relay's state folder) and `CLAUDE_TELEGRAM_LOG_DIR` are read from this session's environment: if you set them in the bot's `.env` only, set them for Claude too, or the mod looks in the defaults.
 
 Messages that arrive mid-turn queue and run once the session goes idle (channel notifications in the CLI land in the running turn instead).
 
