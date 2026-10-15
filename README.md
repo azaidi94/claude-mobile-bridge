@@ -11,7 +11,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **[Mini App](docs/mini-app.md)** — browser/Telegram Mini App with Chat, Sessions, Tasks (Kanban), Status, and Agents tabs.
 - **[Auto-discovery](docs/sessions.md)** — detects running Claude Code sessions automatically.
 - **[Channel relay](docs/channel-relay.md)** — message running desktop sessions without disconnecting them.
-- **[Claude desktop app](plugins/bridge/README.md)** — the `bridge` plugin brings the relay to Code-tab sessions (which can't load channels), with a status band and `/bridge status|doctor`.
+- **[Claude desktop app](plugins/bridge/README.md)** — the `bridge` plugin brings the relay to Code-tab sessions (which can't load channels), with a status band, a Bridge pane and `/bridge status|doctor|pane`.
 - **Live streaming** — watch tool calls, results, permission-mode toggles, and stop-hook blocks in real time.
 - **Unified chat** — desktop TUI, Telegram topic, and Mini App share one conversation with origin labels (🖥 Desktop / 🌐 Web / 💬 Chat).
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.

@@ -1,4 +1,4 @@
-import type { BridgeStatus } from "../types";
+import type { BridgeStatus, FeedEntry } from "../types";
 
 /**
  * Pure pieces of the bridge mod: the `<channel>` prompt, port-file
@@ -108,8 +108,11 @@ export const bandFor = (
   return undefined;
 };
 
-/** `/bridge status`. */
-export const formatStatus = (s: BridgeStatus, now: number): string => {
+/** `/bridge status`'s rows (label, text), shared with the pane. */
+export const statusRows = (
+  s: BridgeStatus,
+  now: number,
+): [label: "bot" | "topic" | "relay" | "phone", text: string][] => {
   const bot =
     s.bot === "up"
       ? `up${s.botPid ? ` (pid ${s.botPid})` : ""}`
@@ -131,12 +134,91 @@ export const formatStatus = (s: BridgeStatus, now: number): string => {
   const phone =
     s.lastPhoneAt === null ? "none here yet" : ago(now - s.lastPhoneAt);
   return [
+    ["bot", bot],
+    ["topic", topic],
+    ["relay", relay],
+    ["phone", `last message ${phone}`],
+  ];
+};
+
+/** `/bridge status`. */
+export const formatStatus = (s: BridgeStatus, now: number): string =>
+  [
     "Bridge status",
-    `  bot:    ${bot}`,
-    `  topic:  ${topic}`,
-    `  relay:  ${relay}`,
-    `  phone:  last message ${phone}`,
+    ...statusRows(s, now).map(([k, v]) => `  ${`${k}:`.padEnd(7)} ${v}`),
   ].join("\n");
+
+/** The pane's headline: one word and its color. */
+export const paneHealth = (
+  s: BridgeStatus,
+  now: number,
+): { tone: "success" | "warning" | "error" | "subtle"; text: string } => {
+  const settled = now - s.startedAt >= STARTUP_GRACE_MS;
+  if (s.bot === "down") return { tone: "error", text: "bot down" };
+  if (s.relay === "error" || (s.relay === "none" && settled))
+    return { tone: "error", text: "phone can't reach this session" };
+  if (s.relay === "contended")
+    return { tone: "warning", text: "two pollers on the relay" };
+  if (s.bot === "unknown" || s.relay === "unknown" || s.relay === "none")
+    return { tone: "subtle", text: "checking…" };
+  return { tone: "success", text: "connected" };
+};
+
+/** Longest message text the feed keeps. */
+export const FEED_TEXT_MAX = 140;
+/** Messages the feed keeps. */
+export const FEED_MAX = 10;
+
+/** A relayed message as the pane's feed lists it: its first line, cut short. */
+export const toFeedEntry = (m: Inbound, at: number): FeedEntry => {
+  // by code point, so an emoji at the cut isn't split in half
+  const line = [...(m.content.trim().split("\n")[0] ?? "")];
+  return {
+    at,
+    user: m.meta.user ?? null,
+    text:
+      line.length > FEED_TEXT_MAX
+        ? `${line.slice(0, FEED_TEXT_MAX - 1).join("")}…`
+        : line.join("") || "(attachment)",
+  };
+};
+
+/** The feed with one poll's messages (oldest first, as the relay queues them) added: newest first, capped. */
+export const addToFeed = (
+  list: FeedEntry[],
+  messages: Inbound[],
+  at: number,
+): FeedEntry[] =>
+  [...messages.map((m) => toFeedEntry(m, at)).reverse(), ...list].slice(
+    0,
+    FEED_MAX,
+  );
+
+/** A doctor run's lines for the pane: without the header, or the whole text when it failed. */
+export const doctorLines = (text: string | null): string[] => {
+  if (!text) return [];
+  const lines = text.split("\n");
+  return lines[0] === "Bridge doctor" ? lines.slice(1) : lines;
+};
+
+/** HH:MM, local time. */
+export const clockTime = (ms: number): string => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+/** A doctor line's color in the pane, by its mark. */
+export const doctorTone = (
+  line: string,
+): "success" | "warning" | "error" | undefined => {
+  const l = line.trimStart();
+  return l.startsWith("❌") || l.startsWith("Bridge doctor failed")
+    ? "error"
+    : l.startsWith("⚠️")
+      ? "warning"
+      : l.startsWith("✅")
+        ? "success"
+        : undefined;
 };
 
 /**

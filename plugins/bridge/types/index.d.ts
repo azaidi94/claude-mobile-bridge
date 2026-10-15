@@ -17,8 +17,25 @@ export type BridgeStatus = {
   startedAt: number;
 };
 
+/** One relayed phone message, as the pane's feed lists it. */
+export type FeedEntry = {
+  /** When it was submitted here (epoch ms). */
+  at: number;
+  user: string | null;
+  /** First line, cut to fit a row. */
+  text: string;
+};
+
+/** The last `/bridge doctor` run, shown in the pane. */
+export type DoctorRun = {
+  at: number | null;
+  /** formatDoctor's text; null before the first run. */
+  text: string | null;
+  isRunning: boolean;
+};
+
 declare module "claude-code" {
   interface PluginState {
-    bridge: { status: BridgeStatus };
+    bridge: { status: BridgeStatus; feed: FeedEntry[]; doctor: DoctorRun };
   }
 }

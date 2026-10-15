@@ -1,13 +1,20 @@
 import { test, expect } from "claude-code/testing";
 import type { BridgeStatus } from "../types";
 import {
+  addToFeed,
   bandFor,
   botPidsFrom,
+  doctorLines,
+  doctorTone,
   formatDoctor,
   formatStatus,
+  paneHealth,
   pickRelay,
   pidsInCwd,
   toChannelPrompt,
+  toFeedEntry,
+  FEED_MAX,
+  FEED_TEXT_MAX,
   STARTUP_GRACE_MS,
   type DoctorFacts,
 } from "../hooks/core";
@@ -206,4 +213,71 @@ test("doctor: another poller on the inbox", () => {
   expect(formatDoctor({ ...healthy, relayState: "contended" })).toContain(
     "another poller shares /s.sock",
   );
+});
+
+test("pane health: connected, warning, error", () => {
+  expect(paneHealth(base, NOW)).toEqual({ tone: "success", text: "connected" });
+  expect(paneHealth({ ...base, relay: "contended" }, NOW).tone).toBe("warning");
+  expect(paneHealth({ ...base, bot: "down" }, NOW).tone).toBe("error");
+  expect(
+    paneHealth({ ...base, relay: "none", startedAt: NOW - 1 }, NOW).tone,
+  ).toBe("subtle");
+  expect(paneHealth({ ...base, relay: "none" }, NOW).tone).toBe("error");
+  // error even inside the startup grace: the relay was found and fails
+  expect(
+    paneHealth({ ...base, relay: "error", startedAt: NOW - 1 }, NOW).tone,
+  ).toBe("error");
+  expect(paneHealth({ ...base, relay: "channels" }, NOW).tone).toBe("success");
+  expect(paneHealth({ ...base, relay: "unknown" }, NOW).tone).toBe("subtle");
+  expect(paneHealth({ ...base, bot: "unknown" }, NOW).tone).toBe("subtle");
+});
+
+test("feed entries keep the first line, cut short", () => {
+  expect(toFeedEntry({ content: "hi\nmore", meta: { user: "u" } }, 5)).toEqual({
+    at: 5,
+    user: "u",
+    text: "hi",
+  });
+  const long = toFeedEntry({ content: "x".repeat(500), meta: {} }, 0);
+  expect(long.text).toHaveLength(FEED_TEXT_MAX);
+  expect(long.text.endsWith("…")).toBe(true);
+  expect(toFeedEntry({ content: "", meta: {} }, 0).text).toBe("(attachment)");
+  expect(toFeedEntry({ content: "  \n ", meta: {} }, 0).text).toBe(
+    "(attachment)",
+  );
+  // an emoji at the cut stays whole
+  const emoji = toFeedEntry(
+    { content: `${"x".repeat(FEED_TEXT_MAX - 2)}😀😀😀`, meta: {} },
+    0,
+  );
+  expect(emoji.text).toBe(`${"x".repeat(FEED_TEXT_MAX - 2)}😀…`);
+});
+
+test("feed: newest first within a poll and across polls, capped", () => {
+  const msg = (content: string) => ({ content, meta: {} });
+  let list = addToFeed([], [msg("a"), msg("b")], 1);
+  list = addToFeed(list, [msg("c")], 2);
+  expect(list.map((e) => e.text)).toEqual(["c", "b", "a"]);
+  const many = Array.from({ length: 15 }, (_, i) => msg(`m${i}`));
+  const capped = addToFeed(list, many, 3);
+  expect(capped).toHaveLength(FEED_MAX);
+  expect(capped[0]?.text).toBe("m14");
+});
+
+test("doctor lines: header dropped, a failure shown whole", () => {
+  expect(doctorLines(null)).toEqual([]);
+  expect(doctorLines("Bridge doctor\n  ✅ ok")).toEqual(["  ✅ ok"]);
+  expect(doctorLines("Bridge doctor failed: boom")).toEqual([
+    "Bridge doctor failed: boom",
+  ]);
+  expect(doctorTone("Bridge doctor failed: boom")).toBe("error");
+});
+
+test("doctor lines get their mark's tone", () => {
+  expect(doctorTone("  ✅ ok")).toBe("success");
+  expect(doctorTone("  ⚠️ hm")).toBe("warning");
+  expect(doctorTone("  ❌ no")).toBe("error");
+  expect(doctorTone("       [ERROR] boom")).toBeUndefined();
+  // a log line that mentions a mark isn't a check
+  expect(doctorTone("       [ERROR] got ❌ from api")).toBeUndefined();
 });

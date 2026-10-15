@@ -8,7 +8,7 @@
     {
       "name": "bridge",
       "source": "./plugins/bridge",
-      "description": "claude-mobile-bridge in the Claude desktop app: Telegram → Code-tab sessions, a status band, /bridge status|doctor"
+      "description": "claude-mobile-bridge in the Claude desktop app: Telegram → Code-tab sessions, a status band, a Bridge pane, /bridge status|doctor|pane"
     },
     {
       "name": "bridge-format",

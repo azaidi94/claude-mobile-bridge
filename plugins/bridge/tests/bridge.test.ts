@@ -15,6 +15,9 @@ type Host = {
   lsof?: string;
   settings?: Record<string, unknown>;
   log?: string;
+  /** Surfaces attached at start (`$.session.surfaces()`). */
+  surfaces?: string[];
+  store?: Record<string, unknown>;
 };
 
 /** Answers the nouns the mod reads, as a session with one relay and a bot would. */
@@ -24,6 +27,16 @@ function fakeHost(on: On, host: Host) {
     context?: readonly string[];
     asUser?: boolean;
   }[] = [];
+  const opened: string[] = [];
+  on("ui.open", ($, e) => {
+    opened.push(e.id);
+    return { value: { isPlaced: true } };
+  });
+  on("ui.panes", () => ({
+    value: opened.map((id) => ({ id, title: "Bridge" })) as never,
+  }));
+  on("session.surfaces", () => ({ value: (host.surfaces ?? []) as never }));
+  mock.store(on, host.store);
   on("env.get", ($, e) => ({ value: e.name === "HOME" ? HOME : undefined }));
   on("session.id", () => ({ value: SID }));
   on("command.register", ($, e) => ({ value: { command: e.name } }));
@@ -107,7 +120,7 @@ function fakeHost(on: On, host: Host) {
     });
     return { text: e.text, context: [] };
   });
-  return { submitted };
+  return { submitted, opened };
 }
 
 const START = { cwd: "/w", surface: "desktop", isInteractive: true } as const;
@@ -298,4 +311,117 @@ test("the band warns on every surface when the bot is down", async ($, on) => {
     ).toBeDefined();
     await ui.unmount();
   }
+});
+
+const PANE_PROPS = {
+  title: "Bridge",
+  isFocused: false,
+  bodyColumns: 40,
+  placement: "dock",
+  scroll: { offset: 0, bodyRows: 30 },
+} as never;
+
+const mountPane = (
+  $: { ui: { mount: (t: never) => Promise<unknown> } },
+  surface: string,
+) =>
+  $.ui.mount({
+    plugin: "bridge",
+    surface,
+    component: "Pane",
+    requestId: "bridge",
+    props: PANE_PROPS,
+  } as never) as Promise<{
+    find: (q: object) => Promise<unknown>;
+    press: (t: { key: string }) => Promise<unknown>;
+    unmount: () => Promise<void>;
+  }>;
+
+const ATTACH = {
+  surface: "desktop",
+  clientId: "desktop:default",
+  viewport: { columns: 120, rows: 40, isFullscreen: true },
+} as never;
+
+test("the pane opens when the desktop app attaches, shows the connection and phone messages, and runs doctor", async ($, on) => {
+  on("session.start", ($, e) => ({ cwd: e.cwd }));
+  on("session.attach", ($, e) => ({ clientId: e.clientId }));
+  const clock = mock.clock(on);
+  const { opened } = fakeHost(on, {
+    port: { sessionId: SID, pullSocket: SOCKET },
+    inboxes: [
+      JSON.stringify({
+        messages: [
+          { content: "run the tests\nplease", meta: { user: "RZA808" } },
+        ],
+      }),
+    ],
+    bot: {
+      status: { pid: 1646 },
+      session: {
+        session: { name: "cmb" },
+        topic: { name: "cmb", link: "https://t.me/c/1/2" },
+      },
+    },
+  });
+
+  await $.session.start(START);
+  await clock.settle();
+  expect(opened).toEqual([]);
+  await $.session.attach(ATTACH);
+  expect(opened).toEqual(["bridge"]);
+  // already up: a second attach doesn't open it again
+  await $.session.attach(ATTACH);
+  expect(opened).toEqual(["bridge"]);
+
+  for (const surface of ["desktop", "terminal", "mobile"]) {
+    const ui = await mountPane($, surface);
+    expect(await ui.find({ type: "Text", text: /connected/ })).toBeDefined();
+    expect(await ui.find({ type: "Link" })).toBeDefined();
+    expect(
+      await ui.find({ type: "Text", text: /run the tests$/ }),
+    ).toBeDefined();
+    expect(await ui.find({ type: "Text", text: "not run yet" })).toBeDefined();
+    await ui.unmount();
+  }
+
+  const ui = await mountPane($, "desktop");
+  await ui.press({ key: "doctor" });
+  await clock.settle();
+  expect(
+    await ui.find({ type: "Text", text: /bot answers on bot.sock/ }),
+  ).toBeDefined();
+  await ui.unmount();
+});
+
+test("a session started with the app attached opens the pane", async ($, on) => {
+  on("session.start", ($, e) => ({ cwd: e.cwd }));
+  const clock = mock.clock(on);
+  const { opened } = fakeHost(on, {
+    port: { sessionId: SID, pullSocket: SOCKET },
+    inboxes: [],
+    surfaces: ["terminal", "desktop"],
+  });
+
+  await $.session.start(START);
+  await clock.settle();
+  expect(opened).toEqual(["bridge"]);
+});
+
+test("a pane closed by hand stays closed until /bridge pane", async ($, on) => {
+  on("session.start", ($, e) => ({ cwd: e.cwd }));
+  on("session.attach", ($, e) => ({ clientId: e.clientId }));
+  const clock = mock.clock(on);
+  const { opened } = fakeHost(on, {
+    port: { sessionId: SID, pullSocket: SOCKET },
+    inboxes: [],
+    store: { paneClosed: true },
+  });
+
+  await $.session.start({ ...START, surface: "terminal" });
+  await clock.settle();
+  await $.session.attach(ATTACH);
+  expect(opened).toEqual([]);
+  expect((await bridge($, "pane")).text).toBe("Bridge pane opened.");
+  expect(opened).toEqual(["bridge"]);
 });
