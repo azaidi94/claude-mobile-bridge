@@ -69,6 +69,7 @@ import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
 import { info, warn, debug, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
+import { startControlServer, stopControlServer } from "./control/server";
 import { WEB_ENABLED } from "./config";
 import { initRelayAsk } from "./handlers/relay-ask";
 import { initPermissionRelay } from "./handlers/permission-relay";
@@ -191,6 +192,14 @@ setBotApiForBridge(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
 }
+// Read-only status socket for the desktop `bridge` mod (plugins/bridge).
+startControlServer({
+  pid: process.pid,
+  startedAt: new Date().toISOString(),
+  chatId: () => getTopicStore().chatId,
+  sessions: getSessions,
+  topics: () => getTopicStore().topics,
+});
 
 // Watchdog scans active watches for mid-turn idle and pings the topic
 // (or auto-sends "continue" when WATCHDOG_AUTO_CONTINUE is set).
@@ -529,6 +538,7 @@ const stopRunner = () => {
     stopModalWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
+    stopControlServer();
     stopCursorBridge();
     import("./ralph/monitor").then((m) => m.stopRalphMonitor()).catch(() => {});
     runner.stop();
