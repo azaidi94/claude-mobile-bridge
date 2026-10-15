@@ -3,4 +3,6 @@
 # They import from "vitest" and depend on a jsdom env that bun:test doesn't
 # provide, so they error out with `document is not defined` if discovered
 # by `bun test`. (node_modules is excluded by Bun's defaults.)
-pathIgnorePatterns = ["web/**"]
+# plugins/ holds Claude Code mods whose tests import "claude-code/testing";
+# they run under `claude plugin test` (see scripts/test-isolated.sh).
+pathIgnorePatterns = ["web/**", "plugins/**"]

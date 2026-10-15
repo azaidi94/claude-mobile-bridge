@@ -11,6 +11,7 @@ Control Claude Code sessions from your phone via Telegram. Add the bot to a foru
 - **[Mini App](docs/mini-app.md)** — browser/Telegram Mini App with Chat, Sessions, Tasks (Kanban), Status, and Agents tabs.
 - **[Auto-discovery](docs/sessions.md)** — detects running Claude Code sessions automatically.
 - **[Channel relay](docs/channel-relay.md)** — message running desktop sessions without disconnecting them.
+- **[Claude desktop app](plugins/channel-pull/README.md)** — the `channel-pull` plugin brings the relay to Code-tab sessions, which can't load channels.
 - **Live streaming** — watch tool calls, results, permission-mode toggles, and stop-hook blocks in real time.
 - **Unified chat** — desktop TUI, Telegram topic, and Mini App share one conversation with origin labels (🖥 Desktop / 🌐 Web / 💬 Chat).
 - **Voice, photos & documents** — voice transcribed via OpenAI; photos/PDFs/text analyzed.
@@ -93,6 +94,8 @@ The bot can run its own sessions out of the box, but the main use case — messa
 
    > Claude Code shows a one-time menu (“I am using this for local development” vs “Exit”). Choose **1**, press **Enter**.
 
+> **Claude desktop app (Code tab):** you can't pass launch flags there. Install the [`channel-pull`](plugins/channel-pull/README.md) plugin instead — the relay hands it messages over a local socket.
+
 That session now appears in `/list` with a 📡 indicator and is messageable from its topic. See [Channel Relay](docs/channel-relay.md) for remote/headless launching (you're not at the Mac) and how it works.
 
 That's the full setup. For optional integrations (remote-answerable questions, exact `/clear` follow, Cursor, the Mini App), see [Documentation](#documentation) below.
@@ -139,18 +142,19 @@ If you don't use tmux, injection still works via fallbacks: a **Cursor** accessi
 
 ## Documentation
 
-| Doc                                          | What's in it                                                                                            |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [Channel Relay](docs/channel-relay.md)       | Message running desktop sessions without disconnecting; remote-use setup                                |
-| [Sessions & shell scripts](docs/sessions.md) | Auto-discovery, `/new` (`--branch`, `--resume`), terminal picker, resuming offline sessions, `/execute` |
-| [Button menus](docs/menus.md)                | Tappable menus for `/new` and `/claude`; how to add a menu to another command                           |
-| [Mini App](docs/mini-app.md)                 | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth                       |
-| [Advanced hooks](docs/advanced-hooks.md)     | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)                     |
-| [Ralph loops](docs/ralph-loops.md)           | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization              |
-| [Skills browser](docs/skills-menu.md)        | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args                |
-| [Cursor Integration](docs/cursor.md)         | Bridge Cursor IDE windows into the same Telegram/Web UI                                                 |
-| [Operations](docs/operations.md)             | Logs, running as a launchd service, `/settings` reference                                               |
-| [Security](SECURITY.md)                      | Allowlist, path validation, command safety, rate limiting, audit logging                                |
+| Doc                                                  | What's in it                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Channel Relay](docs/channel-relay.md)               | Message running desktop sessions without disconnecting; remote-use setup                                |
+| [Desktop app plugin](plugins/channel-pull/README.md) | `channel-pull` (+ `channel-pull-format`): Telegram → Claude desktop app (Code tab) sessions             |
+| [Sessions & shell scripts](docs/sessions.md)         | Auto-discovery, `/new` (`--branch`, `--resume`), terminal picker, resuming offline sessions, `/execute` |
+| [Button menus](docs/menus.md)                        | Tappable menus for `/new` and `/claude`; how to add a menu to another command                           |
+| [Mini App](docs/mini-app.md)                         | Browser/Telegram UI: tabs, enable, BotFather registration, HTTPS deployment, auth                       |
+| [Advanced hooks](docs/advanced-hooks.md)             | Remote-answerable `AskUserQuestion` bridge + exact `/clear` follow (`SessionStart`)                     |
+| [Ralph loops](docs/ralph-loops.md)                   | `/ralph` — run `afk_tasks.sh` from Telegram: start/watch/stop, verbose mode, customization              |
+| [Skills browser](docs/skills-menu.md)                | `/skills` — browse/search skills & slash commands, inject into the desktop TUI with args                |
+| [Cursor Integration](docs/cursor.md)                 | Bridge Cursor IDE windows into the same Telegram/Web UI                                                 |
+| [Operations](docs/operations.md)                     | Logs, running as a launchd service, `/settings` reference                                               |
+| [Security](SECURITY.md)                              | Allowlist, path validation, command safety, rate limiting, audit logging                                |
 
 ## Development
 

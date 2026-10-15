@@ -24,8 +24,12 @@ Flags:
 
 - `-pr` — PR mode (the loop opens PRs instead of squash-merging to the base branch).
 - `-l <label>` — only work issues carrying the given GitHub label. Defaults to the
-  `Ralph label` setting in `/settings` (blank ⇒ no filter, i.e. all open issues).
+  `Ralph label` setting in `/settings` (blank ⇒ no label filter).
   `-l -` forces no filter for one run even when a default is set.
+- Either way the loop only takes **workable** issues: unassigned (an assignee is a
+  claim), no open blocked-by issues, and no sub-issues (a parent is a spec, never
+  work itself). When open issues remain but none is workable it exits with
+  `🏁 no workable issues`.
 - Relative `<path>` resolves against the `Working dir` setting (like `/new`); `~` is
   expanded. The path must be an existing **git repo** on the bot host.
 
@@ -72,7 +76,7 @@ Each loop gets a forum topic named `🔁 ralph <repo>`. Beats posted there:
 - `🔄 iter N/M · X issues open · next: #nn <title>` — one per iteration (issue counts are best-effort via `gh`).
 - `⏸ WAITING` — an iteration was blocked; the loop will retry.
 - `⏱ iteration timed out` — the per-iteration watchdog killed the session; the loop continues.
-- Terminal beats: `🏁 COMPLETE`, `🏁 no open issues`, `⚠️ reached max iterations`, `🛑 stopped`, or a plain exit line.
+- Terminal beats: `🏁 COMPLETE`, `🏁 no open issues`, `🏁 no workable issues`, `⚠️ reached max iterations`, `❌ issue fetch failed`, `🛑 stopped`, or a plain exit line.
 
 **The topic is output-only** — messages you send there are not routed anywhere
 (you'll get a nudge). Control the loop with the `/ralph …` commands from any chat.

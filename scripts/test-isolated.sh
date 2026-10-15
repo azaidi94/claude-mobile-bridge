@@ -35,6 +35,19 @@ for sh_t in scripts/tmux/launch.test.sh scripts/claude-relay-launch.test.sh; do
   fi
 done
 
+# Claude Code mods (plugins/*) run under `claude plugin test`, which needs the
+# claude CLI — skipped with a note where it isn't installed (e.g. CI).
+if command -v claude >/dev/null 2>&1; then
+  for plugin in plugins/*/; do
+    total=$((total + 1))
+    if ! claude plugin validate "$plugin" || ! claude plugin test "$plugin"; then
+      failed+=("$plugin")
+    fi
+  done
+else
+  echo "⚠️  claude CLI not found — skipping plugins/* (claude plugin test)"
+fi
+
 echo ""
 echo "──────────────────────────────────────────"
 if [ ${#failed[@]} -ne 0 ]; then

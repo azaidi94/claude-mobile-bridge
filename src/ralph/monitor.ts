@@ -504,6 +504,22 @@ async function handleEvent(
         "🏁 no open issues — nothing to do",
       );
       return;
+    case "no-workable":
+      await finalize(
+        api,
+        loop,
+        "no-workable",
+        `🏁 no workable issues — ${ev.open} open, all blocked, claimed or parents`,
+      );
+      return;
+    case "fetch-failed":
+      await finalize(
+        api,
+        loop,
+        "fetch-failed",
+        "❌ issue fetch failed (gh) — loop exited",
+      );
+      return;
     case "complete":
       await finalize(
         api,
@@ -796,6 +812,13 @@ function terminalFor(ev: RalphEvent): { reason: string; desc: string } | null {
       };
     case "no-issues":
       return { reason: "no-issues", desc: "no open issues" };
+    case "no-workable":
+      return {
+        reason: "no-workable",
+        desc: `no workable issues (${ev.open} open, all blocked, claimed or parents)`,
+      };
+    case "fetch-failed":
+      return { reason: "fetch-failed", desc: "issue fetch failed (gh)" };
     case "max-iterations":
       return {
         reason: "max-iterations",
