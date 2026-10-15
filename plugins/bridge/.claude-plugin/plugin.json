@@ -1,0 +1,9 @@
+{
+  "name": "bridge",
+  "version": "0.1.0",
+  "description": "claude-mobile-bridge in the Claude desktop app: Telegram messages into Code-tab sessions, a status band, and /bridge status|doctor.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Ali Zaidi"
+  }
+}

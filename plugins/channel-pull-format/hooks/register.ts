@@ -4,9 +4,8 @@ import type { Register } from "claude-code";
  * Companion to channel-pull. The desktop app gives the channel card only to a
  * real channel origin, which no hook may set, so a relayed prompt would show
  * its raw `<channel>` tag. This shows the body alone and hands the model the
- * tag as context. It's its own plugin so the cosmetic part stays opt-in: the
- * raw tag is what the relay's instructions key on, and this hook restates
- * them in the context it adds.
+ * tag as context. It's its own plugin because the engine keeps a plugin's own
+ * hooks off the prompts it submits. Deprecated: see plugins/bridge-format.
  */
 
 const SUBMITTER = "channel-pull";

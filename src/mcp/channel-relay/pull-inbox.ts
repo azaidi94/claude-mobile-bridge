@@ -4,8 +4,8 @@
  *
  * The Claude desktop app launches `claude` with its own fixed args, so
  * `--dangerously-load-development-channels` can't be passed and
- * `notifications/claude/channel` is dropped. The `channel-pull` plugin
- * (plugins/channel-pull) long-polls this inbox over a Unix socket instead and
+ * `notifications/claude/channel` is dropped. The `bridge` plugin
+ * (plugins/bridge; formerly channel-pull) long-polls this inbox over a Unix socket instead and
  * submits each message as a prompt.
  *
  * In such a session every inbound message lands here (a notification would be

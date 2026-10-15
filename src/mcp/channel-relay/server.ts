@@ -131,7 +131,7 @@ function writePortFile(port: number): void {
     cwd,
     startedAt: new Date().toISOString(),
     channelsEnabled,
-    // Unix socket the channel-pull plugin long-polls (see pull-inbox.ts).
+    // Unix socket the bridge plugin long-polls (see pull-inbox.ts).
     ...(pullServer ? { pullSocket: PULL_SOCKET } : {}),
     // cmux injects CMUX_WORKSPACE_ID into each surface shell; inherited down to
     // here. Lets the bot inject /clear & /compact into this session's cmux
@@ -704,7 +704,7 @@ function handleBotMessage(msg: {
     // poller yet (a fresh session polls once its sessionId is known).
     if (!inbox.isActive()) {
       process.stderr.write(
-        `channel-relay: queued request_id=${requestId} with no channel-pull poller — is the plugin installed?\n`,
+        `channel-relay: queued request_id=${requestId} with no poller — is the bridge plugin installed?\n`,
       );
     }
     inbox.enqueue(inbound);
