@@ -8,7 +8,7 @@ import {
   doctorTone,
   formatDoctor,
   formatStatus,
-  paneHealth,
+  bridgeHealth,
   pickRelay,
   pidsInCwd,
   toChannelPrompt,
@@ -215,21 +215,28 @@ test("doctor: another poller on the inbox", () => {
   );
 });
 
-test("pane health: connected, warning, error", () => {
-  expect(paneHealth(base, NOW)).toEqual({ tone: "success", text: "connected" });
-  expect(paneHealth({ ...base, relay: "contended" }, NOW).tone).toBe("warning");
-  expect(paneHealth({ ...base, bot: "down" }, NOW).tone).toBe("error");
+test("health: connected, warning, error", () => {
+  expect(bridgeHealth(base, NOW)).toEqual({
+    tone: "success",
+    text: "connected",
+  });
+  expect(bridgeHealth({ ...base, relay: "contended" }, NOW).tone).toBe(
+    "warning",
+  );
+  expect(bridgeHealth({ ...base, bot: "down" }, NOW).tone).toBe("error");
   expect(
-    paneHealth({ ...base, relay: "none", startedAt: NOW - 1 }, NOW).tone,
+    bridgeHealth({ ...base, relay: "none", startedAt: NOW - 1 }, NOW).tone,
   ).toBe("subtle");
-  expect(paneHealth({ ...base, relay: "none" }, NOW).tone).toBe("error");
+  expect(bridgeHealth({ ...base, relay: "none" }, NOW).tone).toBe("error");
   // error even inside the startup grace: the relay was found and fails
   expect(
-    paneHealth({ ...base, relay: "error", startedAt: NOW - 1 }, NOW).tone,
+    bridgeHealth({ ...base, relay: "error", startedAt: NOW - 1 }, NOW).tone,
   ).toBe("error");
-  expect(paneHealth({ ...base, relay: "channels" }, NOW).tone).toBe("success");
-  expect(paneHealth({ ...base, relay: "unknown" }, NOW).tone).toBe("subtle");
-  expect(paneHealth({ ...base, bot: "unknown" }, NOW).tone).toBe("subtle");
+  expect(bridgeHealth({ ...base, relay: "channels" }, NOW).tone).toBe(
+    "success",
+  );
+  expect(bridgeHealth({ ...base, relay: "unknown" }, NOW).tone).toBe("subtle");
+  expect(bridgeHealth({ ...base, bot: "unknown" }, NOW).tone).toBe("subtle");
 });
 
 test("feed entries keep the first line, cut short", () => {

@@ -56,10 +56,10 @@ export const pickRelay = (
 
 /** No warning about a missing relay for this long after start: it's still coming up. */
 export const STARTUP_GRACE_MS = 30_000;
-/** The band names the topic for this long after a phone message. */
+/** The band keeps its status line up (on the terminal too) this long after a phone message. */
 export const RECENT_PHONE_MS = 15 * 60_000;
 
-const ago = (ms: number): string => {
+export const ago = (ms: number): string => {
   const m = Math.floor(ms / 60_000);
   return m < 1
     ? "just now"
@@ -68,7 +68,11 @@ const ago = (ms: number): string => {
       : `${Math.round(m / 60)}h ago`;
 };
 
-/** The band's one line, or undefined when there's nothing worth showing. */
+/**
+ * Why the band shows, or undefined when there's nothing worth showing. A
+ * warning's text is drawn; a subtle one (a recent phone message) only keeps
+ * the status line up — its text is for callers that want a sentence.
+ */
 export const bandFor = (
   s: BridgeStatus,
   now: number,
@@ -108,7 +112,7 @@ export const bandFor = (
   return undefined;
 };
 
-/** `/bridge status`'s rows (label, text), shared with the pane. */
+/** `/bridge status`'s rows (label, text), shared with the band's details. */
 export const statusRows = (
   s: BridgeStatus,
   now: number,
@@ -148,8 +152,8 @@ export const formatStatus = (s: BridgeStatus, now: number): string =>
     ...statusRows(s, now).map(([k, v]) => `  ${`${k}:`.padEnd(7)} ${v}`),
   ].join("\n");
 
-/** The pane's headline: one word and its color. */
-export const paneHealth = (
+/** The band's headline: a few words and their color. */
+export const bridgeHealth = (
   s: BridgeStatus,
   now: number,
 ): { tone: "success" | "warning" | "error" | "subtle"; text: string } => {
@@ -169,7 +173,7 @@ export const FEED_TEXT_MAX = 140;
 /** Messages the feed keeps. */
 export const FEED_MAX = 10;
 
-/** A relayed message as the pane's feed lists it: its first line, cut short. */
+/** A relayed message as the band's details list it: its first line, cut short. */
 export const toFeedEntry = (m: Inbound, at: number): FeedEntry => {
   // by code point, so an emoji at the cut isn't split in half
   const line = [...(m.content.trim().split("\n")[0] ?? "")];
@@ -194,7 +198,7 @@ export const addToFeed = (
     FEED_MAX,
   );
 
-/** A doctor run's lines for the pane: without the header, or the whole text when it failed. */
+/** A doctor run's lines for the band: without the header, or the whole text when it failed. */
 export const doctorLines = (text: string | null): string[] => {
   if (!text) return [];
   const lines = text.split("\n");
@@ -207,7 +211,7 @@ export const clockTime = (ms: number): string => {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
-/** A doctor line's color in the pane, by its mark. */
+/** A doctor line's color in the band, by its mark. */
 export const doctorTone = (
   line: string,
 ): "success" | "warning" | "error" | undefined => {

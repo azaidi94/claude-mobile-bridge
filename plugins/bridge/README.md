@@ -3,9 +3,9 @@
 claude-mobile-bridge inside the **Claude desktop app** (Code tab):
 
 - **Telegram in:** messages from a session's Telegram topic arrive as prompts (desktop sessions can't load channels, so the [channel relay](../../docs/channel-relay.md) can't push them).
-- **Status band** above the prompt, only when it matters: `⚠️ bridge bot not answering`, `⚠️ no channel-relay for this session` / `channel-relay not answering`, `⚠️ two pollers on this session's relay`, or `📱 phone message in <topic> · 2m ago`.
+- **Status band** above the prompt, with warnings when they matter: `⚠️ bridge bot not answering`, `⚠️ no channel-relay for this session` / `channel-relay not answering`, `⚠️ two pollers on this session's relay`.
 - **`/bridge status`:** bot, this session's topic (with a `t.me` link), relay and poll state.
-- **Bridge pane** beside the transcript, opened by itself when the desktop app attaches (`/bridge pane` anywhere; closed by hand, it stays closed until `/bridge pane`): connection (bot, topic with an Open topic link, relay, last phone message), the last 10 phone messages, and the last doctor run, with Run doctor and Refresh buttons.
+- **Details in the band:** in the desktop app the band always shows one line (`● bridge · connected · <topic> · 📱 2m ago`, or the warning). **details ▾** expands it: bot, topic with an Open topic link, relay, last phone message, the latest 5 phone messages, and the last doctor run, with Run doctor and Refresh buttons. In the terminal the band shows only on a warning, or for 15 minutes after a phone message.
 - **`/bridge doctor`:** checks the bot answers, finds duplicate bot processes, whether the bot tracks this session and has a topic for it, whether the relay is up and polled, old plugins still enabled, `bridge-format` missing, and recent `[ERROR]`s in `bot.log`. Each problem says what to do.
 
 Install it with its companion **`bridge-format`**, which shows relayed prompts as `📱 <message>` instead of the raw `<channel …>` tag. It has to be a separate plugin: `$.prompt.submit` takes no hidden context, and the engine keeps a plugin's own hooks off the prompts it submits.

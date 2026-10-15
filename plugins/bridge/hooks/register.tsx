@@ -1,5 +1,5 @@
 import { atom, read, update } from "claude-code";
-import type { EngineInterface, Register, StateDollar } from "claude-code";
+import type { Register, StateDollar } from "claude-code";
 import type { BridgeStatus, DoctorRun, FeedEntry } from "../types";
 import {
   FORMAT_PLUGIN,
@@ -12,7 +12,8 @@ import {
   doctorTone,
   formatDoctor,
   formatStatus,
-  paneHealth,
+  bridgeHealth,
+  ago,
   pickRelay,
   pidsInCwd,
   statusRows,
@@ -30,8 +31,8 @@ import {
  *   the engine keeps a plugin's own hooks off its submits, so not here);
  * - a band above the prompt when the bridge needs attention;
  * - `/bridge status` and `/bridge doctor`, read from the bot's control socket;
- * - a Bridge pane with both, and the latest phone messages (opened unasked on
- *   desktop, or with `/bridge pane`).
+ * - on desktop the band always shows one status line, with details (both,
+ *   and the latest phone messages) a press away.
  */
 
 // The relay caps a long-poll at 8s.
@@ -48,10 +49,9 @@ const SUPERSEDED_MS = POLL_MS / 2;
 /** Failed polls in a row before the band says the relay isn't answering. */
 const ERRORS_BEFORE_WARN = 3;
 const BOT_TIMEOUT_MS = 2_000;
-const PANE = "bridge";
-/** `$.store` key: the person closed the pane by hand (kept across sessions). */
-const CLOSED_KEY = "paneClosed";
-/** Redraw the band and pane this often, for ages and the startup grace. */
+/** Phone messages the expanded band lists (the feed keeps more). */
+const BAND_FEED_ROWS = 5;
+/** Redraw the band this often, for ages and the startup grace. */
 const REDRAW_MS = 30_000;
 
 const status = atom(
@@ -70,6 +70,8 @@ const feed = atom(
   { plugin: "bridge", key: "feed" } as const,
   [] as FeedEntry[],
 );
+/** The band's details shown; this session only, collapsed at start. */
+const expanded = atom({ plugin: "bridge", key: "expanded" } as const, false);
 const doctorRun = atom(
   { plugin: "bridge", key: "doctor" } as const,
   { at: null, text: null, isRunning: false } as DoctorRun,
@@ -86,20 +88,10 @@ const patch = async ($: StateDollar, fields: Partial<BridgeStatus>) => {
   await update($, status, (now) => ({ ...now, ...fields }));
 };
 
-/**
- * The desktop app has no terminal status line to glance at: show the pane
- * there, unasked, unless the person closed it by hand or it's already up.
- */
-const showPaneUnasked = async ($: EngineInterface) => {
-  if ((await $.store.get(CLOSED_KEY)) === true) return;
-  if ((await $.ui.panes()).some((p) => p.id === PANE)) return;
-  await $.ui.open({ id: PANE, title: "Bridge" });
-};
-
 export const register: Register = (on) => {
   /**
    * Set by session.start, closing over its `$`: `/bridge doctor`'s checks
-   * (the last run kept for the pane), and a status check.
+   * (the last run kept for the band), and a status check.
    */
   let runDoctor: (() => Promise<string>) | undefined;
   let refreshNow: (() => Promise<void>) | undefined;
@@ -108,16 +100,10 @@ export const register: Register = (on) => {
     const started = await next(e);
     await $.command.register({
       name: "bridge",
-      description: "claude-mobile-bridge: status, doctor to diagnose, or pane",
-      argumentHint: "[status|doctor|pane]",
+      description: "claude-mobile-bridge: status, or doctor to diagnose",
+      argumentHint: "[status|doctor]",
       immediate: true,
     });
-    // The app usually attaches after start (session.attach below); this
-    // covers a reload while it's attached.
-    if ((await $.session.surfaces()).includes("desktop"))
-      void showPaneUnasked($).catch((err) =>
-        $.ui.log(`bridge: pane: ${err}`, { to: "debug" }),
-      );
     const now = await $.clock.now();
     await patch($, { bot: "unknown", relay: "unknown", startedAt: now });
     // A reload mid-run cancels the run: don't leave "Running…" up.
@@ -349,22 +335,6 @@ export const register: Register = (on) => {
     return started;
   });
 
-  on("session.attach", { surface: "desktop" }, async ($, e, next) => {
-    const attached = await next(e);
-    // A pane opened unasked belongs where it docks as a sidebar.
-    if (e.viewport?.isFullscreen !== false)
-      await showPaneUnasked($).catch((err) =>
-        $.ui.log(`bridge: pane: ${err}`, { to: "debug" }),
-      );
-    return attached;
-  });
-
-  on("ui.close", { id: PANE }, async ($, e, next) => {
-    // Closed by hand: stay closed until `/bridge pane`.
-    if (e.origin.kind === "person") await $.store.set(CLOSED_KEY, true);
-    return next(e);
-  });
-
   on("command.run", { command: "bridge" }, async ($, e) => {
     const arg = e.args.trim();
     if (arg === "doctor") {
@@ -374,52 +344,68 @@ export const register: Register = (on) => {
           : "Bridge doctor: still starting, try again.",
       };
     }
-    if (arg === "pane") {
-      await $.store.delete(CLOSED_KEY);
-      const opened = await $.ui.open({ id: PANE, title: "Bridge" });
-      return {
-        text: opened.isPlaced
-          ? "Bridge pane opened."
-          : `Bridge pane is open but not shown: ${opened.reason}`,
-      };
-    }
     if (arg && arg !== "status")
-      return { text: "Usage: /bridge [status|doctor|pane]" };
+      return { text: "Usage: /bridge [status|doctor]" };
     return { text: formatStatus(await read($, status), await $.clock.now()) };
   });
 
   on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e);
-    const line = bandFor(await read($, status), await $.clock.now());
-    if (!line) return next(e);
-    const { Box, Text } = $.ui.resolve(e);
-    return (
-      <Box>
-        <Text color={line.tone} dimColor={line.tone === "subtle"}>
-          {line.text}
-        </Text>
-      </Box>
-    );
-  });
-
-  on("ui.render", { component: "Pane", requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link } = $.ui.resolve(e);
     const now = await $.clock.now();
     const s = await read($, status);
-    const phone = await read($, feed);
+    const isOpen = await read($, expanded);
+    const warning = bandFor(s, now);
+    // The desktop app has no status line to glance at: the band stays, one
+    // line, there. Elsewhere it shows only when it has something to say.
+    if (!warning && !isOpen && e.surface !== "desktop") return next(e);
+    const { Box, Text, Button, Link } = $.ui.resolve(e);
+    const health = bridgeHealth(s, now);
+    const toggle = (
+      <Button
+        key="details"
+        plain
+        dimColor
+        onPress={() => void update($, expanded, (v) => !v)}
+      >
+        {isOpen ? "hide ▴" : "details ▾"}
+      </Button>
+    );
+    const summary =
+      warning?.tone === "warning" ? (
+        <Text color="warning" wrap="wrap">
+          {warning.text}
+        </Text>
+      ) : (
+        <Text wrap="truncate">
+          <Text color={health.tone}>●</Text>
+          <Text dimColor>
+            {" "}
+            bridge · {health.text}
+            {s.topic ? ` · ${s.topic.name}` : ""}
+            {s.lastPhoneAt !== null ? ` · 📱 ${ago(now - s.lastPhoneAt)}` : ""}
+          </Text>
+        </Text>
+      );
+    const header = (
+      <Box flexDirection="row" gap={1} justifyContent="space-between">
+        <Box flexShrink={1} flexGrow={1}>
+          {summary}
+        </Box>
+        {toggle}
+      </Box>
+    );
+    if (!isOpen) return header;
+
+    const phone = (await read($, feed)).slice(0, BAND_FEED_ROWS);
     const doc = await read($, doctorRun);
-    const health = paneHealth(s, now);
     const rows = statusRows(s, now).map(
       ([k, v]) => [k, k === "topic" && s.topic ? s.topic.name : v] as const,
     );
     const doctor = doctorLines(doc.text);
-
     return (
       <Box flexDirection="column" gap={1}>
+        {header}
         <Box flexDirection="column">
-          <Text weight="semibold" color={health.tone}>
-            ● {health.text}
-          </Text>
           {rows.map(([k, v]) => (
             <Box key={`row-${k}`} flexDirection="row" gap={1}>
               <Text dimColor mono>
@@ -450,7 +436,7 @@ export const register: Register = (on) => {
           </Text>
           {phone.length ? (
             phone.map((m) => (
-              <Text wrap="wrap">
+              <Text wrap="truncate">
                 <Text dimColor mono>
                   {clockTime(m.at)}
                 </Text>{" "}
@@ -461,23 +447,21 @@ export const register: Register = (on) => {
             <Text dimColor>nothing yet</Text>
           )}
         </Box>
-        <Box flexDirection="column">
-          <Text dimColor weight="semibold">
-            Doctor{doc.at ? ` · ${clockTime(doc.at)}` : ""}
-          </Text>
-          {doctor.length ? (
-            doctor.map((l) => {
+        {doctor.length ? (
+          <Box flexDirection="column">
+            <Text dimColor weight="semibold">
+              Doctor · {doc.at ? clockTime(doc.at) : ""}
+            </Text>
+            {doctor.map((l) => {
               const tone = doctorTone(l);
               return (
                 <Text wrap="wrap" color={tone} dimColor={!tone}>
                   {tone ? l.trim() : `   ${l.trim()}`}
                 </Text>
               );
-            })
-          ) : (
-            <Text dimColor>not run yet</Text>
-          )}
-        </Box>
+            })}
+          </Box>
+        ) : null}
       </Box>
     );
   });
