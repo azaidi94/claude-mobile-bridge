@@ -4,7 +4,7 @@
  */
 
 import { watch, type FSWatcher } from "fs";
-import { readdir, stat, readFile, writeFile, unlink } from "fs/promises";
+import { readdir, stat, readFile, writeFile, unlink, open } from "fs/promises";
 import { join, basename } from "path";
 import { homedir, tmpdir } from "os";
 import { exec } from "child_process";
@@ -13,6 +13,7 @@ import type { SessionInfo } from "./types";
 import type { SessionDiff } from "./notifications";
 import { info, warn, error, debug } from "../logger";
 import { safeAsync } from "../utils/safe-async";
+import { sessionIdFromClaudeArgs } from "../utils/claude-args";
 import {
   scanPortFiles,
   invalidateScanCache,
@@ -152,6 +153,47 @@ export interface ClaudeProcess {
 }
 
 /**
+ * Pick Claude Code processes out of `ps -eo pid=,ppid=,comm=` output. `comm`
+ * is the executable path and may hold spaces — the desktop app's bundled CLI
+ * lives under `~/Library/Application Support/Claude/claude-code/<ver>/…/
+ * claude.app/Contents/MacOS/claude` — so it's everything after the second
+ * field, never `$3`. Matches a `claude` basename or a bare version-named
+ * binary (`~/.local/share/claude/versions/2.1.x`).
+ */
+export function parseClaudeProcessList(
+  psOutput: string,
+): Array<{ pid: number; ppid: number }> {
+  const out: Array<{ pid: number; ppid: number }> = [];
+  for (const line of psOutput.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/);
+    if (!m) continue;
+    const base = m[3]!.split("/").pop()!;
+    if (base === "claude" || /^\d+\.\d+\.\d+$/.test(base)) {
+      out.push({ pid: parseInt(m[1]!), ppid: parseInt(m[2]!) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Sessions straight from relay port files, for when the process scan finds
+ * nothing. Keeps each port file's sessionId and Claude pid (ppid): dropping
+ * them left every session id-less, so no topic was ever created.
+ */
+export function sessionsFromPortFiles(
+  portFiles: PortFileData[],
+): SessionInfo[] {
+  return portFiles.map((pf) => ({
+    id: pf.sessionId ?? "",
+    name: "",
+    dir: pf.cwd,
+    lastActivity: pf.startedAt ? new Date(pf.startedAt).getTime() : Date.now(),
+    source: "desktop",
+    ...(pf.ppid ? { pid: pf.ppid } : {}),
+  }));
+}
+
+/**
  * Get running Claude Code processes with their PIDs and working directories.
  * Filters out subagent processes (whose parent is also a claude process).
  */
@@ -164,17 +206,8 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
     // when their controlling terminal was briefly backgrounded (App Nap,
     // window minimize, brief reparent), leaving auto-watch stuck on a
     // 37s one-shot retry budget that never recovered.
-    const { stdout: pidOutput } = await execAsync(
-      `ps -eo pid,ppid,comm | awk '{n=split($3,a,"/"); base=a[n]} base == "claude" || $3 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+$/ {print $1, $2}'`,
-    );
-    const entries = pidOutput
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [pid, ppid] = line.trim().split(/\s+/);
-        return { pid: parseInt(pid!), ppid: parseInt(ppid!) };
-      });
+    const { stdout: pidOutput } = await execAsync(`ps -eo pid=,ppid=,comm=`);
+    const entries = parseClaudeProcessList(pidOutput);
     if (entries.length === 0) return [];
 
     // Filter out subagents - drop processes whose parent is also a claude process
@@ -188,8 +221,10 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
 
     // Get working directory for each PID via lsof (single call).
     // Absolute path: lsof lives in /usr/sbin, which launchd's default PATH omits.
+    // `|| true`: lsof exits 1 when any listed pid exited since the ps call,
+    // yet still prints the live ones — don't let one exit empty the scan.
     const { stdout: lsofOutput } = await execAsync(
-      `/usr/sbin/lsof -p ${pids.join(",")} -a -d cwd -Fpn 2>/dev/null`,
+      `/usr/sbin/lsof -p ${pids.join(",")} -a -d cwd -Fpn 2>/dev/null || true`,
     );
 
     let currentPid = 0;
@@ -215,13 +250,14 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
         "watcher.ps_args_lookup",
         async () => {
           const { stdout: argsOutput } = await execAsync(
-            `ps -p ${pids.join(",")} -o pid=,args= 2>/dev/null`,
+            `ps -p ${pids.join(",")} -o pid=,args= 2>/dev/null || true`,
           );
           for (const line of argsOutput.trim().split("\n")) {
-            const match = line.match(/^\s*(\d+)\s.*--session-id\s+(\S+)/);
-            if (match) {
+            const match = line.match(/^\s*(\d+)\s+(.*)$/);
+            const sessionId = match && sessionIdFromClaudeArgs(match[2]!);
+            if (sessionId) {
               const proc = processes.find((p) => p.pid === parseInt(match[1]!));
-              if (proc) proc.sessionId = match[2];
+              if (proc) proc.sessionId = sessionId;
             }
           }
         },
@@ -234,14 +270,48 @@ async function getRunningClaudeProcesses(): Promise<ClaudeProcess[]> {
   return processes;
 }
 
+/** sessionId and cwd sit in a transcript's opening lines; read only those. */
+const SESSION_HEAD_BYTES = 64 * 1024;
+
+/** The first `bytes` of a file, cut back to its last whole line. */
+async function readHead(filePath: string, bytes: number): Promise<string> {
+  const fh = await open(filePath, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await fh.read(buf, 0, bytes, 0);
+    const text = buf.subarray(0, bytesRead).toString("utf-8");
+    if (bytesRead < bytes) return text;
+    const lastNl = text.lastIndexOf("\n");
+    return lastNl === -1 ? "" : text.slice(0, lastNl);
+  } finally {
+    await fh.close();
+  }
+}
+
 /**
- * Parse a session JSONL file to extract session info.
+ * Parse a session JSONL file to extract session info. Reads the head only —
+ * transcripts run to hundreds of MB and every refresh parses each one — and
+ * falls back to the whole file when the opening lines are oversized.
  */
-async function parseSessionFile(
+export async function parseSessionFile(
   filePath: string,
 ): Promise<{ sessionId: string; cwd: string } | null> {
+  const head = await readHead(filePath, SESSION_HEAD_BYTES).catch(() => null);
+  if (head === null) return null;
+  const fromHead = parseSessionLines(head);
+  if (fromHead) return fromHead;
+  const size = await stat(filePath).then(
+    (s) => s.size,
+    () => 0,
+  );
+  if (size <= SESSION_HEAD_BYTES) return null;
+  return readFile(filePath, "utf-8").then(parseSessionLines, () => null);
+}
+
+function parseSessionLines(
+  content: string,
+): { sessionId: string; cwd: string } | null {
   try {
-    const content = await readFile(filePath, "utf-8");
     const lines = content.split("\n").filter(Boolean).slice(0, 100);
 
     let sessionId: string | null = null;
@@ -343,18 +413,7 @@ async function scanSessions(): Promise<{
 
   if (runningDirs.size === 0) {
     // Still use port files even with no detected processes
-    for (const pf of portFiles) {
-      found.push({
-        id: "",
-        name: "",
-        dir: pf.cwd,
-        lastActivity: pf.startedAt
-          ? new Date(pf.startedAt).getTime()
-          : Date.now(),
-        source: "desktop",
-      });
-    }
-    return { sessions: found, portFiles };
+    return { sessions: sessionsFromPortFiles(portFiles), portFiles };
   }
 
   // Collect all candidate JSONL sessions per directory, sorted by mtime desc
@@ -433,7 +492,13 @@ async function scanSessions(): Promise<{
   const allDirs = new Set([...candidatesByDir.keys(), ...portsByDir.keys()]);
 
   for (const dir of allDirs) {
-    const processCount = runningDirs.get(dir) || 1;
+    // A live port file proves a live session even when its claude's cwd (what
+    // runningDirs counts) has moved off the relay's launch dir, so never cap
+    // a dir below its port-file count.
+    const processCount = Math.max(
+      runningDirs.get(dir) || 1,
+      portsByDir.get(dir)?.length ?? 0,
+    );
     const dirFound: SessionInfo[] = [];
     const knownIds = new Set<string>();
 
