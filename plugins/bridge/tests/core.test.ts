@@ -5,6 +5,7 @@ import {
   bandFor,
   botPidsFrom,
   doctorLines,
+  doctorSummary,
   doctorTone,
   formatDoctor,
   formatStatus,
@@ -287,4 +288,19 @@ test("doctor lines get their mark's tone", () => {
   expect(doctorTone("       [ERROR] boom")).toBeUndefined();
   // a log line that mentions a mark isn't a check
   expect(doctorTone("       [ERROR] got ❌ from api")).toBeUndefined();
+});
+
+test("doctor: a first poll still in flight isn't a warning", () => {
+  const out = formatDoctor({ ...healthy, relayState: "unknown" });
+  expect(out).toContain("⏳ found /s.sock — first poll still in flight");
+  expect(out).not.toContain("⚠️");
+});
+
+test("doctor summary counts each mark", () => {
+  expect(doctorSummary("Bridge doctor\n  ✅ a\n  ⚠️ b\n  ✅ c\n  ⏳ d")).toBe(
+    "Bridge doctor: 1 ⚠️ · 2 ✅",
+  );
+  expect(doctorSummary("Bridge doctor failed: boom")).toBe(
+    "Bridge doctor: 1 ❌",
+  );
 });

@@ -29,6 +29,11 @@ function fakeHost(on: On, host: Host) {
   on("command.register", ($, e) => ({ value: { command: e.name } }));
   on("ui.status", () => ({ value: undefined }));
   on("ui.log", () => ({ value: undefined }));
+  const toasts: string[] = [];
+  on("ui.toast", ($, e) => {
+    toasts.push(e.text);
+    return { value: undefined };
+  });
   on("fs.list", () => ({
     value: [
       {
@@ -107,7 +112,7 @@ function fakeHost(on: On, host: Host) {
     });
     return { text: e.text, context: [] };
   });
-  return { submitted };
+  return { submitted, toasts };
 }
 
 const START = { cwd: "/w", surface: "desktop", isInteractive: true } as const;
@@ -349,7 +354,7 @@ const healthy = (phone = true) => {
 test("desktop: one status line, details a press away, doctor from there", async ($, on) => {
   on("session.start", ($, e) => ({ cwd: e.cwd }));
   const clock = mock.clock(on);
-  fakeHost(on, healthy());
+  const { toasts } = fakeHost(on, healthy());
 
   await $.session.start(START);
   await clock.settle();
@@ -371,6 +376,8 @@ test("desktop: one status line, details a press away, doctor from there", async 
   expect(
     await ui.find({ type: "Text", text: /bot answers on bot.sock/ }),
   ).toBeDefined();
+  // and says how it went, wherever the band is scrolled
+  expect(toasts).toEqual([expect.stringMatching(/^Bridge doctor: .*✅/)]);
 
   await ui.press({ key: "details" });
   expect(await ui.find({ type: "Link" })).toBeUndefined();

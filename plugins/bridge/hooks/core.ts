@@ -211,11 +211,25 @@ export const clockTime = (ms: number): string => {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
+/** One line for a toast: how a doctor run came out. */
+export const doctorSummary = (text: string): string => {
+  const tones = doctorLines(text).map(doctorTone);
+  const n = (t: string) => tones.filter((x) => x === t).length;
+  if (!tones.some(Boolean)) return text.split("\n")[0] ?? "Bridge doctor";
+  const parts = [
+    n("error") && `${n("error")} ❌`,
+    n("warning") && `${n("warning")} ⚠️`,
+    n("success") && `${n("success")} ✅`,
+  ].filter(Boolean);
+  return `Bridge doctor: ${parts.join(" · ")}`;
+};
+
 /** A doctor line's color in the band, by its mark. */
 export const doctorTone = (
   line: string,
-): "success" | "warning" | "error" | undefined => {
+): "success" | "warning" | "error" | "subtle" | undefined => {
   const l = line.trimStart();
+  if (l.startsWith("⏳")) return "subtle";
   return l.startsWith("❌") || l.startsWith("Bridge doctor failed")
     ? "error"
     : l.startsWith("⚠️")
@@ -324,6 +338,9 @@ export const formatDoctor = (f: DoctorFacts): string => {
     warn(
       `another poller shares ${f.relay.pullSocket} — uninstall channel-pull, or drop the extra bridge copy (a --plugin-dir / dev folder)`,
     );
+  else if (f.relayState === "unknown")
+    // just started or reloaded: the first long-poll hasn't answered yet
+    out.push(`  ⏳ found ${f.relay.pullSocket} — first poll still in flight`);
   else warn(`not polling ${f.relay.pullSocket} yet — retrying every 5s`);
 
   if (f.enabledLegacy.length)

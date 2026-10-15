@@ -9,6 +9,7 @@ import {
   botPidsFrom,
   clockTime,
   doctorLines,
+  doctorSummary,
   doctorTone,
   formatDoctor,
   formatStatus,
@@ -403,7 +404,7 @@ export const register: Register = (on) => {
     );
     const doctor = doctorLines(doc.text);
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column">
         {header}
         <Box flexDirection="column">
           {rows.map(([k, v]) => (
@@ -422,7 +423,9 @@ export const register: Register = (on) => {
           <Button
             key="doctor"
             variant="primary"
-            onPress={() => void runDoctor?.()}
+            onPress={() =>
+              void runDoctor?.().then((t) => $.ui.toast(doctorSummary(t)))
+            }
           >
             {doc.isRunning ? "Running…" : "Run doctor"}
           </Button>
@@ -430,6 +433,21 @@ export const register: Register = (on) => {
             Refresh
           </Button>
         </Box>
+        {doctor.length ? (
+          <Box flexDirection="column">
+            <Text dimColor weight="semibold">
+              Doctor · {doc.at ? clockTime(doc.at) : ""}
+            </Text>
+            {doctor.map((l) => {
+              const tone = doctorTone(l);
+              return (
+                <Text wrap="wrap" color={tone} dimColor={!tone}>
+                  {tone ? l.trim() : `   ${l.trim()}`}
+                </Text>
+              );
+            })}
+          </Box>
+        ) : null}
         <Box flexDirection="column">
           <Text dimColor weight="semibold">
             From phone
@@ -447,21 +465,6 @@ export const register: Register = (on) => {
             <Text dimColor>nothing yet</Text>
           )}
         </Box>
-        {doctor.length ? (
-          <Box flexDirection="column">
-            <Text dimColor weight="semibold">
-              Doctor · {doc.at ? clockTime(doc.at) : ""}
-            </Text>
-            {doctor.map((l) => {
-              const tone = doctorTone(l);
-              return (
-                <Text wrap="wrap" color={tone} dimColor={!tone}>
-                  {tone ? l.trim() : `   ${l.trim()}`}
-                </Text>
-              );
-            })}
-          </Box>
-        ) : null}
       </Box>
     );
   });

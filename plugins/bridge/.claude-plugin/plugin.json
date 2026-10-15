@@ -1,6 +1,6 @@
 {
   "name": "bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "claude-mobile-bridge in the Claude desktop app: Telegram messages into Code-tab sessions, a status band with expandable details, and /bridge status|doctor.",
   "types": "./types/index.d.ts",
   "author": {
