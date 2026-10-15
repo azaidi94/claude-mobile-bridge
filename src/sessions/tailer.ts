@@ -36,6 +36,32 @@ function extractImagePathFromTag(text: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/**
+ * Mods that submit relayed Telegram messages as prompts in desktop sessions
+ * (plugins/bridge; channel-pull its old name). bridge-format stores those as
+ * `📱 <body>`, the `<channel>` tag only in the queue entry before them.
+ */
+const RELAY_SUBMITTERS = new Set(["bridge", "channel-pull"]);
+/** bridge-format's mark; an empty body leaves it alone, trimmed. */
+const BRIDGE_FORMAT_PREFIX = /^📱\s?/;
+
+/**
+ * A slash command's user entry (`<command-name>/x</command-name>
+ * <command-message>…<command-args>a</command-args>`) as typed: `/x a`.
+ */
+export function formatSlashCommandEntry(text: string): string | undefined {
+  // Built-ins lead with <command-name>, skills and custom commands with
+  // <command-message>.
+  if (!text.trimStart().startsWith("<command-")) return undefined;
+  const name = text.match(/<command-name>([^<]*)<\/command-name>/);
+  if (!name) return undefined;
+  const args = text.match(/<command-args>([\s\S]*?)<\/command-args>/);
+  const cmd = name[1]!.trim();
+  const slash = cmd.startsWith("/") ? cmd : `/${cmd}`;
+  const a = args?.[1]?.trim();
+  return a ? `${slash} ${a}` : slash;
+}
+
 /** Strip the `<channel …>…</channel>` wrapper, leaving inner text. */
 function stripChannelTag(text: string): string {
   return text
@@ -230,6 +256,14 @@ export class SessionTailer {
    * echo the Read's tool_result image back. Bounded FIFO — a Read almost always
    * lands within the next few entries.
    */
+  /**
+   * `<channel>`-tagged prompts queued for this session (queue-operation
+   * enqueue), oldest first, waiting for the user entry a relay mod's submit
+   * writes without the tag.
+   */
+  private queuedRelayPrompts: string[] = [];
+  private readonly queuedRelayPromptsMax = 16;
+
   private relayImagePaths = new Set<string>();
   private readonly relayImagePathsMax = 32;
   /**
@@ -480,6 +514,37 @@ export class SessionTailer {
       // Skip sidechain messages
       if (entry.isSidechain) return [];
 
+      if (entry.type === "queue-operation") {
+        const content = entry.content;
+        if (
+          typeof content === "string" &&
+          content.includes(CHANNEL_RELAY_TAG)
+        ) {
+          if (entry.operation === "enqueue") {
+            this.queuedRelayPrompts.push(content);
+            if (this.queuedRelayPrompts.length > this.queuedRelayPromptsMax)
+              this.queuedRelayPrompts.shift();
+          } else if (entry.operation === "remove") {
+            // absorbed mid-turn: no user entry will claim it
+            this.forgetQueuedRelay(content);
+          }
+        }
+        return [];
+      }
+
+      // A relay mod's submit (desktop sessions): stored as `📱 <body>`
+      // by bridge-format. Pair it with its queued `<channel>` tag so the
+      // origin chat dedups it, instead of echoing it as terminal input.
+      if (
+        entry.type === "user" &&
+        entry.origin?.kind === "plugin" &&
+        RELAY_SUBMITTERS.has(entry.origin?.name)
+      ) {
+        const text = this.extractUserText(entry.message?.content) ?? "";
+        if (!text.includes(CHANNEL_RELAY_TAG))
+          return this.relaySubmitEvents(text);
+      }
+
       // User message from desktop (skip channel-relay injected messages)
       if (entry.type === "user") {
         // Tool_result content blocks must be emitted before extractUserText runs,
@@ -553,6 +618,7 @@ export class SessionTailer {
             const text = this.extractUserText(rawContent);
             if (text) {
               if (text.includes(CHANNEL_RELAY_TAG)) {
+                this.forgetQueuedRelay(text);
                 const originChat = extractOriginChatFromTag(text);
                 this.trackRelayImagePath(extractImagePathFromTag(text));
                 const inner = stripChannelTag(text);
@@ -574,6 +640,11 @@ export class SessionTailer {
 
         const text = this.extractUserText(entry.message?.content);
         if (!text) return pastedImageEvents;
+
+        // A slash command the person ran: echo it as typed, not its XML.
+        const slash = formatSlashCommandEntry(text);
+        if (slash)
+          return [...pastedImageEvents, { type: "user", content: slash }];
 
         // Native (non-relay) terminal image input. Two shapes:
         //  1. @-referenced uploads → text like `@"/…/IMG.png" caption`; surface
@@ -604,6 +675,7 @@ export class SessionTailer {
         // text, tagged with originChat so each surface can dedup against its own
         // TCP fast-path delivery.
         if (text.includes(CHANNEL_RELAY_TAG)) {
+          this.forgetQueuedRelay(text);
           const originChat = extractOriginChatFromTag(text);
           this.trackRelayImagePath(extractImagePathFromTag(text));
           const inner = stripChannelTag(text);
@@ -840,6 +912,47 @@ export class SessionTailer {
   /**
    * Extract text from user message content.
    */
+  /** Drop a queued relay prompt that reached the transcript some other way. */
+  private forgetQueuedRelay(content: string): void {
+    // by request_id: the transcript's copy may be trimmed
+    const id = (t: string) =>
+      t.match(/<channel\s[^>]*\brequest_id="([^"]+)"/)?.[1];
+    const want = id(content);
+    const i = this.queuedRelayPrompts.findIndex((q) =>
+      want ? id(q) === want : q.trim() === content.trim(),
+    );
+    if (i !== -1) this.queuedRelayPrompts.splice(i, 1);
+  }
+
+  /** Events for a relay mod's submitted prompt (see queuedRelayPrompts). */
+  private relaySubmitEvents(text: string): TailEvent[] {
+    const body = text.replace(BRIDGE_FORMAT_PREFIX, "").trim();
+    // Its own queue entry, by body; else the only one pending (a body the
+    // relay rewrote). With several and no match, guessing could pair the
+    // wrong chat or image.
+    let i = this.queuedRelayPrompts.findIndex(
+      (q) => stripChannelTag(q) === body,
+    );
+    if (i === -1 && this.queuedRelayPrompts.length === 1) i = 0;
+    const [tagged] = i === -1 ? [] : this.queuedRelayPrompts.splice(i, 1);
+    if (!tagged) {
+      debug("tailer: relay submit without a queued channel tag");
+    }
+    this.trackRelayImagePath(
+      tagged ? extractImagePathFromTag(tagged) : undefined,
+    );
+    const events: TailEvent[] = [{ type: "turn_boundary", content: "" }];
+    const inner = tagged ? stripChannelTag(tagged) : body;
+    if (inner) {
+      events.push({
+        type: "user",
+        content: inner,
+        originChat: tagged ? extractOriginChatFromTag(tagged) : undefined,
+      });
+    }
+    return events;
+  }
+
   private extractUserText(content: unknown): string | null {
     if (typeof content === "string") return content.trim() || null;
     if (!Array.isArray(content)) return null;

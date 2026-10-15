@@ -1912,3 +1912,149 @@ describe("tailer: parseLine – tool_result events", () => {
     expect(tailer.parseLine(resultLine)).toEqual([]);
   });
 });
+
+// ============== desktop relay submits (plugins/bridge) ==============
+
+describe("tailer: desktop relay submits", () => {
+  let tailer: SessionTailer;
+  const tag = (body: string, extra = "") =>
+    `<channel source="channel-relay" chat_id="-100" request_id="r1" user="RZA808"${extra}>\n${body}\n</channel>`;
+  const enqueue = (content: string) =>
+    JSON.stringify({ type: "queue-operation", operation: "enqueue", content });
+  const submitted = (content: string, name = "bridge") =>
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content },
+      origin: { kind: "plugin", name, asUser: true },
+    });
+
+  beforeEach(() => {
+    tailer = new SessionTailer("/dev/null", () => {});
+  });
+
+  test("a 📱 prompt takes its origin chat from the queued channel tag", () => {
+    expect(tailer.parseLine(enqueue(tag("hi there")))).toEqual([]);
+    expect(tailer.parseLine(submitted("📱 hi there"))).toEqual([
+      { type: "turn_boundary", content: "" },
+      { type: "user", content: "hi there", originChat: "-100" },
+    ]);
+  });
+
+  test("queued prompts pair by body, not just order", () => {
+    tailer.parseLine(enqueue(tag("first")));
+    tailer.parseLine(
+      enqueue(tag("second").replace('chat_id="-100"', 'chat_id="-200"')),
+    );
+    const second = tailer.parseLine(submitted("📱 second"));
+    expect(second[1]).toMatchObject({ content: "second", originChat: "-200" });
+    const first = tailer.parseLine(submitted("📱 first", "channel-pull"));
+    expect(first[1]).toMatchObject({ content: "first", originChat: "-100" });
+  });
+
+  test("an untagged queue entry isn't taken for a relay one", () => {
+    tailer.parseLine(enqueue("typed while busy"));
+    const events = tailer.parseLine(submitted("📱 hi"));
+    expect(events[1]).toEqual({ type: "user", content: "hi" });
+  });
+
+  test("a typed prompt doesn't consume a queued relay tag", () => {
+    tailer.parseLine(enqueue(tag("from phone")));
+    expect(
+      tailer.parseLine(
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: "typed" },
+        }),
+      ),
+    ).toEqual([{ type: "user", content: "typed" }]);
+    const events = tailer.parseLine(submitted("📱 from phone"));
+    expect(events[1]).toMatchObject({ originChat: "-100" });
+  });
+
+  test("tags consumed elsewhere don't linger to mis-pair later submits", () => {
+    // stored with its tag (no bridge-format), and one absorbed mid-turn
+    const a = tag("a").replace('request_id="r1"', 'request_id="ra"');
+    const b = tag("b").replace('request_id="r1"', 'request_id="rb"');
+    tailer.parseLine(enqueue(a));
+    tailer.parseLine(submitted(a));
+    tailer.parseLine(enqueue(b));
+    tailer.parseLine(
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "remove",
+        content: b,
+      }),
+    );
+    // nothing left to guess from: no origin chat, rather than a wrong one
+    const c = tag("c", ' image_path="/tmp/c.jpg"').replace(
+      'chat_id="-100"',
+      'chat_id="-300"',
+    );
+    tailer.parseLine(enqueue(c));
+    expect(tailer.parseLine(submitted("📱 rewritten"))[1]).toMatchObject({
+      originChat: "-300",
+    });
+    expect(tailer.parseLine(submitted("📱 orphan"))[1]).toEqual({
+      type: "user",
+      content: "orphan",
+    });
+  });
+
+  test("an empty body still pairs with its tag", () => {
+    tailer.parseLine(enqueue(tag("").replace("\n\n", "\n")));
+    tailer.parseLine(enqueue(tag("other")));
+    const events = tailer.parseLine(submitted("📱 "));
+    expect(events).toEqual([{ type: "turn_boundary", content: "" }]);
+    // "other" is still queued for its own submit
+    expect(tailer.parseLine(submitted("📱 other"))[1]).toMatchObject({
+      originChat: "-100",
+    });
+  });
+
+  test("a skill command echoes as typed too", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<command-message>review-ship</command-message>\n<command-name>/review-ship</command-name>\n<command-args>low</command-args>",
+      },
+    });
+    expect(tailer.parseLine(line)).toEqual([
+      { type: "user", content: "/review-ship low" },
+    ]);
+  });
+
+  test("a prompt from another plugin is ordinary input", () => {
+    tailer.parseLine(enqueue(tag("x")));
+    expect(tailer.parseLine(submitted("hello", "other"))).toEqual([
+      { type: "user", content: "hello" },
+    ]);
+  });
+
+  test("a slash command echoes as typed, not its XML", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<command-name>/bridge</command-name>\n            <command-message>bridge</command-message>\n            <command-args>doctor</command-args>",
+      },
+    });
+    expect(tailer.parseLine(line)).toEqual([
+      { type: "user", content: "/bridge doctor" },
+    ]);
+    expect(
+      tailer.parseLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              "<command-name>/reload-plugins</command-name>\n<command-message>reload-plugins</command-message>\n<command-args></command-args>",
+          },
+        }),
+      ),
+    ).toEqual([{ type: "user", content: "/reload-plugins" }]);
+  });
+});
