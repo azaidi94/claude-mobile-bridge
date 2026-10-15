@@ -5,11 +5,9 @@
  */
 
 import { setupBotLogRotation } from "./log-rotation";
-import { homedir } from "os";
 import { join } from "path";
-setupBotLogRotation(
-  join(homedir(), "Library", "Logs", "claude-mobile-bridge", "bot.log"),
-);
+import { LOG_DIR } from "./paths";
+setupBotLogRotation(join(LOG_DIR, "bot.log"));
 
 import { run } from "@grammyjs/runner";
 import {
@@ -61,14 +59,18 @@ import {
   backfillLedgerFromStore,
   TopicManager,
 } from "./topics";
-import { topicForSession } from "./topics/topic-store";
-import { launchUuidForPid } from "./sessions/resolve-session";
+import { topicForSession, topicForSessionId } from "./topics/topic-store";
+import {
+  launchUuidForPid,
+  launchUuidForSessionId,
+} from "./sessions/resolve-session";
 import { createBot } from "./bot";
 import { getCurrentModelDisplayName } from "./session";
 import { getRelayClient, invalidateScanCache, scanPortFiles } from "./relay";
 import { info, warn, debug, error as logError } from "./logger";
 import pkg from "../package.json";
 import { startWebServer } from "./web/server";
+import { startControlServer, stopControlServer } from "./control/server";
 import { WEB_ENABLED } from "./config";
 import { initRelayAsk } from "./handlers/relay-ask";
 import { initPermissionRelay } from "./handlers/permission-relay";
@@ -191,6 +193,20 @@ setBotApiForBridge(bot.api);
 if (WEB_ENABLED) {
   startWebServer();
 }
+// Read-only status socket for the desktop `bridge` mod (plugins/bridge).
+startControlServer({
+  pid: process.pid,
+  startedAt: new Date().toISOString(),
+  chatId: () => getTopicStore().chatId,
+  sessions: getSessions,
+  topics: () => getTopicStore().topics,
+  cwd: process.cwd(),
+  topicFor: (s) =>
+    topicForSessionId({
+      sessionId: s.id,
+      launchUuid: launchUuidForSessionId(s.id) ?? launchUuidForPid(s.pid),
+    }),
+});
 
 // Watchdog scans active watches for mid-turn idle and pings the topic
 // (or auto-sends "continue" when WATCHDOG_AUTO_CONTINUE is set).
@@ -529,6 +545,7 @@ const stopRunner = () => {
     stopModalWatchdog();
     clearInterval(autoWatchRetryTimer);
     stopWatcher();
+    stopControlServer();
     stopCursorBridge();
     import("./ralph/monitor").then((m) => m.stopRalphMonitor()).catch(() => {});
     runner.stop();

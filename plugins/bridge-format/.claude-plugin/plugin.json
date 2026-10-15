@@ -1,0 +1,8 @@
+{
+  "name": "bridge-format",
+  "version": "0.1.0",
+  "description": "Companion to bridge: shows relayed Telegram prompts as 📱 <message>; the channel tag goes to the model as hidden context.",
+  "author": {
+    "name": "Ali Zaidi"
+  }
+}

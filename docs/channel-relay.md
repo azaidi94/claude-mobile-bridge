@@ -22,7 +22,7 @@ claude --dangerously-skip-permissions --dangerously-load-development-channels se
 
 ## Claude desktop app
 
-The desktop app launches `claude` itself, so the channels flag can't be passed and channel notifications are dropped. The relay detects this and serves a pull inbox on a Unix socket instead; the [`channel-pull`](../plugins/channel-pull/README.md) plugin polls it and submits each message as a prompt. Install it once (user scope) and every new Code-tab session is messageable. Add the companion `channel-pull-format` so relayed prompts show as `📱 <message>` instead of the raw `<channel …>` tag.
+The desktop app launches `claude` itself, so the channels flag can't be passed and channel notifications are dropped. The relay detects this and serves a pull inbox on a Unix socket instead; the [`bridge`](../plugins/bridge/README.md) plugin polls it and submits each message as a prompt. Install it once (user scope) with its companion `bridge-format` (shows relayed prompts as `📱 <message>` instead of the raw `<channel …>` tag) and every new Code-tab session is messageable; `/bridge doctor` diagnoses it from inside the app.
 
 ## Remote use (you are not at the Mac)
 

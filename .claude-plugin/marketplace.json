@@ -6,14 +6,24 @@
   "description": "Claude Code plugins for claude-mobile-bridge",
   "plugins": [
     {
+      "name": "bridge",
+      "source": "./plugins/bridge",
+      "description": "claude-mobile-bridge in the Claude desktop app: Telegram → Code-tab sessions, a status band, /bridge status|doctor"
+    },
+    {
+      "name": "bridge-format",
+      "source": "./plugins/bridge-format",
+      "description": "Companion to bridge: shows relayed Telegram prompts as their text alone"
+    },
+    {
       "name": "channel-pull",
       "source": "./plugins/channel-pull",
-      "description": "Telegram \u2192 Claude desktop app sessions via the channel relay"
+      "description": "Deprecated — replaced by bridge"
     },
     {
       "name": "channel-pull-format",
       "source": "./plugins/channel-pull-format",
-      "description": "Companion to channel-pull: shows relayed Telegram prompts as their text alone"
+      "description": "Deprecated — replaced by bridge-format"
     }
   ]
 }
